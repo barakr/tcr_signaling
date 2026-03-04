@@ -1,15 +1,4 @@
-"""TCR phosphorylation model — pTCR generation from Lck* and TCR density.
-
-Computes the steady-state fraction of phosphorylated TCR ITAMs given
-the mean active Lck concentration, TCR surface density, and the
-phosphorylation / dephosphorylation rates.
-
-At steady state: pTCR_fraction = (k_phos * Lck*) / (k_phos * Lck* + k_dephos)
-
-This is validated against ZAP-70 super-resolution recruitment data.
-
-Reference: Neve-Oz, Sherman & Raveh, Frontiers in Immunology, 2024.
-"""
+"""CLI entrypoint for the TCR phosphorylation model."""
 
 from __future__ import annotations
 
@@ -17,26 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-
-def _ptcr_fraction(
-    mean_lck_activity: float,
-    phosphorylation_rate: float,
-    dephosphorylation_rate: float,
-) -> float:
-    """Steady-state fraction of phosphorylated TCR ITAMs."""
-    forward = phosphorylation_rate * mean_lck_activity
-    total = forward + dephosphorylation_rate
-    if total <= 0:
-        return 0.0
-    return forward / total
-
-
-def _ptcr_density(
-    ptcr_fraction: float,
-    tcr_density: float,
-) -> float:
-    """Absolute density of pTCR molecules (molecules/um^2)."""
-    return ptcr_fraction * tcr_density
+from .model import ptcr_density, ptcr_fraction
 
 
 def main() -> int:
@@ -52,12 +22,12 @@ def main() -> int:
     out_dir = run_dir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    fraction = _ptcr_fraction(
+    fraction = ptcr_fraction(
         args.mean_lck_activity,
         args.phosphorylation_rate,
         args.dephosphorylation_rate,
     )
-    density = _ptcr_density(fraction, args.tcr_density)
+    density = ptcr_density(fraction, args.tcr_density)
 
     payload = {
         "ptcr_fraction": fraction,
