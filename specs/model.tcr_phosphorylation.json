@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "tcr_phosphorylation",
+    "version": "0.1.0",
+    "artifact": {
+      "type": "local",
+      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.tcr_phosphorylation"]
+    }
+  },
+  "runner": {
+    "mode": "local_process",
+    "resources": { "cpus": 1, "mem_gb": 1, "walltime_min": 1 }
+  },
+  "io_schema": {
+    "inputs": [
+      { "name": "mean_lck_activity", "type": "float", "units": "a.u.", "support": [0.0, 500.0] },
+      { "name": "tcr_density", "type": "float", "units": "molecules/um^2", "support": [50.0, 300.0] },
+      { "name": "phosphorylation_rate", "type": "float", "units": "1/s", "support": [0.01, 0.5] },
+      { "name": "dephosphorylation_rate", "type": "float", "units": "1/s", "support": [0.01, 1.0] }
+    ],
+    "outputs": [
+      { "name": "ptcr_fraction", "type": "float", "units": "a.u." },
+      { "name": "ptcr_density", "type": "float", "units": "molecules/um^2" }
+    ]
+  },
+  "design": {
+    "strategy": "sobol",
+    "sobol": {
+      "n_points": 64,
+      "ranges": {
+        "mean_lck_activity": [0.0, 500.0],
+        "tcr_density": [50.0, 300.0],
+        "phosphorylation_rate": [0.01, 0.5],
+        "dephosphorylation_rate": [0.01, 1.0]
+      }
+    }
+  },
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [
+      { "var": "mean_lck_activity", "to": { "kind": "cli_arg", "key": "--mean_lck_activity" } },
+      { "var": "tcr_density", "to": { "kind": "cli_arg", "key": "--tcr_density" } },
+      { "var": "phosphorylation_rate", "to": { "kind": "cli_arg", "key": "--phosphorylation_rate" } },
+      { "var": "dephosphorylation_rate", "to": { "kind": "cli_arg", "key": "--dephosphorylation_rate" } }
+    ],
+    "output_mapping": [
+      { "var": "ptcr_fraction", "from": { "kind": "file", "path": "out/phosphorylation.json" } },
+      { "var": "ptcr_density", "from": { "kind": "file", "path": "out/phosphorylation.json" } }
+    ]
+  },
+  "reproducibility": { "seed": 42 },
+  "storage": { "root": "projects/tcr_signaling/store" }
+}

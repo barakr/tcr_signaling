@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "name": "tcr_signaling_metamodel",
+  "ppl_backend": "pymc",
+  "surrogate_refs": [
+    "projects/tcr_signaling/artifacts/surrogate_membrane_topography.artifact.json",
+    "projects/tcr_signaling/artifacts/surrogate_kinetic_segregation.artifact.json",
+    "projects/tcr_signaling/artifacts/surrogate_lck_activity.artifact.json",
+    "projects/tcr_signaling/artifacts/surrogate_tcr_phosphorylation.artifact.json"
+  ],
+  "variables": [
+    {"name": "contact_radius", "type": "scalar", "units": "um"},
+    {"name": "patch_size", "type": "scalar", "units": "um"},
+    {"name": "contact_fraction", "type": "scalar"},
+    {"name": "cd45_bulk_density", "type": "scalar", "units": "molecules/um^2"},
+    {"name": "cd45_boundary_density", "type": "scalar", "units": "molecules/um^2"},
+    {"name": "lck_decay_length", "type": "scalar", "units": "um"},
+    {"name": "lck_activation_rate", "type": "scalar", "units": "1/s"},
+    {"name": "mean_lck_activity", "type": "scalar"},
+    {"name": "tcr_density", "type": "scalar", "units": "molecules/um^2"},
+    {"name": "phosphorylation_rate", "type": "scalar", "units": "1/s"},
+    {"name": "dephosphorylation_rate", "type": "scalar", "units": "1/s"},
+    {"name": "ptcr_fraction", "type": "scalar"}
+  ],
+  "couplings": [
+    {
+      "kind": "gaussian_link",
+      "source": "contact_fraction",
+      "target": "contact_fraction",
+      "transform": {"kind": "identity"},
+      "sigma": 0.05
+    },
+    {
+      "kind": "gaussian_link",
+      "source": "cd45_boundary_density",
+      "target": "cd45_boundary_density",
+      "transform": {"kind": "identity"},
+      "sigma": 20.0
+    },
+    {
+      "kind": "gaussian_link",
+      "source": "mean_lck_activity",
+      "target": "mean_lck_activity",
+      "transform": {"kind": "identity"},
+      "sigma": 10.0
+    }
+  ],
+  "priors": [
+    {"variable": "contact_radius", "distribution": {"kind": "normal", "loc": 1.0, "scale": 0.3}},
+    {"variable": "patch_size", "distribution": {"kind": "normal", "loc": 2.0, "scale": 0.5}},
+    {"variable": "cd45_bulk_density", "distribution": {"kind": "normal", "loc": 300.0, "scale": 100.0}},
+    {"variable": "lck_decay_length", "distribution": {"kind": "normal", "loc": 0.07, "scale": 0.02}},
+    {"variable": "lck_activation_rate", "distribution": {"kind": "normal", "loc": 0.5, "scale": 0.2}},
+    {"variable": "tcr_density", "distribution": {"kind": "normal", "loc": 150.0, "scale": 50.0}},
+    {"variable": "phosphorylation_rate", "distribution": {"kind": "normal", "loc": 0.1, "scale": 0.05}},
+    {"variable": "dephosphorylation_rate", "distribution": {"kind": "normal", "loc": 0.2, "scale": 0.1}}
+  ]
+}

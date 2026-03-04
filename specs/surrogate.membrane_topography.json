@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "name": "surrogate_membrane_topography",
+  "kind": "conditional",
+  "inputs": ["contact_radius", "patch_size"],
+  "outputs": ["contact_fraction"],
+  "backend": "pymc_gp",
+  "backend_config": {
+    "draws": 500,
+    "tune": 200,
+    "chains": 2,
+    "target_accept": 0.9
+  },
+  "dataset_ref": "projects/tcr_signaling/store",
+  "seed": 42
+}

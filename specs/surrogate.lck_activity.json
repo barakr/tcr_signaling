@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "name": "surrogate_lck_activity",
+  "kind": "conditional",
+  "inputs": ["cd45_boundary_density", "lck_decay_length", "lck_activation_rate", "contact_radius"],
+  "outputs": ["mean_lck_activity"],
+  "backend": "pymc_gp",
+  "backend_config": {
+    "draws": 500,
+    "tune": 200,
+    "chains": 2,
+    "target_accept": 0.9
+  },
+  "dataset_ref": "projects/tcr_signaling/store",
+  "seed": 42
+}

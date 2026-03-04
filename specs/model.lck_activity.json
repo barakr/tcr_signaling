@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "lck_activity",
+    "version": "0.1.0",
+    "artifact": {
+      "type": "local",
+      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.lck_activity"]
+    }
+  },
+  "runner": {
+    "mode": "local_process",
+    "resources": { "cpus": 1, "mem_gb": 1, "walltime_min": 1 }
+  },
+  "io_schema": {
+    "inputs": [
+      { "name": "cd45_boundary_density", "type": "float", "units": "molecules/um^2", "support": [100.0, 1000.0] },
+      { "name": "lck_decay_length", "type": "float", "units": "um", "support": [0.03, 0.15] },
+      { "name": "lck_activation_rate", "type": "float", "units": "1/s", "support": [0.1, 1.0] },
+      { "name": "contact_radius", "type": "float", "units": "um", "support": [0.5, 2.0] }
+    ],
+    "outputs": [
+      { "name": "mean_lck_activity", "type": "float", "units": "a.u." }
+    ]
+  },
+  "design": {
+    "strategy": "sobol",
+    "sobol": {
+      "n_points": 64,
+      "ranges": {
+        "cd45_boundary_density": [100.0, 1000.0],
+        "lck_decay_length": [0.03, 0.15],
+        "lck_activation_rate": [0.1, 1.0],
+        "contact_radius": [0.5, 2.0]
+      }
+    }
+  },
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [
+      { "var": "cd45_boundary_density", "to": { "kind": "cli_arg", "key": "--cd45_boundary_density" } },
+      { "var": "lck_decay_length", "to": { "kind": "cli_arg", "key": "--lck_decay_length" } },
+      { "var": "lck_activation_rate", "to": { "kind": "cli_arg", "key": "--lck_activation_rate" } },
+      { "var": "contact_radius", "to": { "kind": "cli_arg", "key": "--contact_radius" } }
+    ],
+    "output_mapping": [
+      { "var": "mean_lck_activity", "from": { "kind": "file", "path": "out/lck_activity.json" } }
+    ]
+  },
+  "reproducibility": { "seed": 42 },
+  "storage": { "root": "projects/tcr_signaling/store" }
+}

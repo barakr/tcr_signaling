@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "membrane_topography",
+    "version": "0.1.0",
+    "artifact": {
+      "type": "local",
+      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.membrane_topography"]
+    }
+  },
+  "runner": {
+    "mode": "local_process",
+    "resources": { "cpus": 1, "mem_gb": 1, "walltime_min": 1 }
+  },
+  "io_schema": {
+    "inputs": [
+      { "name": "contact_radius", "type": "float", "units": "um", "support": [0.5, 2.0] },
+      { "name": "patch_size", "type": "float", "units": "um", "support": [2.0, 4.0] }
+    ],
+    "outputs": [
+      { "name": "contact_fraction", "type": "float", "units": "a.u." },
+      { "name": "contact_perimeter_um", "type": "float", "units": "um" }
+    ]
+  },
+  "design": {
+    "strategy": "grid",
+    "grid": {
+      "contact_radius": [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+      "patch_size": [2.0, 3.0, 4.0]
+    }
+  },
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [
+      { "var": "contact_radius", "to": { "kind": "cli_arg", "key": "--contact_radius" } },
+      { "var": "patch_size", "to": { "kind": "cli_arg", "key": "--patch_size" } }
+    ],
+    "output_mapping": [
+      { "var": "contact_fraction", "from": { "kind": "file", "path": "out/topography.json" } },
+      { "var": "contact_perimeter_um", "from": { "kind": "file", "path": "out/topography.json" } }
+    ]
+  },
+  "reproducibility": { "seed": 42 },
+  "storage": { "root": "projects/tcr_signaling/store" }
+}
