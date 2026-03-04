@@ -2,8 +2,8 @@
   "schema_version": "1.0",
   "name": "surrogate_kinetic_segregation",
   "kind": "conditional",
-  "inputs": ["contact_fraction", "cd45_bulk_density"],
-  "outputs": ["cd45_boundary_density"],
+  "inputs": ["time_sec", "rigidity_kT_nm2"],
+  "outputs": ["depletion_width_nm"],
   "backend": "pymc_gp",
   "backend_config": {
     "draws": 500,

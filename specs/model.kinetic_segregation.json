@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "model": {
     "name": "kinetic_segregation",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "artifact": {
       "type": "local",
       "entrypoint": ["python", "-m", "projects.tcr_signaling.models.kinetic_segregation"]
@@ -10,32 +10,32 @@
   },
   "runner": {
     "mode": "local_process",
-    "resources": { "cpus": 1, "mem_gb": 1, "walltime_min": 1 }
+    "resources": { "cpus": 1, "mem_gb": 2, "walltime_min": 5 }
   },
   "io_schema": {
     "inputs": [
-      { "name": "contact_fraction", "type": "float", "units": "a.u.", "support": [0.0, 1.0] },
-      { "name": "cd45_bulk_density", "type": "float", "units": "molecules/um^2", "support": [100.0, 500.0] }
+      { "name": "time_sec", "type": "float", "units": "sec", "support": [0.0, 100.0] },
+      { "name": "rigidity_kT_nm2", "type": "float", "units": "kT", "support": [0.0, 100.0] }
     ],
     "outputs": [
-      { "name": "cd45_boundary_density", "type": "float", "units": "molecules/um^2" }
+      { "name": "depletion_width_nm", "type": "float", "units": "nm" }
     ]
   },
   "design": {
     "strategy": "grid",
     "grid": {
-      "contact_fraction": [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
-      "cd45_bulk_density": [100.0, 200.0, 300.0, 400.0, 500.0]
+      "time_sec": [5.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0],
+      "rigidity_kT_nm2": [1.0, 5.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0]
     }
   },
   "adapter": {
     "id": "python_cli_adapter_v1",
     "input_mapping": [
-      { "var": "contact_fraction", "to": { "kind": "cli_arg", "key": "--contact_fraction" } },
-      { "var": "cd45_bulk_density", "to": { "kind": "cli_arg", "key": "--cd45_bulk_density" } }
+      { "var": "time_sec", "to": { "kind": "cli_arg", "key": "--time_sec" } },
+      { "var": "rigidity_kT_nm2", "to": { "kind": "cli_arg", "key": "--rigidity_kT_nm2" } }
     ],
     "output_mapping": [
-      { "var": "cd45_boundary_density", "from": { "kind": "file", "path": "out/segregation.json" } }
+      { "var": "depletion_width_nm", "from": { "kind": "file", "path": "out/segregation.json" } }
     ]
   },
   "reproducibility": { "seed": 42 },
