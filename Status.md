@@ -6,6 +6,19 @@
 
 ## Decision Log
 
+### 2026-03-05: Add tiered example specs (fast/regular/extensive)
+- Benchmarked KS model: grid_size dominates runtime (O(grid_size^4) per step
+  due to full bending energy recomputation).
+- Current default spec (grid=64, 56 DOE points, auto-steps) takes ~135 min.
+- Created three tiered specs in `examples/specs/`:
+  - **fast**: grid=16, 10 steps, 30 molecules, 9 DOE points (~10 sec)
+  - **regular**: grid=32, 20 steps, 90 molecules, 16 DOE points (~1-3 min)
+  - **extensive**: grid=64, auto steps, 150 molecules, 56 DOE points (~20-30 min)
+- Example script now accepts `--profile fast|regular|extensive` (default: fast).
+- Model simulation params (grid_size, n_tcr, n_cd45, n_steps) passed through
+  adapter as single-value DOE grid entries — no framework changes needed.
+- Production spec in `specs/` left unchanged for full reproduction.
+
 ### 2026-03-05: Fix KS model MC loop + self-contained example specs
 - **MC loop fix**: Changed from single-particle stepping to full sweeps — each
   `n_steps` iteration now updates every molecule and every grid cell once,

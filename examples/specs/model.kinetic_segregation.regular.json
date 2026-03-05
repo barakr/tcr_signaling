@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "kinetic_segregation",
+    "version": "0.2.0",
+    "artifact": {
+      "type": "local",
+      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.kinetic_segregation"]
+    }
+  },
+  "runner": {
+    "mode": "local_process",
+    "resources": { "cpus": 1, "mem_gb": 2, "walltime_min": 5 }
+  },
+  "io_schema": {
+    "inputs": [
+      { "name": "time_sec", "type": "float", "units": "sec", "support": [0.0, 100.0] },
+      { "name": "rigidity_kT_nm2", "type": "float", "units": "kT", "support": [0.0, 100.0] },
+      { "name": "n_tcr", "type": "int", "support": [30, 30] },
+      { "name": "n_cd45", "type": "int", "support": [60, 60] },
+      { "name": "n_steps", "type": "int", "support": [20, 20] },
+      { "name": "grid_size", "type": "int", "support": [32, 32] }
+    ],
+    "outputs": [
+      { "name": "depletion_width_nm", "type": "float", "units": "nm" }
+    ]
+  },
+  "design": {
+    "strategy": "grid",
+    "grid": {
+      "time_sec": [5.0, 20.0, 50.0, 100.0],
+      "rigidity_kT_nm2": [1.0, 10.0, 30.0, 100.0],
+      "n_tcr": [30],
+      "n_cd45": [60],
+      "n_steps": [20],
+      "grid_size": [32]
+    }
+  },
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [
+      { "var": "time_sec", "to": { "kind": "cli_arg", "key": "--time_sec" } },
+      { "var": "rigidity_kT_nm2", "to": { "kind": "cli_arg", "key": "--rigidity_kT_nm2" } },
+      { "var": "n_tcr", "to": { "kind": "cli_arg", "key": "--n_tcr" } },
+      { "var": "n_cd45", "to": { "kind": "cli_arg", "key": "--n_cd45" } },
+      { "var": "n_steps", "to": { "kind": "cli_arg", "key": "--n_steps" } },
+      { "var": "grid_size", "to": { "kind": "cli_arg", "key": "--grid_size" } }
+    ],
+    "output_mapping": [
+      { "var": "depletion_width_nm", "from": { "kind": "file", "path": "out/segregation.json" } }
+    ]
+  },
+  "reproducibility": { "seed": 42 },
+  "storage": { "root": "projects/tcr_signaling/store" }
+}
