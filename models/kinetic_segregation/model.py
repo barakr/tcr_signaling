@@ -83,6 +83,7 @@ def simulate_ks(
     grid_size: int = 32,
     n_steps: int | None = None,
     seed: int = 42,
+    snapshot_interval: int = 0,
 ) -> dict:
     """Run kinetic segregation Monte Carlo simulation.
 
@@ -96,11 +97,12 @@ def simulate_ks(
     grid_size : Number of grid points per dimension for membrane height field.
     n_steps : Total MC steps. If None, derived from time_sec.
     seed : Random seed.
+    snapshot_interval : If > 0, record (tcr_pos, cd45_pos, h) every N steps.
 
     Returns
     -------
     dict with keys: depletion_width_nm, final_tcr_mean_r, final_cd45_mean_r,
-                    accept_rate, n_steps_actual
+                    accept_rate, n_steps_actual, and optionally snapshots
     """
     rng = np.random.default_rng(seed)
     patch = PATCH_SIZE_NM
@@ -129,8 +131,15 @@ def simulate_ks(
 
     accepted = 0
     total_proposals = 0
+    snapshots: list[dict] = []
 
-    for _ in range(n_steps):
+    # Record initial snapshot
+    if snapshot_interval > 0:
+        snapshots.append(
+            {"step": 0, "tcr_pos": tcr_pos.copy(), "cd45_pos": cd45_pos.copy(), "h": h.copy()}
+        )
+
+    for step_i in range(n_steps):
         # --- Phase 1: Update molecule positions ---
         for mol_set, is_tcr in [(tcr_pos, True), (cd45_pos, False)]:
             idx = rng.integers(0, len(mol_set))
@@ -195,6 +204,17 @@ def simulate_ks(
         else:
             h[gi, gj] = old_h_val
 
+        # Record snapshot
+        if snapshot_interval > 0 and (step_i + 1) % snapshot_interval == 0:
+            snapshots.append(
+                {
+                    "step": step_i + 1,
+                    "tcr_pos": tcr_pos.copy(),
+                    "cd45_pos": cd45_pos.copy(),
+                    "h": h.copy(),
+                }
+            )
+
     depletion_width = _compute_depletion_width(tcr_pos, cd45_pos, patch)
     center = patch / 2.0
     tcr_r = np.sqrt(np.sum((tcr_pos - center) ** 2, axis=1))
@@ -202,10 +222,13 @@ def simulate_ks(
 
     accept_rate = accepted / total_proposals if total_proposals > 0 else 0.0
 
-    return {
+    result = {
         "depletion_width_nm": depletion_width,
         "final_tcr_mean_r_nm": float(np.mean(tcr_r)),
         "final_cd45_mean_r_nm": float(np.mean(cd45_r)),
         "accept_rate": accept_rate,
         "n_steps_actual": n_steps,
     }
+    if snapshot_interval > 0:
+        result["snapshots"] = snapshots
+    return result
