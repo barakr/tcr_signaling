@@ -15,18 +15,76 @@ from numpy.typing import NDArray
 def bending_energy(h: NDArray[np.float64], kappa: float, dx: float) -> float:
     """Discrete membrane bending energy: E = (kappa/2) * sum(laplacian(h)^2) * dx^2.
 
+    Uses periodic boundary conditions to avoid artificial edge effects.
+
     Parameters
     ----------
     h : 2D array of membrane heights (nm).
     kappa : Bending rigidity in kT (already in energy units).
     dx : Grid spacing in nm.
     """
-    # Discrete Laplacian via finite differences with zero-padding at boundaries
-    lap = np.zeros_like(h)
-    lap[1:-1, :] += h[:-2, :] + h[2:, :] - 2.0 * h[1:-1, :]
-    lap[:, 1:-1] += h[:, :-2] + h[:, 2:] - 2.0 * h[:, 1:-1]
-    lap /= dx**2
-    return float(0.5 * kappa * np.sum(lap**2) * dx**2)
+    dx2 = dx * dx
+    lap = (
+        np.roll(h, 1, axis=0) + np.roll(h, -1, axis=0)
+        + np.roll(h, 1, axis=1) + np.roll(h, -1, axis=1)
+        - 4.0 * h
+    ) / dx2
+    return float(0.5 * kappa * np.sum(lap**2) * dx2)
+
+
+def _lap_at(h: NDArray[np.float64], i: int, j: int, n: int, dx2: float) -> float:
+    """Compute the discrete Laplacian at (i,j) with periodic BCs."""
+    return (
+        h[(i - 1) % n, j] + h[(i + 1) % n, j]
+        + h[i, (j - 1) % n] + h[i, (j + 1) % n]
+        - 4.0 * h[i, j]
+    ) / dx2
+
+
+def bending_energy_delta(
+    h: NDArray[np.float64],
+    kappa: float,
+    dx: float,
+    gi: int,
+    gj: int,
+    old_val: float,
+    new_val: float,
+) -> float:
+    """Compute change in bending energy when h[gi,gj] changes from old_val to new_val.
+
+    Instead of recomputing the full bending energy (O(N^2)), this computes the
+    local delta in O(1) by only considering the affected Laplacian cells.
+    Uses periodic BCs matching bending_energy().
+
+    h must already contain new_val at h[gi,gj].
+    """
+    n = h.shape[0]
+    dx2 = dx * dx
+    delta_h = new_val - old_val
+    delta_e = 0.0
+
+    # Affected cells: (gi,gj) and its 4 periodic neighbors.
+    affected = [
+        (gi, gj),
+        ((gi - 1) % n, gj),
+        ((gi + 1) % n, gj),
+        (gi, (gj - 1) % n),
+        (gi, (gj + 1) % n),
+    ]
+
+    for ai, aj in affected:
+        new_lap = _lap_at(h, ai, aj, n, dx2)
+        # How much delta_h changed this cell's Laplacian:
+        # Self: h[i,j] appears as -4*h in the stencil.
+        # Neighbor: h[gi,gj] appears as +h in the stencil.
+        if ai == gi and aj == gj:
+            shift = -4.0 * delta_h / dx2
+        else:
+            shift = delta_h / dx2
+        old_lap = new_lap - shift
+        delta_e += new_lap * new_lap - old_lap * old_lap
+
+    return float(0.5 * kappa * delta_e * dx2)
 
 
 def tcr_pmhc_potential(h_at_mol: float, u_assoc: float, sigma_bind: float = 3.0) -> float:

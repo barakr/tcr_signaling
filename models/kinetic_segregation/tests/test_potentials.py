@@ -10,6 +10,7 @@ import pytest
 
 from models.kinetic_segregation.potentials import (
     bending_energy,
+    bending_energy_delta,
     cd45_repulsion,
     tcr_pmhc_potential,
 )
@@ -42,6 +43,63 @@ class TestBendingEnergy:
         e_pos = bending_energy(h, kappa=5.0, dx=50.0)
         e_neg = bending_energy(-h, kappa=5.0, dx=50.0)
         assert pytest.approx(e_pos) == e_neg
+
+
+class TestBendingEnergyDelta:
+    """Verify that bending_energy_delta matches full recomputation."""
+
+    def _check_delta(self, h, gi, gj, kappa=10.0, dx=50.0):
+        """Helper: perturb h[gi,gj] and compare delta vs full recomputation."""
+        rng = np.random.default_rng(gi * 100 + gj)
+        old_val = h[gi, gj]
+        new_val = old_val + rng.normal(0, 2.0)
+
+        old_energy = bending_energy(h, kappa, dx)
+        h[gi, gj] = new_val
+        new_energy = bending_energy(h, kappa, dx)
+        expected = new_energy - old_energy
+
+        delta = bending_energy_delta(h, kappa, dx, gi, gj, old_val, new_val)
+        assert delta == pytest.approx(expected, abs=1e-10), (
+            f"Delta mismatch at ({gi},{gj}): delta={delta}, expected={expected}"
+        )
+        # Restore for caller reuse
+        h[gi, gj] = old_val
+
+    def test_interior_cells(self):
+        """Delta matches full recomputation for interior cells."""
+        rng = np.random.default_rng(42)
+        h = rng.uniform(0, 50, (16, 16))
+        for gi, gj in [(5, 5), (8, 8), (3, 10), (14, 14)]:
+            self._check_delta(h.copy(), gi, gj)
+
+    def test_boundary_cells(self):
+        """Delta matches full recomputation for boundary cells."""
+        rng = np.random.default_rng(99)
+        h = rng.uniform(0, 50, (16, 16))
+        for gi, gj in [(0, 0), (0, 8), (15, 15), (15, 0), (0, 15), (8, 0), (8, 15)]:
+            self._check_delta(h.copy(), gi, gj)
+
+    def test_near_boundary_cells(self):
+        """Delta matches for cells adjacent to the boundary."""
+        rng = np.random.default_rng(77)
+        h = rng.uniform(0, 50, (16, 16))
+        for gi, gj in [(1, 1), (1, 14), (14, 1), (14, 14)]:
+            self._check_delta(h.copy(), gi, gj)
+
+    def test_flat_membrane_zero_delta(self):
+        """Perturbing a flat membrane and then restoring gives zero delta."""
+        h = np.ones((16, 16)) * 35.0
+        delta = bending_energy_delta(h, 10.0, 50.0, 8, 8, 35.0, 35.0)
+        assert delta == pytest.approx(0.0, abs=1e-15)
+
+    def test_many_random_cells(self):
+        """Stress test: delta matches full recomputation for 50 random cells."""
+        rng = np.random.default_rng(123)
+        h = rng.uniform(0, 50, (20, 20))
+        for _ in range(50):
+            gi, gj = rng.integers(0, 20, size=2)
+            self._check_delta(h.copy(), gi, gj, kappa=8.0, dx=100.0)
 
 
 class TestTcrPmhcPotential:
