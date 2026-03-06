@@ -57,7 +57,7 @@ echo ""
 
 # Step 4: Find the latest sweep CSV and plot
 STORE_DIR="$PROJECT_DIR/store"
-LATEST_CSV=$(find "$STORE_DIR/sweeps" -name "sweep_rows.csv" -type f 2>/dev/null | sort | tail -1)
+LATEST_CSV=$(find "$STORE_DIR/sweeps" -name "sweep_rows.csv" -type f -print0 2>/dev/null | xargs -0 ls -t | head -1)
 
 if [ -z "$LATEST_CSV" ]; then
     echo "Error: no sweep_rows.csv found in $STORE_DIR/sweeps/" >&2
