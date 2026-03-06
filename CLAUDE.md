@@ -73,6 +73,8 @@ bayesmm surrogate fit specs/surrogate.kinetic_segregation.pymc_gp.json
    without needing to know about the repo structure
 5. **Seeds and provenance** — all model runs must be reproducible; record seeds
    in specs and decision log
+6. **Commit regularly** — make git commits at logical milestones (fix verified, feature
+   complete, refactor done). Do not accumulate large uncommitted changesets
 
 ## Relationship to Parent Repo
 
