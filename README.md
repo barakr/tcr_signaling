@@ -8,7 +8,7 @@ accounts for its nanoscale activation patterns" (Neve-Oz, Sherman & Raveh,
 
 - **Title**: Bayesian metamodeling of early T-cell antigen receptor signaling
   accounts for its nanoscale activation patterns
-- **Authors**: Y. Neve-Oz, E. Sherman, B. Bhatt Raveh
+- **Authors**: Y. Neve-Oz, E. Sherman, B. Barak Raveh
 - **Journal**: Frontiers in Immunology, 2024
 - **DOI**: 10.3389/fimmu.2024.1437672
 
