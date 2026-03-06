@@ -73,13 +73,22 @@ python "$SCRIPT_DIR/plot_sweep.py" \
     --title "KS depletion width ($PROFILE profile, CLI)"
 echo ""
 
-# Step 5: Optional surrogate fit
+# Step 5: Optional surrogate fit + comparison plot
 if [ "$WITH_SURROGATE" = "surrogate" ]; then
     SURROGATE_SPEC="$SCRIPT_DIR/specs/surrogate.kinetic_segregation.pymc_gp.json"
     if [ -f "$SURROGATE_SPEC" ]; then
-        echo "--- Step 5: Fit surrogate from sweep data ---"
+        echo "--- Step 5: Fit surrogate + plot comparison ---"
         bayesmm surrogate fit "$SURROGATE_SPEC"
         echo ""
+
+        # Generate 3-panel comparison: sweep | surrogate mean | surrogate std
+        python "$SCRIPT_DIR/plot_sweep.py" \
+            --csv "$LATEST_CSV" \
+            --output "$ARTIFACTS_DIR" \
+            --title "KS depletion width ($PROFILE profile, CLI)" \
+            --surrogate-spec "$SURROGATE_SPEC"
+        echo ""
+
         echo "--- Surrogate artifacts ---"
         bayesmm surrogate list
     else
@@ -91,6 +100,9 @@ echo ""
 echo "Output locations:"
 echo "  Sweep CSV:  $LATEST_CSV"
 echo "  Heatmap:    $ARTIFACTS_DIR/ks_sweep_heatmap.png"
+if [ "$WITH_SURROGATE" = "surrogate" ]; then
+echo "  Surrogate:  $ARTIFACTS_DIR/ks_surrogate_pymc_gp_heatmap.png"
+fi
 echo "  Store:      $STORE_DIR/sweeps/"
 echo ""
 echo "Done."
