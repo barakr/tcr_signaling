@@ -75,11 +75,20 @@ class TestComputeDepletionWidth:
 
 
 # ---------------------------------------------------------------------------
-# Full simulation
+# Full simulation — n_steps is now full MC sweeps (each sweep updates every
+# molecule and every grid cell), so values are much smaller than before.
 # ---------------------------------------------------------------------------
 class TestSimulateKs:
     def test_returns_required_keys(self):
-        result = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=100, seed=42)
+        result = simulate_ks(
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_steps=3,
+            seed=42,
+            grid_size=8,
+            n_tcr=10,
+            n_cd45=20,
+        )
         assert "depletion_width_nm" in result
         assert "final_tcr_mean_r_nm" in result
         assert "final_cd45_mean_r_nm" in result
@@ -87,62 +96,196 @@ class TestSimulateKs:
         assert "n_steps_actual" in result
 
     def test_depletion_width_positive(self):
-        result = simulate_ks(time_sec=50, rigidity_kT_nm2=20, n_steps=2000, seed=42)
+        result = simulate_ks(
+            time_sec=50,
+            rigidity_kT_nm2=20,
+            n_steps=10,
+            seed=42,
+            grid_size=16,
+            n_tcr=20,
+            n_cd45=40,
+        )
         assert result["depletion_width_nm"] > 0.0
 
     def test_tcr_closer_to_center_than_cd45(self):
         """TCR molecules should be closer to center than CD45 after simulation."""
-        result = simulate_ks(time_sec=50, rigidity_kT_nm2=20, n_steps=2000, seed=42)
+        result = simulate_ks(
+            time_sec=50,
+            rigidity_kT_nm2=20,
+            n_steps=20,
+            seed=42,
+            grid_size=16,
+            n_tcr=20,
+            n_cd45=40,
+        )
         assert result["final_tcr_mean_r_nm"] < result["final_cd45_mean_r_nm"]
 
     def test_accept_rate_reasonable(self):
         """Accept rate should be between 0 and 1."""
-        result = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=500, seed=42)
+        result = simulate_ks(
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_steps=5,
+            seed=42,
+            grid_size=8,
+            n_tcr=10,
+            n_cd45=20,
+        )
         assert 0.0 < result["accept_rate"] <= 1.0
 
     def test_deterministic_with_seed(self):
         """Same seed should give identical results."""
-        r1 = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=200, seed=123)
-        r2 = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=200, seed=123)
+        kwargs = dict(
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_steps=3,
+            seed=123,
+            grid_size=8,
+            n_tcr=10,
+            n_cd45=20,
+        )
+        r1 = simulate_ks(**kwargs)
+        r2 = simulate_ks(**kwargs)
         assert r1["depletion_width_nm"] == r2["depletion_width_nm"]
         assert r1["accept_rate"] == r2["accept_rate"]
 
     def test_different_seeds_differ(self):
         """Different seeds should produce different results."""
-        r1 = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=500, seed=1)
-        r2 = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=500, seed=2)
+        kwargs = dict(
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_steps=5,
+            grid_size=8,
+            n_tcr=10,
+            n_cd45=20,
+        )
+        r1 = simulate_ks(**kwargs, seed=1)
+        r2 = simulate_ks(**kwargs, seed=2)
         assert r1["depletion_width_nm"] != r2["depletion_width_nm"]
 
     def test_n_steps_auto_scaling(self):
         """When n_steps is None, it scales with time_sec."""
-        r_short = simulate_ks(time_sec=5, rigidity_kT_nm2=10, seed=42)
-        r_long = simulate_ks(time_sec=50, rigidity_kT_nm2=10, seed=42)
+        r_short = simulate_ks(
+            time_sec=5,
+            rigidity_kT_nm2=10,
+            seed=42,
+            grid_size=8,
+            n_tcr=5,
+            n_cd45=10,
+        )
+        r_long = simulate_ks(
+            time_sec=50,
+            rigidity_kT_nm2=10,
+            seed=42,
+            grid_size=8,
+            n_tcr=5,
+            n_cd45=10,
+        )
         assert r_short["n_steps_actual"] < r_long["n_steps_actual"]
 
     def test_custom_molecule_counts(self):
         """Simulation works with custom molecule counts."""
         result = simulate_ks(
-            time_sec=10, rigidity_kT_nm2=10, n_tcr=10, n_cd45=20, n_steps=100, seed=42
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_tcr=10,
+            n_cd45=20,
+            n_steps=3,
+            seed=42,
+            grid_size=8,
         )
         assert result["depletion_width_nm"] >= 0.0
 
     def test_small_grid(self):
         """Simulation works with small grid."""
-        result = simulate_ks(time_sec=10, rigidity_kT_nm2=10, grid_size=8, n_steps=100, seed=42)
+        result = simulate_ks(
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            grid_size=8,
+            n_steps=3,
+            seed=42,
+            n_tcr=10,
+            n_cd45=20,
+        )
         assert result["depletion_width_nm"] >= 0.0
 
     def test_snapshot_recording(self):
         """Snapshot interval records intermediate states."""
         result = simulate_ks(
-            time_sec=10, rigidity_kT_nm2=10, n_steps=100, seed=42, snapshot_interval=25
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_steps=10,
+            seed=42,
+            snapshot_interval=5,
+            grid_size=8,
+            n_tcr=10,
+            n_cd45=20,
         )
         assert "snapshots" in result
-        # Initial + 4 snapshots at steps 25, 50, 75, 100
-        assert len(result["snapshots"]) == 5
+        # Initial + 2 snapshots at steps 5, 10
+        assert len(result["snapshots"]) == 3
         assert result["snapshots"][0]["step"] == 0
-        assert result["snapshots"][-1]["step"] == 100
+        assert result["snapshots"][-1]["step"] == 10
 
     def test_no_snapshots_by_default(self):
         """No snapshots key when snapshot_interval is 0."""
-        result = simulate_ks(time_sec=10, rigidity_kT_nm2=10, n_steps=100, seed=42)
+        result = simulate_ks(
+            time_sec=10,
+            rigidity_kT_nm2=10,
+            n_steps=3,
+            seed=42,
+            grid_size=8,
+            n_tcr=10,
+            n_cd45=20,
+        )
         assert "snapshots" not in result
+
+    def test_explicit_n_steps_scales_with_time(self):
+        """When n_steps is explicit, longer time still gets more sweeps."""
+        r_short = simulate_ks(
+            time_sec=5,
+            rigidity_kT_nm2=10,
+            n_steps=10,
+            seed=42,
+            grid_size=8,
+            n_tcr=5,
+            n_cd45=10,
+        )
+        r_long = simulate_ks(
+            time_sec=100,
+            rigidity_kT_nm2=10,
+            n_steps=10,
+            seed=42,
+            grid_size=8,
+            n_tcr=5,
+            n_cd45=10,
+        )
+        assert r_short["n_steps_actual"] < r_long["n_steps_actual"]
+
+    def test_depletion_increases_with_time(self):
+        """At moderate rigidity, mean depletion over seeds increases with time.
+
+        Uses kappa=30 (stiff enough to maintain the tight-contact depression),
+        extreme time contrast (5s vs 500s), and averages over seeds to overcome
+        per-run MC noise.
+        """
+        import statistics
+
+        kwargs = dict(
+            rigidity_kT_nm2=30.0, n_steps=10, grid_size=16, n_tcr=30, n_cd45=60,
+        )
+        short_vals = [
+            simulate_ks(time_sec=5.0, seed=s, **kwargs)["depletion_width_nm"]
+            for s in range(10)
+        ]
+        long_vals = [
+            simulate_ks(time_sec=500.0, seed=s, **kwargs)["depletion_width_nm"]
+            for s in range(10)
+        ]
+
+        mean_short = statistics.mean(short_vals)
+        mean_long = statistics.mean(long_vals)
+        assert mean_long > mean_short, (
+            f"Expected mean depletion at t=500 ({mean_long:.1f}) > "
+            f"t=5 ({mean_short:.1f})"
+        )
