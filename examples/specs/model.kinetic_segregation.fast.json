@@ -16,10 +16,10 @@
     "inputs": [
       { "name": "time_sec", "type": "float", "units": "sec", "support": [0.0, 100.0] },
       { "name": "rigidity_kT_nm2", "type": "float", "units": "kT", "support": [0.0, 100.0] },
-      { "name": "n_tcr", "type": "int", "support": [10, 10] },
-      { "name": "n_cd45", "type": "int", "support": [20, 20] },
-      { "name": "n_steps", "type": "int", "support": [10, 10] },
-      { "name": "grid_size", "type": "int", "support": [16, 16] }
+      { "name": "n_tcr", "type": "int", "units": "count" },
+      { "name": "n_cd45", "type": "int", "units": "count" },
+      { "name": "n_steps", "type": "int", "units": "count" },
+      { "name": "grid_size", "type": "int", "units": "cells" }
     ],
     "outputs": [
       { "name": "depletion_width_nm", "type": "float", "units": "nm" }
