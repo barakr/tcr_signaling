@@ -1,0 +1,32 @@
+[
+  {
+    "grid_size": 16,
+    "n_steps": 50,
+    "python_sec": 0.47763745801057667,
+    "c_cpu_sec": 0.00939437496708706,
+    "c_gpu_sec": 0.072283832996618,
+    "depletion_python": 414.76843294682897,
+    "depletion_c_cpu": 414.214175,
+    "depletion_c_gpu": 333.205395
+  },
+  {
+    "grid_size": 32,
+    "n_steps": 50,
+    "python_sec": 1.3873673750204034,
+    "c_cpu_sec": 0.015741749957669526,
+    "c_gpu_sec": 0.0701658750185743,
+    "depletion_python": 374.006338998886,
+    "depletion_c_cpu": 385.147524,
+    "depletion_c_gpu": 349.387001
+  },
+  {
+    "grid_size": 64,
+    "n_steps": 50,
+    "python_sec": 5.313456250005402,
+    "c_cpu_sec": 0.04695170803461224,
+    "c_gpu_sec": 0.08207274996675551,
+    "depletion_python": 370.41833701122454,
+    "depletion_c_cpu": 323.006748,
+    "depletion_c_gpu": 380.70509
+  }
+]
