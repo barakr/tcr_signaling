@@ -1,0 +1,368 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{natbib}
+
+\geometry{margin=2.5cm}
+
+\title{Methods: Kinetic Segregation Model of TCR--CD45 Spatial
+  Exclusion on a 2D Membrane Patch}
+\author{Based on Neve-Oz, Sherman \& Raveh,
+  \textit{Frontiers in Immunology}, 2024}
+\date{}
+
+\begin{document}
+\maketitle
+
+%% ----------------------------------------------------------------
+\section{Model overview}
+
+The kinetic segregation (KS) model simulates the spatial segregation
+of T-cell receptor (TCR) and CD45 molecules on a
+$2\;\mu\text{m}\times2\;\mu\text{m}$ membrane patch.  A 2D membrane
+height field $h(x,y)$ is discretised on a regular grid of spacing
+$\Delta x = L / N_\text{grid}$, where $L=2000$~nm and
+$N_\text{grid}$ is typically 64.  TCR molecules ($N_\text{TCR}$,
+default 50) diffuse on this surface and are attracted to
+tight-contact regions (low $h$), while CD45 molecules
+($N_\text{CD45}$, default 100) are sterically excluded from regions
+where $h$ is smaller than the CD45 ectodomain height
+$h_\text{CD45}\approx35$~nm.
+
+The system is evolved with a Metropolis--Hastings Monte~Carlo (MC)
+algorithm at thermal energy $k_BT=1$ (all energies are expressed in
+units of $k_BT$).
+
+
+%% ----------------------------------------------------------------
+\section{System energy}
+
+The total energy of the system is the sum of three contributions:
+
+\begin{equation}
+  \label{eq:total}
+  E_\text{total}
+  \;=\;
+  E_\text{bend}\!\bigl[h\bigr]
+  \;+\;
+  \sum_{i=1}^{N_\text{TCR}} E_\text{TCR}\!\bigl(h(\mathbf{r}_i)\bigr)
+  \;+\;
+  \sum_{j=1}^{N_\text{CD45}} E_\text{CD45}\!\bigl(h(\mathbf{r}_j)\bigr)
+\end{equation}
+
+\noindent
+where $\mathbf{r}_i$ and $\mathbf{r}_j$ are the lateral positions of
+individual TCR and CD45 molecules, respectively, and
+$h(\mathbf{r})$ is the membrane height at that position (obtained by
+nearest-grid-point interpolation).
+
+
+%% ----------------------------------------------------------------
+\section{Potential energy terms}
+\label{sec:potentials}
+
+Table~\ref{tab:potentials} summarises all energy contributions, their
+functional forms, and default parameter values.
+
+\begin{table}[ht]
+  \centering
+  \caption{Energy terms in the kinetic segregation model.  All
+    energies are in units of $k_BT$; lengths are in nm.}
+  \label{tab:potentials}
+  \small
+  \begin{tabular}{@{}p{2.8cm}p{5.2cm}p{3.5cm}p{3.5cm}@{}}
+    \toprule
+    \textbf{Term} & \textbf{Expression} & \textbf{Parameters} &
+      \textbf{Description} \\
+    \midrule
+    Membrane bending &
+      $\displaystyle E_\text{bend}
+        = \frac{\kappa}{2}\sum_{i,j}
+          \bigl(\nabla^2_d h_{ij}\bigr)^2\,\Delta x^2$ &
+      $\kappa$: bending rigidity ($k_BT$); \newline
+      $\Delta x = L/N_\text{grid}$ &
+      Helfrich bending energy on a discrete grid with periodic BCs \\[6pt]
+    TCR--pMHC binding &
+      $\displaystyle E_\text{TCR}(h)
+        = -U_\text{assoc}\,
+          \exp\!\Bigl(-\frac{h^2}{2\sigma_\text{bind}^2}\Bigr)$ &
+      $U_\text{assoc}=20\;k_BT$; \newline
+      $\sigma_\text{bind}=3$~nm &
+      Gaussian attractive well centred at tight contact ($h=0$) \\[6pt]
+    CD45 steric repulsion &
+      $\displaystyle E_\text{CD45}(h)
+        = \begin{cases}
+            \tfrac{1}{2}\,k_\text{rep}\,(h_\text{CD45}-h)^2
+              & h < h_\text{CD45} \\
+            0 & h \ge h_\text{CD45}
+          \end{cases}$ &
+      $k_\text{rep}=1.0\;k_BT/\text{nm}^2$; \newline
+      $h_\text{CD45}=35$~nm &
+      Harmonic repulsive wall; excludes CD45 from tight contact \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+\subsection{Membrane bending energy}
+
+The bending energy follows the Helfrich Hamiltonian discretised on a
+square grid with periodic boundary conditions.  The discrete Laplacian
+at grid point $(i,j)$ is computed via the standard five-point stencil:
+
+\begin{equation}
+  \label{eq:laplacian}
+  \nabla^2_d\, h_{ij}
+  \;=\;
+  \frac{h_{i-1,j} + h_{i+1,j} + h_{i,j-1} + h_{i,j+1} - 4\,h_{ij}}
+       {\Delta x^2}
+\end{equation}
+
+\noindent
+with indices taken modulo $N_\text{grid}$ (periodic boundaries).  The
+full bending energy is then:
+
+\begin{equation}
+  \label{eq:bending}
+  E_\text{bend}
+  \;=\;
+  \frac{\kappa}{2}
+  \sum_{i=0}^{N_\text{grid}-1}\;
+  \sum_{j=0}^{N_\text{grid}-1}
+    \bigl(\nabla^2_d\, h_{ij}\bigr)^2\;\Delta x^2
+\end{equation}
+
+
+\subsection{TCR--pMHC binding potential}
+
+TCR molecules are attracted to regions of low membrane height
+(tight contact between the T-cell and antigen-presenting cell),
+modelling TCR--pMHC engagement.  The potential is a Gaussian well
+centred at $h=0$:
+
+\begin{equation}
+  \label{eq:tcr}
+  E_\text{TCR}(h) \;=\; -U_\text{assoc}\,
+    \exp\!\left(-\frac{h^2}{2\,\sigma_\text{bind}^2}\right)
+\end{equation}
+
+\noindent
+where $U_\text{assoc}=20\;k_BT$ is the association energy depth and
+$\sigma_\text{bind}=3$~nm is the spatial width of the binding well.
+
+
+\subsection{CD45 steric repulsion}
+
+CD45 has a large extracellular domain ($\sim$35~nm) and is sterically
+excluded from tight-contact zones.  This is modelled as a one-sided
+harmonic potential:
+
+\begin{equation}
+  \label{eq:cd45}
+  E_\text{CD45}(h) \;=\;
+    \begin{cases}
+      \displaystyle\frac{1}{2}\,k_\text{rep}\,
+        \bigl(h_\text{CD45} - h\bigr)^2
+        & \text{if } h < h_\text{CD45} \\[6pt]
+      0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+\noindent
+with $k_\text{rep} = 1.0\;k_BT/\text{nm}^2$ and
+$h_\text{CD45} = 35$~nm.
+
+
+%% ----------------------------------------------------------------
+\section{Monte Carlo algorithm}
+\label{sec:mcmc}
+
+The simulation uses a Metropolis--Hastings MC scheme with two
+alternating update phases per sweep.  Each \emph{sweep} updates every
+degree of freedom once (all molecules and all grid cells), ensuring
+ergodic sampling of the configuration space.
+
+Algorithm~\ref{alg:mc} gives the complete pseudocode.
+
+\begin{algorithm}[ht]
+\caption{Metropolis Monte Carlo for kinetic segregation}
+\label{alg:mc}
+\begin{algorithmic}[1]
+\Require $N_\text{steps}$, membrane grid $h$, positions
+  $\{\mathbf{r}^\text{TCR}_i\}$, $\{\mathbf{r}^\text{CD45}_j\}$,
+  parameters $\kappa, U_\text{assoc}, \sigma_\text{bind},
+  h_\text{CD45}, k_\text{rep}$
+\Ensure Final configuration $\{h, \mathbf{r}^\text{TCR},
+  \mathbf{r}^\text{CD45}\}$
+\Statex
+\For{$s = 1$ \textbf{to} $N_\text{steps}$}
+  \Statex \Comment{\textbf{Phase 1: Molecular moves}}
+  \For{each molecule $k$ in TCR $\cup$ CD45}
+    \State $\mathbf{r}_\text{old} \gets \mathbf{r}_k$
+    \State $E_\text{old} \gets E_\text{mol}(\mathbf{r}_k, h)$
+      \Comment{Eq.~\ref{eq:tcr} or \ref{eq:cd45}}
+    \State $\mathbf{r}_k \gets \mathbf{r}_k
+      + \mathcal{N}(0,\,\sigma_\text{step}^2)\;\hat{\mathbf{e}}$
+      \Comment{Gaussian displacement in $x,y$}
+    \State Clip $\mathbf{r}_k$ to $[0, L]^2$
+    \State $E_\text{new} \gets E_\text{mol}(\mathbf{r}_k, h)$
+    \State $\Delta E \gets E_\text{new} - E_\text{old}$
+    \If{$\Delta E < 0$ \textbf{or}
+        $\mathcal{U}(0,1) < \exp(-\Delta E)$}
+      \State Accept move
+    \Else
+      \State $\mathbf{r}_k \gets \mathbf{r}_\text{old}$
+        \Comment{Reject}
+    \EndIf
+  \EndFor
+  \Statex
+  \Statex \Comment{\textbf{Phase 2: Membrane height updates}}
+  \For{each grid cell $(i,j)$}
+    \State $h_\text{old} \gets h_{ij}$
+    \State $E_\text{mol,old} \gets$ sum of $E_\text{mol}$ for all
+      molecules in cell $(i,j)$
+    \State $h_{ij} \gets \max\bigl(0,\;
+      h_\text{old} + \mathcal{N}(0,\,\sigma_h^2)\bigr)$
+      \Comment{Propose new height $\ge 0$}
+    \State $\Delta E_\text{bend} \gets$
+      local bending energy change (5-point stencil)
+      \Comment{$O(1)$ via Eq.~\ref{eq:laplacian}}
+    \State $E_\text{mol,new} \gets$ sum of $E_\text{mol}$ for all
+      molecules in cell $(i,j)$ at new $h_{ij}$
+    \State $\Delta E \gets \Delta E_\text{bend}
+      + (E_\text{mol,new} - E_\text{mol,old})$
+    \If{$\Delta E < 0$ \textbf{or}
+        $\mathcal{U}(0,1) < \exp\bigl(-\min(\Delta E,\,500)\bigr)$}
+      \State Accept move
+    \Else
+      \State $h_{ij} \gets h_\text{old}$ \Comment{Reject}
+    \EndIf
+  \EndFor
+\EndFor
+\Statex
+\State \textbf{Output:} Depletion width
+  $w = \text{median}(r^\text{CD45}) - \text{median}(r^\text{TCR})$
+\end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Step sizes and adaptive scaling}
+
+The molecular step size is set to
+$\sigma_\text{step} = \max(2\sigma_\text{bind},\; 0.15\,\Delta x)$,
+ensuring that moves resolve the TCR binding well while still allowing
+exploration.  The membrane height step size adapts to the bending
+rigidity:
+
+\begin{equation}
+  \sigma_h = \min\!\left(5,\;\frac{\Delta x}{4\,\max(1,\sqrt{\kappa})}\right)
+\end{equation}
+
+\noindent
+so that stiffer membranes receive smaller perturbations, maintaining a
+reasonable acceptance rate.
+
+
+\subsection{Efficient bending energy update}
+
+Rather than recomputing the full bending energy (an $O(N_\text{grid}^2)$
+operation), the change in bending energy when a single grid cell
+$(i,j)$ is updated is computed in $O(1)$ time.  Only the five
+Laplacian stencil cells affected by the change---$(i,j)$ itself and
+its four periodic neighbours---need to be considered:
+
+\begin{equation}
+  \Delta E_\text{bend}
+  = \frac{\kappa}{2}\,\Delta x^2
+    \sum_{(a,b)\in\mathcal{N}(i,j)}
+    \Bigl[\bigl(\nabla^2_d h_{ab}^\text{new}\bigr)^2
+          - \bigl(\nabla^2_d h_{ab}^\text{old}\bigr)^2\Bigr]
+\end{equation}
+
+\noindent
+where $\mathcal{N}(i,j) = \{(i,j),\,(i\pm1,j),\,(i,j\pm1)\}$ with
+periodic wrapping.
+
+
+\subsection{Initial conditions}
+
+\begin{itemize}
+  \item The membrane height field is initialised uniformly at
+    $h = h_\text{CD45} = 35$~nm, with a central disc
+    (radius $\sim N_\text{grid}/8$ cells) depressed to $h=5$~nm to
+    seed a tight-contact zone.
+  \item TCR molecules are placed with a Gaussian bias towards the
+    patch centre (spread $L/6$), mimicking the initial TCR cluster.
+  \item CD45 molecules are placed uniformly at random across the
+    patch.
+\end{itemize}
+
+
+\subsection{Output}
+
+The primary observable is the \emph{depletion zone width}, defined as
+the difference between the median radial distance from the patch
+centre for CD45 molecules and that for TCR molecules:
+
+\begin{equation}
+  w_\text{depletion}
+  = \max\!\Bigl(0,\;
+    \widetilde{r}_\text{CD45} - \widetilde{r}_\text{TCR}\Bigr)
+\end{equation}
+
+\noindent
+where $\widetilde{r}$ denotes the median over all molecules of that
+species.  The use of the median rather than a percentile-based measure
+provides robustness at small molecule counts.
+
+
+%% ----------------------------------------------------------------
+\section{Simulation parameters}
+\label{sec:params}
+
+Table~\ref{tab:params} lists all tunable parameters and their default
+values from Supplementary Table~S1 of the reference.
+
+\begin{table}[ht]
+  \centering
+  \caption{Default simulation parameters.}
+  \label{tab:params}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Symbol} & \textbf{Default value} \\
+    \midrule
+    Patch size          & $L$                   & 2000~nm ($2\;\mu$m) \\
+    Grid resolution     & $N_\text{grid}$       & 64 \\
+    Grid spacing        & $\Delta x$            & $L / N_\text{grid} \approx 31.25$~nm \\
+    Number of TCR       & $N_\text{TCR}$        & 50 \\
+    Number of CD45      & $N_\text{CD45}$       & 100 \\
+    Association energy  & $U_\text{assoc}$      & $20\;k_BT$ \\
+    Binding well width  & $\sigma_\text{bind}$  & 3~nm \\
+    CD45 ectodomain     & $h_\text{CD45}$       & 35~nm \\
+    Repulsive constant  & $k_\text{rep}$        & $1.0\;k_BT/\text{nm}^2$ \\
+    Bending rigidity    & $\kappa$              & Swept (input parameter) \\
+    Simulation time     & $t$                   & Swept (input parameter) \\
+    Random seed         & ---                   & 42 (per-point hash derived) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+%% ----------------------------------------------------------------
+\bibliographystyle{plainnat}
+\begin{thebibliography}{1}
+\bibitem[Neve-Oz et~al.(2024)]{neveoz2024}
+  Y.~Neve-Oz, E.~Sherman, and B.~Raveh.
+  \newblock Bayesian metamodeling of early T-cell antigen receptor signaling
+    accounts for its nanoscale activation patterns.
+  \newblock \textit{Frontiers in Immunology}, 2024.
+\end{thebibliography}
+
+\end{document}
