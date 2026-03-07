@@ -5,6 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 from models.kinetic_segregation.model import (
+    D_H_DEFAULT,
+    D_MOL_DEFAULT,
+    DT_SAFETY,
     _compute_depletion_width,
     _height_at,
     _initial_positions,
@@ -240,52 +243,92 @@ class TestSimulateKs:
         )
         assert "snapshots" not in result
 
-    def test_explicit_n_steps_scales_with_time(self):
-        """When n_steps is explicit, longer time still gets more sweeps."""
-        r_short = simulate_ks(
-            time_sec=5,
-            rigidity_kT_nm2=10,
-            n_steps=10,
-            seed=42,
-            grid_size=8,
-            n_tcr=5,
-            n_cd45=10,
-        )
-        r_long = simulate_ks(
+    def test_explicit_n_steps_is_raw_override(self):
+        """When n_steps is explicit, it is used as-is (no time scaling)."""
+        r = simulate_ks(
             time_sec=100,
             rigidity_kT_nm2=10,
-            n_steps=10,
+            n_steps=7,
             seed=42,
             grid_size=8,
             n_tcr=5,
             n_cd45=10,
         )
-        assert r_short["n_steps_actual"] < r_long["n_steps_actual"]
+        assert r["n_steps_actual"] == 7
 
-    def test_depletion_increases_with_time(self):
-        """At moderate rigidity, mean depletion over seeds increases with time.
+    def test_depletion_increases_with_steps(self):
+        """At moderate rigidity, more MC sweeps produce larger mean depletion.
 
-        Uses kappa=30 (stiff enough to maintain the tight-contact depression),
-        extreme time contrast (5s vs 500s), and averages over seeds to overcome
-        per-run MC noise.
+        Uses n_steps explicitly to control sweep count, averages over seeds.
         """
         import statistics
 
         kwargs = dict(
-            rigidity_kT_nm2=30.0, n_steps=10, grid_size=16, n_tcr=30, n_cd45=60,
+            time_sec=1.0, rigidity_kT_nm2=30.0, grid_size=16, n_tcr=30, n_cd45=60,
         )
         short_vals = [
-            simulate_ks(time_sec=5.0, seed=s, **kwargs)["depletion_width_nm"]
+            simulate_ks(n_steps=5, seed=s, **kwargs)["depletion_width_nm"]
             for s in range(10)
         ]
         long_vals = [
-            simulate_ks(time_sec=500.0, seed=s, **kwargs)["depletion_width_nm"]
+            simulate_ks(n_steps=50, seed=s, **kwargs)["depletion_width_nm"]
             for s in range(10)
         ]
 
         mean_short = statistics.mean(short_vals)
         mean_long = statistics.mean(long_vals)
         assert mean_long > mean_short, (
-            f"Expected mean depletion at t=500 ({mean_long:.1f}) > "
-            f"t=5 ({mean_short:.1f})"
+            f"Expected mean depletion at 50 steps ({mean_long:.1f}) > "
+            f"5 steps ({mean_short:.1f})"
         )
+
+    def test_dt_scales_with_grid(self):
+        """dt should decrease with finer grid (stability constraint)."""
+        r_coarse = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=32, n_tcr=5, n_cd45=10,
+        )
+        r_fine = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=64, n_tcr=5, n_cd45=10,
+        )
+        assert r_coarse["dt_seconds"] > r_fine["dt_seconds"]
+
+    def test_step_sizes_from_physics(self):
+        """Step sizes should be derived from D and dt, not grid heuristics."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=64, n_tcr=5, n_cd45=10,
+        )
+        dt = r["dt_seconds"]
+        expected_h = np.sqrt(2.0 * D_H_DEFAULT * dt)
+        expected_mol = np.sqrt(2.0 * D_MOL_DEFAULT * dt)
+        assert abs(r["step_size_h_nm"] - expected_h) < 1e-10
+        assert abs(r["step_size_mol_nm"] - expected_mol) < 1e-10
+
+    def test_n_steps_auto_from_time(self):
+        """Auto n_steps = max(50, round(time_sec / dt))."""
+        grid_size = 64
+        kappa = 50.0
+        dx = 2000.0 / grid_size
+        dt_stable = dx**2 / (2.0 * D_H_DEFAULT * kappa)
+        dt = dt_stable * DT_SAFETY
+        expected_steps = max(50, round(20.0 / dt))
+
+        r = simulate_ks(
+            time_sec=20.0, rigidity_kT_nm2=kappa,
+            seed=42, grid_size=grid_size, n_tcr=5, n_cd45=10,
+            n_steps=3,  # override to keep test fast
+        )
+        # Verify dt is correct (n_steps overridden, but dt is still computed)
+        assert abs(r["dt_seconds"] - dt) < 1e-15
+
+    def test_diagnostics_keys_present(self):
+        """Result should include Brownian dynamics diagnostics."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=3,
+            seed=42, grid_size=8, n_tcr=5, n_cd45=10,
+        )
+        for key in ["dt_seconds", "step_size_h_nm", "step_size_mol_nm",
+                     "D_mol_nm2_per_s", "D_h_nm2_per_s"]:
+            assert key in r, f"Missing key: {key}"

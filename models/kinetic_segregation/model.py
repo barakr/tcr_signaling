@@ -22,7 +22,11 @@ N_TCR_DEFAULT = 50
 N_CD45_DEFAULT = 100
 CD45_HEIGHT_NM = 35.0  # ectodomain height
 SIGMA_BIND_NM = 3.0  # TCR-pMHC binding well width
-TIME_REF_SEC = 20.0  # reference time for n_steps scaling
+
+# Brownian dynamics diffusion coefficients (nm²/s)
+D_MOL_DEFAULT = 1e5  # membrane protein diffusion
+D_H_DEFAULT = 5e4    # membrane height relaxation
+DT_SAFETY = 0.5      # stability safety factor
 
 
 def _initial_positions(
@@ -77,30 +81,40 @@ def simulate_ks(
     n_steps: int | None = None,
     seed: int = 42,
     snapshot_interval: int = 0,
+    D_mol: float = D_MOL_DEFAULT,
+    D_h: float = D_H_DEFAULT,
+    dt_override: float | None = None,
 ) -> dict:
     """Run kinetic segregation Monte Carlo simulation.
 
     Parameters
     ----------
-    time_sec : Simulation time (sec). Mapped to MC steps.
+    time_sec : Simulation time (sec). Mapped to MC steps via Brownian dynamics dt.
     rigidity_kT_nm2 : Membrane bending rigidity (kT).
     u_assoc : TCR-pMHC binding potential depth (kT).
     n_tcr : Number of TCR molecules.
     n_cd45 : Number of CD45 molecules.
     grid_size : Number of grid points per dimension for membrane height field.
-    n_steps : Number of full MC sweeps. Each sweep updates every molecule and
-        every grid cell once. If None, derived from time_sec.
+    n_steps : Number of full MC sweeps. If given, overrides auto-computation
+        from time_sec / dt. Each sweep updates every molecule and every grid
+        cell once.
     seed : Random seed.
     snapshot_interval : If > 0, record (tcr_pos, cd45_pos, h) every N steps.
+    D_mol : Molecular diffusion coefficient (nm²/s).
+    D_h : Membrane height diffusion coefficient (nm²/s).
+    dt_override : If given, use this time step instead of auto-computing from
+        stability constraint. Step sizes are still derived from D and dt.
 
     Returns
     -------
     dict with keys: depletion_width_nm, final_tcr_mean_r, final_cd45_mean_r,
-                    accept_rate, n_steps_actual, and optionally snapshots
+                    accept_rate, n_steps_actual, dt_seconds, step_size_h_nm,
+                    step_size_mol_nm, and optionally snapshots
     """
     rng = np.random.default_rng(seed)
     patch = PATCH_SIZE_NM
     dx = patch / grid_size
+    kappa = rigidity_kT_nm2
 
     # Initialize membrane height field — flat at CD45 height (equilibrium gap)
     h = np.full((grid_size, grid_size), CD45_HEIGHT_NM, dtype=np.float64)
@@ -115,21 +129,21 @@ def simulate_ks(
     tcr_pos = _initial_positions(n_tcr, patch, rng, center_bias=True)
     cd45_pos = _initial_positions(n_cd45, patch, rng, center_bias=False)
 
-    # MC sweeps: scale with time (more time = more equilibration).
-    # When n_steps is given, treat it as the base count at TIME_REF_SEC
-    # and scale linearly so longer simulations always get more sweeps.
-    if n_steps is None:
-        n_steps = max(50, round(time_sec * 5))
+    # Brownian dynamics time step: dt = σ² / (2D), with stability constraint
+    # dt_stable = dx² / (2 * D_h * κ)
+    if dt_override is not None:
+        dt = dt_override
     else:
-        n_steps = max(n_steps, round(n_steps * time_sec / TIME_REF_SEC))
+        dt_stable = dx**2 / (2.0 * D_h * kappa)
+        dt = dt_stable * DT_SAFETY
 
-    # Molecular step size: must resolve the TCR binding well (sigma_bind)
-    # while still allowing reasonable exploration of the patch.
-    step_size_mol = max(SIGMA_BIND_NM * 2, dx * 0.15)
-    # Height step size: adapt to bending rigidity so acceptance stays reasonable.
-    # Stiffer membranes need smaller perturbations.
-    kappa = rigidity_kT_nm2
-    step_size_h = min(5.0, dx / (4.0 * max(1.0, np.sqrt(kappa))))
+    # Derive step sizes from physics: σ = sqrt(2 * D * dt)
+    step_size_mol = np.sqrt(2.0 * D_mol * dt)
+    step_size_h = np.sqrt(2.0 * D_h * dt)
+
+    # Auto-compute n_steps from physical time if not explicitly given
+    if n_steps is None:
+        n_steps = max(50, round(time_sec / dt))
 
     accepted = 0
     total_proposals = 0
@@ -167,7 +181,8 @@ def simulate_ks(
 
                 dE = new_e - old_e
                 total_proposals += 1
-                if dE < 0 or rng.random() < np.exp(-dE):
+                u = rng.random()
+                if dE <= 0 or (u > 0.0 and np.log(u) < -dE):
                     accepted += 1
                 else:
                     mol_set[idx] = old_pos
@@ -206,7 +221,8 @@ def simulate_ks(
 
                 dE = dE_bend + (new_mol_e - old_mol_e)
                 total_proposals += 1
-                if dE < 0 or rng.random() < np.exp(-min(dE, 500)):
+                u = rng.random()
+                if dE <= 0 or (u > 0.0 and np.log(u) < -dE):
                     accepted += 1
                 else:
                     h[gi, gj] = old_h_val
@@ -236,6 +252,11 @@ def simulate_ks(
         "final_cd45_mean_r_nm": float(np.mean(cd45_r)),
         "accept_rate": accept_rate,
         "n_steps_actual": n_steps,
+        "dt_seconds": dt,
+        "step_size_h_nm": step_size_h,
+        "step_size_mol_nm": step_size_mol,
+        "D_mol_nm2_per_s": D_mol,
+        "D_h_nm2_per_s": D_h,
     }
     if snapshot_interval > 0:
         result["snapshots"] = snapshots

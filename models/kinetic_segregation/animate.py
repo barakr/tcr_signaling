@@ -72,7 +72,7 @@ def render_animation(
     # --- Right panel: membrane height field ---
     h0 = snapshots[0]["h"]
     im = ax_h.imshow(
-        h0,
+        h0.T if h0.shape[0] == h0.shape[1] else h0,
         cmap="viridis",
         origin="lower",
         extent=extent_um,
