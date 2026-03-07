@@ -6,3 +6,4 @@ store/*
 !store/.gitkeep
 artifacts/
 tmp/
+projects/
