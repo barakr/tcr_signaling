@@ -6,6 +6,27 @@
 
 ## Decision Log
 
+### 2026-03-08: Configurable pMHC initialization + JSON param file support
+- **Change 1 — pMHC inner circle mode**: Added `pmhc_mode` parameter
+  (`"inner_circle"` default, `"uniform"` for backward compat). In inner_circle
+  mode, pMHC molecules are placed via rejection sampling within a centered disc
+  of configurable `pmhc_radius` (default: patch/3 = 667nm). Implemented in
+  Python model.py, C simulation.c, and main.m.
+- **Change 2 — TCR co-location with pMHC**: When `n_pmhc > 0`, TCR molecules
+  are initialized on top of random pMHC positions with σ=3nm jitter (matching
+  sigma_bind). pMHC init moved before TCR init in both Python and C. When
+  `n_pmhc=0`, backward-compat center-biased Gaussian is preserved.
+- **Change 3 — JSON param file support**: Added `--params <file.json>` to all
+  CLIs (Python `__main__.py` × 3, C `main.m`). Priority: CLI arg > param file >
+  built-in default. Python uses `_merge_params()` helper; C uses
+  NSJSONSerialization. Previously-required `--time_sec` and `--rigidity_kT_nm2`
+  changed to `default=None` so they can be supplied via param file.
+- **Tests**: Added 8 new tests for inner_circle radius check, uniform spread,
+  TCR co-location, backward compat, invalid mode, param file loading, and CLI
+  override of param file. Updated `test_pmhc_everywhere_matches_no_pmhc` →
+  `test_pmhc_everywhere_produces_segregation` (exact match no longer valid with
+  co-location changing RNG path). All 126 tests pass.
+
 ### 2026-03-08: Align KS implementations with MATLAB & paper
 - **Goal**: Make Python/C/GPU use the same algorithm, aligned with MATLAB's
   physics while keeping the paper's continuous Gaussian TCR potential.

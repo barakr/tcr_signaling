@@ -88,3 +88,62 @@ class TestKsCli:
             cwd=_SUBMODULE_ROOT,
         )
         assert result.returncode != 0
+
+    def test_cli_param_file(self, tmp_path):
+        """CLI loads params from JSON file."""
+        params = {
+            "time_sec": 5.0,
+            "rigidity_kT_nm2": 8.0,
+            "n_steps": 100,
+            "seed": 7,
+        }
+        param_file = tmp_path / "params.json"
+        param_file.write_text(json.dumps(params))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "models.kinetic_segregation",
+                "--params",
+                str(param_file),
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=_SUBMODULE_ROOT,
+        )
+        assert result.returncode == 0, result.stderr
+        data = json.loads(result.stdout.strip())
+        assert data["inputs"]["time_sec"] == 5.0
+        assert data["inputs"]["rigidity_kT_nm2"] == 8.0
+
+    def test_cli_override_param_file(self, tmp_path):
+        """CLI args override param file values."""
+        params = {
+            "time_sec": 5.0,
+            "rigidity_kT_nm2": 8.0,
+            "n_steps": 100,
+            "n_pmhc": 50,
+        }
+        param_file = tmp_path / "params.json"
+        param_file.write_text(json.dumps(params))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "models.kinetic_segregation",
+                "--params",
+                str(param_file),
+                "--n_pmhc",
+                "10",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=_SUBMODULE_ROOT,
+        )
+        assert result.returncode == 0, result.stderr

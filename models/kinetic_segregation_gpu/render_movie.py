@@ -52,11 +52,19 @@ def main():
     dump_interval = meta.get("dump_interval", 1)
     dt = meta.get("dt", 0.0)
 
+    n_pmhc = meta.get("n_pmhc", 0)
     n_frames = meta.get("n_frames", n_steps)
     all_frames = list(range(0, n_frames + 1))
     steps = all_frames[::args.skip]
+
+    # Load static pMHC positions if present
+    pmhc_pos = None
+    pmhc_path = frames_dir / "pmhc.bin"
+    if n_pmhc > 0 and pmhc_path.exists():
+        pmhc_pos = np.fromfile(pmhc_path, dtype=np.float64).reshape(n_pmhc, 2)
+
     print(f"Rendering {len(steps)} frames (grid={grid_size}, n_steps={n_steps}, "
-          f"dump_interval={dump_interval}, skip={args.skip})")
+          f"dump_interval={dump_interval}, skip={args.skip}, n_pmhc={n_pmhc})")
 
     # Load first frame
     h0, tcr0, cd450 = load_frame(frames_dir, 0, grid_size, n_tcr, n_cd45)
@@ -76,6 +84,10 @@ def main():
 
     tcr_scat = ax_mol.scatter([], [], c="red", s=20, alpha=0.7, label="TCR", zorder=3)
     cd45_scat = ax_mol.scatter([], [], c="royalblue", s=12, alpha=0.5, label="CD45", zorder=2)
+    if pmhc_pos is not None:
+        pmhc_um = pmhc_pos / 1000.0
+        ax_mol.scatter(pmhc_um[:, 0], pmhc_um[:, 1], c="black", marker="x",
+                       s=30, alpha=0.6, label="pMHC", zorder=1, linewidths=1)
     c_um = center / 1000.0
     depl_inner = plt.Circle((c_um, c_um), 0, fill=False, color="gold", lw=2, ls="--", zorder=4)
     depl_outer = plt.Circle((c_um, c_um), 0, fill=False, color="gold", lw=2, ls="--", zorder=4)

@@ -11,18 +11,26 @@ from pathlib import Path
 from .model import simulate_ks
 
 
+def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:
+    """Apply param file values where CLI left defaults (None)."""
+    for key, val in params_dict.items():
+        if hasattr(args, key) and getattr(args, key) is None:
+            setattr(args, key, val)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Kinetic segregation Monte Carlo model")
-    parser.add_argument("--time_sec", type=float, required=True, help="Simulation time (sec)")
+    parser.add_argument("--params", type=str, default=None, help="JSON parameter file")
+    parser.add_argument("--time_sec", type=float, default=None, help="Simulation time (sec)")
     parser.add_argument(
-        "--rigidity_kT_nm2", type=float, required=True, help="Membrane bending rigidity (kT)"
+        "--rigidity_kT_nm2", type=float, default=None, help="Membrane bending rigidity (kT)"
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--run-dir", type=str, required=True)
-    parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=50, help="Number of TCR molecules")
-    parser.add_argument("--n_cd45", type=lambda x: int(float(x)), default=100, help="Number of CD45 molecules")
+    parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=None, help="Number of TCR molecules")
+    parser.add_argument("--n_cd45", type=lambda x: int(float(x)), default=None, help="Number of CD45 molecules")
     parser.add_argument("--n_steps", type=lambda x: int(float(x)), default=None, help="MC steps (default: auto)")
-    parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=64, help="Membrane grid resolution")
+    parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=None, help="Membrane grid resolution")
     parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s, default 1e5)")
     parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s, default 5e4)")
     parser.add_argument("--dt", type=float, default=None, help="Override time step (seconds, auto if omitted)")
@@ -32,7 +40,30 @@ def main() -> int:
     parser.add_argument("--mol_repulsion_rcut", type=float, default=None, help="Soft molecular repulsion cutoff (nm, default 10)")
     parser.add_argument("--n_pmhc", type=lambda x: int(float(x)), default=None, help="Number of static pMHC molecules (0=all cells have pMHC)")
     parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC random positions")
+    parser.add_argument("--pmhc_mode", type=str, default=None, help="pMHC placement: 'uniform' or 'inner_circle'")
+    parser.add_argument("--pmhc_radius", type=float, default=None, help="pMHC placement radius (nm)")
     args = parser.parse_args()
+
+    # Load param file and merge (CLI > param file > built-in defaults)
+    if args.params is not None:
+        with open(args.params) as f:
+            _merge_params(args, json.load(f))
+
+    # Apply built-in defaults for required/defaulted params
+    if args.seed is None:
+        args.seed = 42
+    if args.n_tcr is None:
+        args.n_tcr = 50
+    if args.n_cd45 is None:
+        args.n_cd45 = 100
+    if args.grid_size is None:
+        args.grid_size = 64
+
+    # Validate required params
+    if args.time_sec is None:
+        parser.error("--time_sec is required (via CLI or param file)")
+    if args.rigidity_kT_nm2 is None:
+        parser.error("--rigidity_kT_nm2 is required (via CLI or param file)")
 
     run_dir = Path(args.run_dir)
     out_dir = run_dir / "out"
@@ -63,6 +94,10 @@ def main() -> int:
         extra_kwargs["n_pmhc"] = args.n_pmhc
     if args.pmhc_seed is not None:
         extra_kwargs["pmhc_seed"] = args.pmhc_seed
+    if args.pmhc_mode is not None:
+        extra_kwargs["pmhc_mode"] = args.pmhc_mode
+    if args.pmhc_radius is not None:
+        extra_kwargs["pmhc_radius"] = args.pmhc_radius
 
     result = simulate_ks(
         time_sec=args.time_sec,

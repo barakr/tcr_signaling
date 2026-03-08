@@ -5,7 +5,11 @@
 #include <math.h>
 #include "simulation.h"
 
-/* MD5 hash for seed derivation, matching the Python __main__.py scheme. */
+/* Seed derivation uses MD5 to match the Python __main__.py scheme.
+ * MD5 is used purely for deterministic hashing (not security), so suppress
+ * the macOS 10.15+ deprecation warning. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #import <CommonCrypto/CommonDigest.h>
 
 static uint64_t derive_seed(uint64_t base_seed, double time_sec, double rigidity) {
@@ -21,12 +25,14 @@ static uint64_t derive_seed(uint64_t base_seed, double time_sec, double rigidity
                         ((uint32_t)digest[3]);
     return base_seed + hash_val;
 }
+#pragma clang diagnostic pop
 
 static void print_usage(const char *prog) {
     fprintf(stderr, "Usage: %s --time_sec FLOAT --rigidity_kT_nm2 FLOAT --run-dir PATH\n"
                     "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
                     "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
-                    "       [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n", prog);
+                    "       [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n"
+                    "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n", prog);
 }
 
 /* Write a single frame: height field (float[n^2]) + molecule positions. */
@@ -66,6 +72,9 @@ int main(int argc, const char *argv[]) {
         double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
         int n_pmhc_arg = 0;
         int pmhc_seed_arg = -1;
+        int pmhc_mode_arg = 1;  /* 1=inner_circle (default), 0=uniform */
+        double pmhc_radius_arg = 0.0;  /* 0=auto (patch/3) */
+        const char *params_file = NULL;
         const char *run_dir = NULL;
 
         /* Simple argument parsing. */
@@ -110,10 +119,77 @@ int main(int argc, const char *argv[]) {
                 n_pmhc_arg = (int)atof(argv[++i]);
             else if (strcmp(argv[i], "--pmhc_seed") == 0 && i + 1 < argc)
                 pmhc_seed_arg = atoi(argv[++i]);
+            else if (strcmp(argv[i], "--pmhc_mode") == 0 && i + 1 < argc) {
+                ++i;
+                if (strcmp(argv[i], "uniform") == 0) pmhc_mode_arg = 0;
+                else pmhc_mode_arg = 1;  /* inner_circle or default */
+            }
+            else if (strcmp(argv[i], "--pmhc_radius") == 0 && i + 1 < argc)
+                pmhc_radius_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--params") == 0 && i + 1 < argc)
+                params_file = argv[++i];
             else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
                 print_usage(argv[0]);
                 return 0;
             }
+        }
+
+        /* Load JSON param file if given (CLI values already set override). */
+        if (params_file) {
+            NSString *path = [NSString stringWithUTF8String:params_file];
+            NSData *data = [NSData dataWithContentsOfFile:path];
+            if (!data) {
+                fprintf(stderr, "Error: cannot read param file: %s\n", params_file);
+                return 1;
+            }
+            NSError *err = nil;
+            NSDictionary *params = [NSJSONSerialization JSONObjectWithData:data
+                                                                  options:0
+                                                                    error:&err];
+            if (!params || err) {
+                fprintf(stderr, "Error: invalid JSON in param file: %s\n", params_file);
+                return 1;
+            }
+            /* Apply param file values where CLI left sentinels. */
+            if (time_sec < 0 && params[@"time_sec"])
+                time_sec = [params[@"time_sec"] doubleValue];
+            if (rigidity < 0 && params[@"rigidity_kT_nm2"])
+                rigidity = [params[@"rigidity_kT_nm2"] doubleValue];
+            if (seed == 42 && params[@"seed"])
+                seed = [params[@"seed"] intValue];
+            if (n_tcr == 50 && params[@"n_tcr"])
+                n_tcr = [params[@"n_tcr"] intValue];
+            if (n_cd45 == 100 && params[@"n_cd45"])
+                n_cd45 = [params[@"n_cd45"] intValue];
+            if (n_steps_arg < 0 && params[@"n_steps"])
+                n_steps_arg = [params[@"n_steps"] intValue];
+            if (grid_size == 64 && params[@"grid_size"])
+                grid_size = [params[@"grid_size"] intValue];
+            if (D_mol_arg == 0.0 && params[@"D_mol"])
+                D_mol_arg = [params[@"D_mol"] doubleValue];
+            if (D_h_arg == 0.0 && params[@"D_h"])
+                D_h_arg = [params[@"D_h"] doubleValue];
+            if (dt_arg < 0 && params[@"dt"])
+                dt_arg = [params[@"dt"] doubleValue];
+            if (cd45_height_arg == 0.0 && params[@"cd45_height"])
+                cd45_height_arg = [params[@"cd45_height"] doubleValue];
+            if (cd45_k_rep_arg == 0.0 && params[@"cd45_k_rep"])
+                cd45_k_rep_arg = [params[@"cd45_k_rep"] doubleValue];
+            if (mol_repulsion_eps_arg == 0.0 && params[@"mol_repulsion_eps"])
+                mol_repulsion_eps_arg = [params[@"mol_repulsion_eps"] doubleValue];
+            if (mol_repulsion_rcut_arg == 0.0 && params[@"mol_repulsion_rcut"])
+                mol_repulsion_rcut_arg = [params[@"mol_repulsion_rcut"] doubleValue];
+            if (n_pmhc_arg == 0 && params[@"n_pmhc"])
+                n_pmhc_arg = [params[@"n_pmhc"] intValue];
+            if (pmhc_seed_arg < 0 && params[@"pmhc_seed"])
+                pmhc_seed_arg = [params[@"pmhc_seed"] intValue];
+            if (params[@"pmhc_mode"]) {
+                NSString *mode = params[@"pmhc_mode"];
+                if ([mode isEqualToString:@"uniform"]) pmhc_mode_arg = 0;
+                else pmhc_mode_arg = 1;
+            }
+            if (pmhc_radius_arg == 0.0 && params[@"pmhc_radius"])
+                pmhc_radius_arg = [params[@"pmhc_radius"] doubleValue];
         }
 
         if (time_sec < 0 || rigidity < 0 || !run_dir) {
@@ -137,7 +213,8 @@ int main(int argc, const char *argv[]) {
                                    use_gpu, D_mol_arg, D_h_arg, dt_arg,
                                    cd45_height_arg, cd45_k_rep_arg,
                                    mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
-                                   n_pmhc_arg, pmhc_sd);
+                                   n_pmhc_arg, pmhc_sd,
+                                   pmhc_mode_arg, pmhc_radius_arg);
 
         /* Compute n_steps: explicit override or auto from time_sec / dt. */
         int n_steps;
@@ -167,10 +244,24 @@ int main(int argc, const char *argv[]) {
                 fprintf(mf, "{\"grid_size\":%d,\"n_tcr\":%d,\"n_cd45\":%d,"
                         "\"n_steps\":%d,\"dx\":%.6f,\"patch_nm\":%.1f,"
                         "\"dump_interval\":%d,\"n_frames\":%d,"
-                        "\"dt\":%.10g,\"time_sec\":%.6f}\n",
+                        "\"dt\":%.10g,\"time_sec\":%.6f,\"n_pmhc\":%d,"
+                        "\"pmhc_mode\":\"%s\",\"pmhc_radius\":%.6f}\n",
                         grid_size, n_tcr, n_cd45, n_steps, sim->dx, PATCH_SIZE_NM,
-                        dump_interval, n_frames, sim->dt, time_sec);
+                        dump_interval, n_frames, sim->dt, time_sec, sim->n_pmhc,
+                        (pmhc_mode_arg == 0) ? "uniform" : "inner_circle",
+                        sim->pmhc_radius);
                 fclose(mf);
+            }
+
+            /* Dump pMHC positions once (static). */
+            if (sim->n_pmhc > 0 && sim->pmhc_pos) {
+                char pmhc_path[512];
+                snprintf(pmhc_path, sizeof(pmhc_path), "%s/pmhc.bin", fd);
+                FILE *pf = fopen(pmhc_path, "wb");
+                if (pf) {
+                    fwrite(sim->pmhc_pos, sizeof(double), sim->n_pmhc * 2, pf);
+                    fclose(pf);
+                }
             }
 
             /* Dump initial state as frame 0. */

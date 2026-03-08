@@ -63,7 +63,8 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double D_mol, double D_h, double dt_override,
                      double cd45_height, double k_rep,
                      double mol_repulsion_eps, double mol_repulsion_rcut,
-                     int n_pmhc, uint64_t pmhc_seed) {
+                     int n_pmhc, uint64_t pmhc_seed,
+                     int pmhc_mode, double pmhc_radius) {
     SimState *s = (SimState *)calloc(1, sizeof(SimState));
     s->grid_size = grid_size;
     s->dx = PATCH_SIZE_NM / grid_size;
@@ -78,6 +79,8 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->n_pmhc = n_pmhc;
     s->pmhc_pos = NULL;
     s->pmhc_count = NULL;
+    s->pmhc_mode = pmhc_mode;
+    s->pmhc_radius = pmhc_radius;
 
     /* Apply defaults if zero. */
     if (D_mol <= 0.0) D_mol = D_MOL_DEFAULT;
@@ -104,21 +107,61 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
 
     pcg64_seed(&s->rng, seed);
     init_height_field(s);
-    init_positions(s->tcr_pos, n_tcr, PATCH_SIZE_NM, &s->rng, 1);
-    init_positions(s->cd45_pos, n_cd45, PATCH_SIZE_NM, &s->rng, 0);
 
-    /* Initialize pMHC: static positions binned to grid. */
+    /* --- pMHC initialization (before TCR so TCR can co-locate) --- */
     if (n_pmhc > 0) {
         s->pmhc_pos = (double *)malloc(n_pmhc * 2 * sizeof(double));
         s->pmhc_count = (int *)calloc(grid_size * grid_size, sizeof(int));
         pcg64_t pmhc_rng;
         pcg64_seed(&pmhc_rng, pmhc_seed);
-        for (int i = 0; i < n_pmhc; i++) {
-            s->pmhc_pos[2 * i] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
-            s->pmhc_pos[2 * i + 1] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+
+        double eff_radius = (pmhc_radius > 0.0) ? pmhc_radius : PATCH_SIZE_NM / 3.0;
+        double center_xy = PATCH_SIZE_NM / 2.0;
+
+        if (pmhc_mode == 1) {
+            /* inner_circle: rejection sampling within centered disc */
+            int placed = 0;
+            while (placed < n_pmhc) {
+                double cx = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+                double cy = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+                double ddx = cx - center_xy;
+                double ddy = cy - center_xy;
+                if (ddx * ddx + ddy * ddy <= eff_radius * eff_radius) {
+                    s->pmhc_pos[2 * placed] = cx;
+                    s->pmhc_pos[2 * placed + 1] = cy;
+                    placed++;
+                }
+            }
+        } else {
+            /* uniform: full patch */
+            for (int i = 0; i < n_pmhc; i++) {
+                s->pmhc_pos[2 * i] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+                s->pmhc_pos[2 * i + 1] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+            }
         }
         bin_molecules(s->pmhc_pos, n_pmhc, grid_size, s->dx, s->pmhc_count);
     }
+
+    /* --- TCR initialization --- */
+    if (n_pmhc > 0 && s->pmhc_pos) {
+        /* Co-locate TCR on pMHC positions with small jitter (sigma_bind) */
+        for (int i = 0; i < n_tcr; i++) {
+            int pidx = (int)(pcg64_uniform(&s->rng) * n_pmhc);
+            if (pidx >= n_pmhc) pidx = n_pmhc - 1;
+            double tx = s->pmhc_pos[2 * pidx] + pcg64_normal(&s->rng, SIGMA_BIND_NM);
+            double ty = s->pmhc_pos[2 * pidx + 1] + pcg64_normal(&s->rng, SIGMA_BIND_NM);
+            tx = fmod(tx, PATCH_SIZE_NM); if (tx < 0.0) tx += PATCH_SIZE_NM;
+            ty = fmod(ty, PATCH_SIZE_NM); if (ty < 0.0) ty += PATCH_SIZE_NM;
+            s->tcr_pos[2 * i] = tx;
+            s->tcr_pos[2 * i + 1] = ty;
+        }
+    } else {
+        /* Backward compat: center-biased Gaussian */
+        init_positions(s->tcr_pos, n_tcr, PATCH_SIZE_NM, &s->rng, 1);
+    }
+
+    /* CD45: always uniform */
+    init_positions(s->cd45_pos, n_cd45, PATCH_SIZE_NM, &s->rng, 0);
 
     s->accepted = 0;
     s->total_proposals = 0;

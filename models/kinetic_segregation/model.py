@@ -91,6 +91,8 @@ def simulate_ks(
     n_pmhc: int = 0,
     pmhc_pos: NDArray[np.float64] | None = None,
     pmhc_seed: int | None = None,
+    pmhc_mode: str = "inner_circle",
+    pmhc_radius: float | None = None,
 ) -> dict:
     """Run kinetic segregation Monte Carlo simulation.
 
@@ -118,6 +120,9 @@ def simulate_ks(
                     accept_rate, n_steps_actual, dt_seconds, step_size_h_nm,
                     step_size_mol_nm, and optionally snapshots
     """
+    if pmhc_mode not in ("uniform", "inner_circle"):
+        raise ValueError(f"Unknown pmhc_mode: {pmhc_mode!r} (expected 'uniform' or 'inner_circle')")
+
     rng = np.random.default_rng(seed)
     patch = PATCH_SIZE_NM
     dx = patch / grid_size
@@ -132,22 +137,46 @@ def simulate_ks(
     dist_sq = (x_idx - center_idx) ** 2 + (y_idx - center_idx) ** 2
     h[dist_sq <= radius_idx**2] = 5.0  # tight contact ~5 nm
 
-    # Initialize molecule positions
-    tcr_pos = _initial_positions(n_tcr, patch, rng, center_bias=True)
-    cd45_pos = _initial_positions(n_cd45, patch, rng, center_bias=False)
-
-    # Initialize pMHC: static positions on APC surface, binned to grid once
+    # --- pMHC initialization (before TCR so TCR can co-locate) ---
     # When n_pmhc=0 and pmhc_pos=None, all cells have pMHC (backward compat)
     pmhc_grid: NDArray[np.int32] | None = None
     if n_pmhc > 0 or pmhc_pos is not None:
         if pmhc_pos is None:
             pmhc_rng = np.random.default_rng(pmhc_seed if pmhc_seed is not None else seed + 1)
-            pmhc_pos = pmhc_rng.uniform(0.0, patch, size=(n_pmhc, 2))
+            eff_radius = pmhc_radius if pmhc_radius is not None else patch / 3.0
+            center_xy = patch / 2.0
+            if pmhc_mode == "inner_circle":
+                # Rejection sampling within centered disc
+                pmhc_pos = np.empty((n_pmhc, 2), dtype=np.float64)
+                placed = 0
+                while placed < n_pmhc:
+                    cand = pmhc_rng.uniform(0.0, patch, size=(n_pmhc * 4, 2))
+                    dist = np.sqrt(np.sum((cand - center_xy) ** 2, axis=1))
+                    valid = cand[dist <= eff_radius]
+                    take = min(len(valid), n_pmhc - placed)
+                    pmhc_pos[placed : placed + take] = valid[:take]
+                    placed += take
+            else:
+                # uniform mode: full patch
+                pmhc_pos = pmhc_rng.uniform(0.0, patch, size=(n_pmhc, 2))
         pmhc_grid = np.zeros((grid_size, grid_size), dtype=np.int32)
         pi = (pmhc_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1)
         pj = (pmhc_pos[:, 1] // dx).astype(int).clip(0, grid_size - 1)
         for a, b in zip(pi, pj):
             pmhc_grid[a, b] += 1
+
+    # --- TCR initialization ---
+    if n_pmhc > 0 and pmhc_pos is not None:
+        # Co-locate TCR on top of pMHC positions with small jitter
+        indices = rng.integers(0, n_pmhc, size=n_tcr)
+        tcr_pos = pmhc_pos[indices].copy() + rng.normal(0, SIGMA_BIND_NM, size=(n_tcr, 2))
+        tcr_pos = tcr_pos % patch
+    else:
+        # Backward compat: center-biased Gaussian
+        tcr_pos = _initial_positions(n_tcr, patch, rng, center_bias=True)
+
+    # CD45: always uniform
+    cd45_pos = _initial_positions(n_cd45, patch, rng, center_bias=False)
 
     # Brownian dynamics time step: dt = σ² / (2D), with stability constraint
     # dt_stable = dx² / (2 * D_h * κ)
@@ -341,6 +370,11 @@ def simulate_ks(
         "D_mol_nm2_per_s": D_mol,
         "D_h_nm2_per_s": D_h,
     }
+    result["pmhc_mode"] = pmhc_mode
+    if pmhc_radius is not None:
+        result["pmhc_radius_nm"] = pmhc_radius
     if snapshot_interval > 0:
         result["snapshots"] = snapshots
+    if pmhc_pos is not None:
+        result["pmhc_pos"] = pmhc_pos
     return result

@@ -332,3 +332,99 @@ class TestSimulateKs:
         for key in ["dt_seconds", "step_size_h_nm", "step_size_mol_nm",
                      "D_mol_nm2_per_s", "D_h_nm2_per_s"]:
             assert key in r, f"Missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
+# pMHC inner circle + TCR co-location tests
+# ---------------------------------------------------------------------------
+class TestPmhcInitModes:
+    def test_inner_circle_all_pmhc_within_radius(self):
+        """In inner_circle mode, all pMHC should be within radius of center."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+            seed=42, grid_size=8, n_tcr=10, n_cd45=10,
+            n_pmhc=50, pmhc_mode="inner_circle", pmhc_radius=400.0,
+        )
+        pmhc_pos = r["pmhc_pos"]
+        center = 1000.0
+        dist = np.sqrt(np.sum((pmhc_pos - center) ** 2, axis=1))
+        assert np.all(dist <= 400.0 + 1e-6), f"Max dist {dist.max():.1f} > 400 nm"
+
+    def test_uniform_mode_spreads_across_patch(self):
+        """In uniform mode, pMHC should span most of the patch."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+            seed=42, grid_size=8, n_tcr=10, n_cd45=10,
+            n_pmhc=200, pmhc_mode="uniform",
+        )
+        pmhc_pos = r["pmhc_pos"]
+        center = 1000.0
+        dist = np.sqrt(np.sum((pmhc_pos - center) ** 2, axis=1))
+        # Some pMHC should be far from center (>600nm)
+        assert np.max(dist) > 600.0
+
+    def test_tcr_colocated_with_pmhc(self):
+        """When n_pmhc > 0, initial TCR positions should be near pMHC."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=0,
+            seed=42, grid_size=8, n_tcr=20, n_cd45=10,
+            n_pmhc=30, pmhc_mode="inner_circle",
+        )
+        tcr_pos = r["snapshots"][0]["tcr_pos"] if "snapshots" in r else None
+        # Run with snapshot to capture initial state
+        r2 = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+            seed=42, grid_size=8, n_tcr=20, n_cd45=10,
+            n_pmhc=30, pmhc_mode="inner_circle",
+            snapshot_interval=1,
+        )
+        tcr_init = r2["snapshots"][0]["tcr_pos"]
+        pmhc_pos = r2["pmhc_pos"]
+        # Each TCR should be within ~10nm of its nearest pMHC
+        for i in range(len(tcr_init)):
+            dists = np.sqrt(np.sum((pmhc_pos - tcr_init[i]) ** 2, axis=1))
+            assert np.min(dists) < 15.0, f"TCR {i} too far from nearest pMHC: {np.min(dists):.1f}"
+
+    def test_backward_compat_no_pmhc(self):
+        """With n_pmhc=0, TCR should still use center-biased Gaussian."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+            seed=42, grid_size=8, n_tcr=50, n_cd45=10,
+            n_pmhc=0, snapshot_interval=1,
+        )
+        tcr_init = r["snapshots"][0]["tcr_pos"]
+        center = 1000.0
+        mean_r = np.sqrt(np.sum((tcr_init - center) ** 2, axis=1)).mean()
+        # Center-biased should be closer than uniform spread
+        assert mean_r < 600.0
+
+    def test_invalid_pmhc_mode_raises(self):
+        """Invalid pmhc_mode should raise ValueError."""
+        import pytest
+        with pytest.raises(ValueError, match="Unknown pmhc_mode"):
+            simulate_ks(
+                time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+                seed=42, grid_size=8, n_tcr=5, n_cd45=5,
+                pmhc_mode="bad_mode",
+            )
+
+    def test_pmhc_mode_in_result(self):
+        """Result dict should include pmhc_mode."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+            seed=42, grid_size=8, n_tcr=5, n_cd45=5,
+            n_pmhc=10, pmhc_mode="inner_circle",
+        )
+        assert r["pmhc_mode"] == "inner_circle"
+
+    def test_inner_circle_default_radius(self):
+        """Default radius should be patch/3 (~667nm)."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=10.0, n_steps=1,
+            seed=42, grid_size=8, n_tcr=5, n_cd45=5,
+            n_pmhc=100, pmhc_mode="inner_circle",
+        )
+        pmhc_pos = r["pmhc_pos"]
+        center = 1000.0
+        dist = np.sqrt(np.sum((pmhc_pos - center) ** 2, axis=1))
+        assert np.all(dist <= 2000.0 / 3.0 + 1e-6)

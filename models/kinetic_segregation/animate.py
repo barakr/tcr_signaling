@@ -13,6 +13,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -28,6 +29,7 @@ def render_animation(
     output: str = "ks_segregation.mp4",
     fps: int = 15,
     dpi: int = 120,
+    pmhc_pos: np.ndarray | None = None,
 ) -> Path:
     """Render simulation snapshots to an MP4 animation.
 
@@ -58,6 +60,10 @@ def render_animation(
 
     tcr_scatter = ax_main.scatter([], [], c="red", s=20, alpha=0.7, label="TCR", zorder=3)
     cd45_scatter = ax_main.scatter([], [], c="royalblue", s=12, alpha=0.5, label="CD45", zorder=2)
+    if pmhc_pos is not None:
+        pmhc_um = pmhc_pos / 1000.0
+        ax_main.scatter(pmhc_um[:, 0], pmhc_um[:, 1], c="black", marker="x",
+                        s=30, alpha=0.6, label="pMHC", zorder=1, linewidths=1)
     depletion_circle_inner = plt.Circle(
         (center / 1000, center / 1000), 0, fill=False, color="gold", lw=2, ls="--", zorder=4
     )
@@ -126,22 +132,59 @@ def render_animation(
     return out_path
 
 
+def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:
+    """Apply param file values where CLI left defaults (None)."""
+    for key, val in params_dict.items():
+        if hasattr(args, key) and getattr(args, key) is None:
+            setattr(args, key, val)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Animate kinetic segregation simulation")
+    parser.add_argument("--params", type=str, default=None, help="JSON parameter file")
     parser.add_argument("--output", type=str, default="ks_segregation.gif", help="Output file")
-    parser.add_argument("--time_sec", type=float, default=50.0)
-    parser.add_argument("--rigidity_kT_nm2", type=float, default=20.0)
-    parser.add_argument("--n_steps", type=int, default=5000)
-    parser.add_argument("--n_tcr", type=int, default=50)
-    parser.add_argument("--n_cd45", type=int, default=100)
-    parser.add_argument("--grid_size", type=int, default=32)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--time_sec", type=float, default=None)
+    parser.add_argument("--rigidity_kT_nm2", type=float, default=None)
+    parser.add_argument("--n_steps", type=int, default=None)
+    parser.add_argument("--n_tcr", type=int, default=None)
+    parser.add_argument("--n_cd45", type=int, default=None)
+    parser.add_argument("--grid_size", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--fps", type=int, default=15)
-    parser.add_argument("--snapshot_every", type=int, default=50, help="Record every N steps")
+    parser.add_argument("--snapshot_every", type=int, default=None, help="Record every N steps")
+    parser.add_argument("--n_pmhc", type=int, default=None, help="Number of static pMHC molecules")
+    parser.add_argument("--pmhc_seed", type=int, default=None, help="pMHC seed")
+    parser.add_argument("--pmhc_mode", type=str, default=None, help="pMHC placement: 'uniform' or 'inner_circle'")
+    parser.add_argument("--pmhc_radius", type=float, default=None, help="pMHC placement radius (nm)")
     args = parser.parse_args()
 
+    # Load param file and merge (CLI > param file > built-in defaults)
+    if args.params is not None:
+        with open(args.params) as f:
+            _merge_params(args, json.load(f))
+
+    # Apply built-in defaults
+    if args.time_sec is None:
+        args.time_sec = 50.0
+    if args.rigidity_kT_nm2 is None:
+        args.rigidity_kT_nm2 = 20.0
+    if args.n_steps is None:
+        args.n_steps = 5000
+    if args.n_tcr is None:
+        args.n_tcr = 50
+    if args.n_cd45 is None:
+        args.n_cd45 = 100
+    if args.grid_size is None:
+        args.grid_size = 32
+    if args.seed is None:
+        args.seed = 42
+    if args.snapshot_every is None:
+        args.snapshot_every = 50
+    if args.n_pmhc is None:
+        args.n_pmhc = 0
+
     print(f"Running KS simulation: {args.n_steps} steps, snapshots every {args.snapshot_every}...")
-    result = simulate_ks(
+    sim_kwargs = dict(
         time_sec=args.time_sec,
         rigidity_kT_nm2=args.rigidity_kT_nm2,
         n_tcr=args.n_tcr,
@@ -150,11 +193,20 @@ def main() -> int:
         n_steps=args.n_steps,
         seed=args.seed,
         snapshot_interval=args.snapshot_every,
+        n_pmhc=args.n_pmhc,
     )
+    if args.pmhc_seed is not None:
+        sim_kwargs["pmhc_seed"] = args.pmhc_seed
+    if args.pmhc_mode is not None:
+        sim_kwargs["pmhc_mode"] = args.pmhc_mode
+    if args.pmhc_radius is not None:
+        sim_kwargs["pmhc_radius"] = args.pmhc_radius
+    result = simulate_ks(**sim_kwargs)
     print(f"Simulation done. Depletion width = {result['depletion_width_nm']:.1f} nm")
     print(f"Rendering {len(result['snapshots'])} frames...")
 
-    render_animation(result["snapshots"], output=args.output, fps=args.fps)
+    pmhc_pos = result.get("pmhc_pos", None)
+    render_animation(result["snapshots"], output=args.output, fps=args.fps, pmhc_pos=pmhc_pos)
     return 0
 
 

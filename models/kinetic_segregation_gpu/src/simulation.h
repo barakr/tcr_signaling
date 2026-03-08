@@ -43,6 +43,8 @@ typedef struct {
     int n_pmhc;
     double *pmhc_pos;         /* n_pmhc x 2 (x, y), NULL if n_pmhc=0 */
     int *pmhc_count;          /* grid_size x grid_size binned counts, NULL if n_pmhc=0 */
+    int pmhc_mode;            /* 0=uniform, 1=inner_circle */
+    double pmhc_radius;       /* placement disc radius (nm), 0=auto (patch/3) */
 
     /* Diagnostics */
     long accepted;
@@ -65,14 +67,17 @@ typedef struct {
  * mol_repulsion_eps: soft molecular repulsion strength (kT). 0 = disabled.
  * mol_repulsion_rcut: cutoff distance (nm). 0 = default (10nm).
  * n_pmhc: number of static pMHC molecules. 0 = binding everywhere.
- * pmhc_seed: seed for pMHC random positions. */
+ * pmhc_seed: seed for pMHC random positions.
+ * pmhc_mode: 0=uniform, 1=inner_circle (default).
+ * pmhc_radius: placement disc radius (nm). 0 = auto (patch/3). */
 SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
                      double D_mol, double D_h, double dt_override,
                      double cd45_height, double k_rep,
                      double mol_repulsion_eps, double mol_repulsion_rcut,
-                     int n_pmhc, uint64_t pmhc_seed);
+                     int n_pmhc, uint64_t pmhc_seed,
+                     int pmhc_mode, double pmhc_radius);
 
 /* Free simulation state. */
 void sim_destroy(SimState *s);

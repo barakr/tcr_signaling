@@ -23,16 +23,24 @@ def _find_binary() -> Path:
     )
 
 
+def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:
+    """Apply param file values where CLI left defaults (None)."""
+    for key, val in params_dict.items():
+        if hasattr(args, key) and getattr(args, key) is None:
+            setattr(args, key, val)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="GPU-accelerated kinetic segregation model")
-    parser.add_argument("--time_sec", type=float, required=True)
-    parser.add_argument("--rigidity_kT_nm2", type=float, required=True)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--params", type=str, default=None, help="JSON parameter file")
+    parser.add_argument("--time_sec", type=float, default=None)
+    parser.add_argument("--rigidity_kT_nm2", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--run-dir", type=str, required=True)
-    parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=50)
-    parser.add_argument("--n_cd45", type=lambda x: int(float(x)), default=100)
+    parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--n_cd45", type=lambda x: int(float(x)), default=None)
     parser.add_argument("--n_steps", type=lambda x: int(float(x)), default=None)
-    parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=64)
+    parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=None)
     parser.add_argument("--no-gpu", action="store_true", help="Disable Metal GPU")
     parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s)")
     parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s)")
@@ -43,7 +51,30 @@ def main() -> int:
     parser.add_argument("--mol_repulsion_rcut", type=float, default=None, help="Soft molecular repulsion cutoff (nm)")
     parser.add_argument("--n_pmhc", type=lambda x: int(float(x)), default=None, help="Number of static pMHC molecules")
     parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC positions")
+    parser.add_argument("--pmhc_mode", type=str, default=None, help="pMHC placement: 'uniform' or 'inner_circle'")
+    parser.add_argument("--pmhc_radius", type=float, default=None, help="pMHC placement radius (nm)")
     args = parser.parse_args()
+
+    # Load param file and merge (CLI > param file > built-in defaults)
+    if args.params is not None:
+        with open(args.params) as f:
+            _merge_params(args, json.load(f))
+
+    # Apply built-in defaults
+    if args.seed is None:
+        args.seed = 42
+    if args.n_tcr is None:
+        args.n_tcr = 50
+    if args.n_cd45 is None:
+        args.n_cd45 = 100
+    if args.grid_size is None:
+        args.grid_size = 64
+
+    # Validate required params
+    if args.time_sec is None:
+        parser.error("--time_sec is required (via CLI or param file)")
+    if args.rigidity_kT_nm2 is None:
+        parser.error("--rigidity_kT_nm2 is required (via CLI or param file)")
 
     binary = _find_binary()
     cmd = [
@@ -78,6 +109,12 @@ def main() -> int:
         cmd.extend(["--n_pmhc", str(args.n_pmhc)])
     if args.pmhc_seed is not None:
         cmd.extend(["--pmhc_seed", str(args.pmhc_seed)])
+    if args.pmhc_mode is not None:
+        cmd.extend(["--pmhc_mode", str(args.pmhc_mode)])
+    if args.pmhc_radius is not None:
+        cmd.extend(["--pmhc_radius", str(args.pmhc_radius)])
+    if args.params is not None:
+        cmd.extend(["--params", args.params])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
