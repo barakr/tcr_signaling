@@ -6,6 +6,58 @@
 
 ## Decision Log
 
+### 2026-03-07: Close CPU vs GPU acceptance rate gap — snapshot-based parallel Metropolis
+- **Problem**: Persistent ~2.7% systematic acceptance rate gap between C CPU
+  and C GPU Phase 2, amplifying to ~14% at 5000 steps. The checkerboard update
+  order fix (previous entry) did not close it.
+- **Root cause analysis**: Two contributing factors, identified iteratively:
+  1. **Float precision mismatch** (minor): CPU Box-Muller used double precision
+     cast to float; CPU Metropolis used `double log(u)`. GPU used float32
+     throughout. Fixing this alone reduced gap from ~2.7% to ~2.5%.
+  2. **Stencil race condition during evaluation** (dominant): `bending_delta`
+     reads cells at distance 2 (same checkerboard color). The old GPU kernel
+     had a race condition: each thread wrote its proposal to `h[]` then
+     immediately read the stencil, with undefined visibility of other threads'
+     writes across SIMD groups. On CPU, sequential processing created a
+     different (also order-dependent) stencil snapshot. This produced
+     systematically different energy landscapes.
+- **Solution — snapshot-based three-pass Metropolis** (both CPU and GPU):
+  For each checkerboard color:
+  1. **Propose**: generate ALL proposals, write to `h[]`
+  2. **Snapshot**: freeze `h[]` into a read-only copy
+  3. **Evaluate**: compute `bending_delta` from frozen snapshot, decide accept/reject
+  4. **Apply**: restore rejected cells in `h[]`
+  On GPU, each phase is a separate Metal compute encoder (barrier between phases).
+  On CPU, phases are sequential loops with a `memcpy` snapshot.
+  This ensures ALL cells evaluate against the same consistent height field,
+  eliminating order-dependent stencil reads.
+- **Float precision matching** (`rng.c`, `rng.h`, `simulation.c`):
+  - Added `pcg64_uniform_f()` returning `(float)uint32 / 4294967296.0f`
+  - CPU Phase 2 Box-Muller uses `sqrtf`/`logf`/`cosf` in float32, with
+    `max(u1, 1e-30f)` clamp matching GPU shader
+  - Metropolis comparison uses `logf(u_f) < -dE` (float, not double)
+- **GPU kernel split** (`shaders.metal`, `metal_engine.m`):
+  Replaced single `grid_update_kernel` with four kernels:
+  `grid_propose_kernel` → `grid_snapshot_kernel` → `grid_evaluate_kernel` →
+  `grid_apply_kernel`. Each dispatched as a separate command encoder providing
+  Metal-guaranteed barriers between phases.
+- **Results** (5 seeds, grid=50, kappa=20):
+
+  | Steps   | Gap before | Gap after |
+  |--------:|-----------:|----------:|
+  | 50      | ~2.45%     | ~0.24%   |
+  | 500     | ~3.20%     | ~0.08%   |
+  | 5,000   | ~14%       | ~0.47%   |
+  | 50,000  | (untested) | ~0.16%   |
+  | 500,000 | (untested) | ~0.23%   |
+
+  **No amplification**: gap stays <0.5% at all timescales.
+- **Tests**: 25 fast GPU tests (2 new gap tests), 44 Python tests — all pass.
+  New tests: `test_gap_bounded_short` (50 steps, <2%), `test_gap_bounded_medium`
+  (500 steps, <2%), `test_gap_no_amplification` (5000 steps, slow, <2%).
+- **Files modified**: `rng.h`, `rng.c`, `simulation.c`, `shaders.metal`,
+  `metal_engine.m`, `test_gpu_physics.py`, `Status.md`.
+
 ### 2026-03-07: Stabilize GPU vs CPU acceptance rate & dynamics consistency
 - **Problem**: Systematic acceptance rate gap between C CPU (~0.37) and C GPU
   (~0.39) at grid=50, kappa=20. Gap amplifies over time through molecule-height

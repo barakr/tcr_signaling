@@ -18,6 +18,9 @@ uint32_t pcg64_random(pcg64_t *rng);
 /* Uniform double in [0, 1). */
 double pcg64_uniform(pcg64_t *rng);
 
+/* Uniform float in [0, 1) — float32 division matching GPU precision. */
+float pcg64_uniform_f(pcg64_t *rng);
+
 /* Gaussian via Box-Muller (mean=0, stddev=sigma). */
 double pcg64_normal(pcg64_t *rng, double sigma);
 

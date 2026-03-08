@@ -20,18 +20,30 @@ typedef struct {
     uint32_t rng_offset;
 } GridParams;
 
+/* Per-cell proposal data matching the shader struct. */
+typedef struct {
+    float old_h;
+    float u_accept;
+    int accepted;
+} CellProposal;
+
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
-    id<MTLComputePipelineState> pipeline;
+    id<MTLComputePipelineState> propose_pipeline;
+    id<MTLComputePipelineState> snapshot_pipeline;
+    id<MTLComputePipelineState> evaluate_pipeline;
+    id<MTLComputePipelineState> apply_pipeline;
 
     /* Buffers (sized for max grid_size). */
     id<MTLBuffer> h_buf;              /* float[n^2] — authoritative height field */
+    id<MTLBuffer> h_snap_buf;         /* float[n^2] — frozen snapshot for evaluate */
     id<MTLBuffer> tcr_count_buf;      /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> cd45_count_buf;     /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> params_buf;         /* GridParams — color 0 */
     id<MTLBuffer> params_buf2;        /* GridParams — color 1 */
     id<MTLBuffer> accept_buf;         /* atomic_int[1] */
+    id<MTLBuffer> proposals_buf;      /* CellProposal[n^2/2] */
 
     int grid_size;
     uint32_t rng_key0;   /* Philox key derived from CPU seed */
@@ -104,25 +116,39 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
             return NULL;
         }
 
-        id<MTLFunction> func = [library newFunctionWithName:@"grid_update_kernel"];
-        if (!func) {
-            fprintf(stderr, "Metal: kernel function not found.\n");
-            free(eng);
-            return NULL;
+        /* Load all four kernel functions. */
+        NSArray *names = @[@"grid_propose_kernel", @"grid_snapshot_kernel",
+                           @"grid_evaluate_kernel", @"grid_apply_kernel"];
+        id<MTLFunction> funcs[4];
+        for (int i = 0; i < 4; i++) {
+            funcs[i] = [library newFunctionWithName:names[i]];
+            if (!funcs[i]) {
+                fprintf(stderr, "Metal: kernel '%s' not found.\n",
+                        [names[i] UTF8String]);
+                free(eng);
+                return NULL;
+            }
         }
 
-        eng->pipeline = [device newComputePipelineStateWithFunction:func error:&error];
-        if (!eng->pipeline) {
+        eng->propose_pipeline = [device newComputePipelineStateWithFunction:funcs[0] error:&error];
+        eng->snapshot_pipeline = [device newComputePipelineStateWithFunction:funcs[1] error:&error];
+        eng->evaluate_pipeline = [device newComputePipelineStateWithFunction:funcs[2] error:&error];
+        eng->apply_pipeline = [device newComputePipelineStateWithFunction:funcs[3] error:&error];
+        if (!eng->propose_pipeline || !eng->snapshot_pipeline ||
+            !eng->evaluate_pipeline || !eng->apply_pipeline) {
             fprintf(stderr, "Metal: pipeline creation failed: %s\n",
                     [[error localizedDescription] UTF8String]);
             free(eng);
             return NULL;
         }
 
-        /* Allocate buffers — no random buffers needed (GPU generates its own). */
+        /* Allocate buffers. */
         int n2 = grid_size * grid_size;
+        int half = n2 / 2;
         eng->h_buf = [device newBufferWithLength:n2 * sizeof(float)
                                          options:MTLResourceStorageModeShared];
+        eng->h_snap_buf = [device newBufferWithLength:n2 * sizeof(float)
+                                              options:MTLResourceStorageModeShared];
         eng->tcr_count_buf = [device newBufferWithLength:n2 * sizeof(int)
                                                  options:MTLResourceStorageModeShared];
         eng->cd45_count_buf = [device newBufferWithLength:n2 * sizeof(int)
@@ -133,8 +159,8 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
                                                options:MTLResourceStorageModeShared];
         eng->accept_buf = [device newBufferWithLength:sizeof(int)
                                               options:MTLResourceStorageModeShared];
-
-        /* Initialize h_buf to zero — will be populated on first grid_update call. */
+        eng->proposals_buf = [device newBufferWithLength:half * sizeof(CellProposal)
+                                                 options:MTLResourceStorageModeShared];
 
         fprintf(stderr, "Metal: GPU engine initialized on %s (grid=%d).\n",
                 [[device name] UTF8String], grid_size);
@@ -174,11 +200,11 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
         int n2 = grid_size * grid_size;
         int half = n2 / 2;
 
-        /* h_buf is shared memory — copy h into it (h is the authoritative float array). */
+        /* Copy h into GPU shared buffer. */
         float *h_gpu = (float *)[eng->h_buf contents];
         memcpy(h_gpu, h, n2 * sizeof(float));
 
-        /* Bin molecules on CPU, write directly into shared GPU buffers. */
+        /* Bin molecules on CPU. */
         bin_molecules_f(tcr_pos, n_tcr, grid_size, dx,
                         (int *)[eng->tcr_count_buf contents]);
         bin_molecules_f(cd45_pos, n_cd45, grid_size, dx,
@@ -208,36 +234,76 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
         int *acc = (int *)[eng->accept_buf contents];
         *acc = 0;
 
-        /* Single command buffer for both checkerboard colors. */
-        MTLSize gridSize = MTLSizeMake(half, 1, 1);
-        NSUInteger threadWidth = eng->pipeline.maxTotalThreadsPerThreadgroup;
-        if (threadWidth > (NSUInteger)half)
-            threadWidth = (NSUInteger)half;
-        MTLSize threadgroupSize = MTLSizeMake(threadWidth, 1, 1);
+        /* Thread group sizes. */
+        MTLSize halfGrid = MTLSizeMake(half, 1, 1);
+        MTLSize fullGrid = MTLSizeMake(n2, 1, 1);
+
+        NSUInteger pw = eng->propose_pipeline.maxTotalThreadsPerThreadgroup;
+        if (pw > (NSUInteger)half) pw = (NSUInteger)half;
+        NSUInteger sw = eng->snapshot_pipeline.maxTotalThreadsPerThreadgroup;
+        if (sw > (NSUInteger)n2) sw = (NSUInteger)n2;
+        NSUInteger ew = eng->evaluate_pipeline.maxTotalThreadsPerThreadgroup;
+        if (ew > (NSUInteger)half) ew = (NSUInteger)half;
+        NSUInteger aw = eng->apply_pipeline.maxTotalThreadsPerThreadgroup;
+        if (aw > (NSUInteger)half) aw = (NSUInteger)half;
+
+        MTLSize ptg = MTLSizeMake(pw, 1, 1);
+        MTLSize stg = MTLSizeMake(sw, 1, 1);
+        MTLSize etg = MTLSizeMake(ew, 1, 1);
+        MTLSize atg = MTLSizeMake(aw, 1, 1);
 
         id<MTLCommandBuffer> cmdBuf = [eng->queue commandBuffer];
 
-        /* Color 0 (red). */
-        id<MTLComputeCommandEncoder> enc0 = [cmdBuf computeCommandEncoder];
-        [enc0 setComputePipelineState:eng->pipeline];
-        [enc0 setBuffer:eng->h_buf offset:0 atIndex:0];
-        [enc0 setBuffer:eng->tcr_count_buf offset:0 atIndex:1];
-        [enc0 setBuffer:eng->cd45_count_buf offset:0 atIndex:2];
-        [enc0 setBuffer:eng->params_buf offset:0 atIndex:3];
-        [enc0 setBuffer:eng->accept_buf offset:0 atIndex:4];
-        [enc0 dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
-        [enc0 endEncoding];
+        /* For each color: propose → snapshot → evaluate → apply.
+           Each is a separate command encoder, providing barriers between phases. */
+        id<MTLBuffer> paramsBufs[2] = {eng->params_buf, eng->params_buf2};
+        for (int c = 0; c < 2; c++) {
+            /* 1. Propose: write all proposals to h[], save old_h/u_accept. */
+            {
+                id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
+                [enc setComputePipelineState:eng->propose_pipeline];
+                [enc setBuffer:eng->h_buf offset:0 atIndex:0];
+                [enc setBuffer:paramsBufs[c] offset:0 atIndex:1];
+                [enc setBuffer:eng->proposals_buf offset:0 atIndex:2];
+                [enc dispatchThreads:halfGrid threadsPerThreadgroup:ptg];
+                [enc endEncoding];
+            }
 
-        /* Color 1 (black). */
-        id<MTLComputeCommandEncoder> enc1 = [cmdBuf computeCommandEncoder];
-        [enc1 setComputePipelineState:eng->pipeline];
-        [enc1 setBuffer:eng->h_buf offset:0 atIndex:0];
-        [enc1 setBuffer:eng->tcr_count_buf offset:0 atIndex:1];
-        [enc1 setBuffer:eng->cd45_count_buf offset:0 atIndex:2];
-        [enc1 setBuffer:eng->params_buf2 offset:0 atIndex:3];
-        [enc1 setBuffer:eng->accept_buf offset:0 atIndex:4];
-        [enc1 dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
-        [enc1 endEncoding];
+            /* 2. Snapshot: copy h[] → h_snap[] for consistent reads. */
+            {
+                id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
+                [enc setComputePipelineState:eng->snapshot_pipeline];
+                [enc setBuffer:eng->h_buf offset:0 atIndex:0];
+                [enc setBuffer:eng->h_snap_buf offset:0 atIndex:1];
+                [enc dispatchThreads:fullGrid threadsPerThreadgroup:stg];
+                [enc endEncoding];
+            }
+
+            /* 3. Evaluate: compute bending_delta from snapshot, decide accept/reject. */
+            {
+                id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
+                [enc setComputePipelineState:eng->evaluate_pipeline];
+                [enc setBuffer:eng->h_snap_buf offset:0 atIndex:0];
+                [enc setBuffer:eng->tcr_count_buf offset:0 atIndex:1];
+                [enc setBuffer:eng->cd45_count_buf offset:0 atIndex:2];
+                [enc setBuffer:paramsBufs[c] offset:0 atIndex:3];
+                [enc setBuffer:eng->accept_buf offset:0 atIndex:4];
+                [enc setBuffer:eng->proposals_buf offset:0 atIndex:5];
+                [enc dispatchThreads:halfGrid threadsPerThreadgroup:etg];
+                [enc endEncoding];
+            }
+
+            /* 4. Apply: restore rejected cells in h[]. */
+            {
+                id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
+                [enc setComputePipelineState:eng->apply_pipeline];
+                [enc setBuffer:eng->h_buf offset:0 atIndex:0];
+                [enc setBuffer:paramsBufs[c] offset:0 atIndex:1];
+                [enc setBuffer:eng->proposals_buf offset:0 atIndex:2];
+                [enc dispatchThreads:halfGrid threadsPerThreadgroup:atg];
+                [enc endEncoding];
+            }
+        }
 
         [cmdBuf commit];
         [cmdBuf waitUntilCompleted];
@@ -245,7 +311,7 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
         *accepted += *acc;
         *total_proposals += n2;
 
-        /* Copy results back from shared GPU buffer to h. */
+        /* Copy results back. */
         memcpy(h, h_gpu, n2 * sizeof(float));
     }
 }

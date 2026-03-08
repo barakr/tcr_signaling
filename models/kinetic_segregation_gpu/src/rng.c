@@ -21,6 +21,10 @@ double pcg64_uniform(pcg64_t *rng) {
     return (double)pcg64_random(rng) / 4294967296.0;
 }
 
+float pcg64_uniform_f(pcg64_t *rng) {
+    return (float)pcg64_random(rng) / 4294967296.0f;
+}
+
 double pcg64_normal(pcg64_t *rng, double sigma) {
     /* Box-Muller transform */
     double u1, u2;

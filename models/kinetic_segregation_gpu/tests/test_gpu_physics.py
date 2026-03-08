@@ -211,6 +211,66 @@ class TestCpuGpuConsistency:
         )
 
 
+class TestAcceptRateGap:
+    """Verify that CPU vs GPU acceptance rate gap stays bounded and does not amplify."""
+
+    @pytest.fixture(autouse=True)
+    def _build(self):
+        _ensure_binary()
+        if not _BINARY.exists():
+            pytest.skip("Binary not available")
+
+    @staticmethod
+    def _get_accept_rate(binary, tmp_path, seed, n_steps, grid_size, use_gpu):
+        label = "gpu" if use_gpu else "cpu"
+        rd = tmp_path / f"gap_{label}_{n_steps}_{seed}"
+        cmd = [
+            str(binary),
+            "--time_sec", "10.0",
+            "--rigidity_kT_nm2", "20.0",
+            "--seed", str(seed),
+            "--n_steps", str(n_steps),
+            "--grid_size", str(grid_size),
+            "--run-dir", str(rd),
+        ]
+        if not use_gpu:
+            cmd.append("--no-gpu")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout.strip())["diagnostics"]["accept_rate"]
+
+    def test_gap_bounded_short(self, tmp_path):
+        """CPU vs GPU accept rate gap < 2% at 50 steps across 5 seeds."""
+        gaps = []
+        for seed in range(5):
+            cpu = self._get_accept_rate(_BINARY, tmp_path, seed, 50, 50, False)
+            gpu = self._get_accept_rate(_BINARY, tmp_path, seed, 50, 50, True)
+            gaps.append(abs(gpu - cpu))
+        mean_gap = np.mean(gaps)
+        assert mean_gap < 0.02, f"Mean gap {mean_gap:.4f} exceeds 2% at 50 steps"
+
+    def test_gap_bounded_medium(self, tmp_path):
+        """CPU vs GPU accept rate gap < 2% at 500 steps across 5 seeds."""
+        gaps = []
+        for seed in range(5):
+            cpu = self._get_accept_rate(_BINARY, tmp_path, seed, 500, 50, False)
+            gpu = self._get_accept_rate(_BINARY, tmp_path, seed, 500, 50, True)
+            gaps.append(abs(gpu - cpu))
+        mean_gap = np.mean(gaps)
+        assert mean_gap < 0.02, f"Mean gap {mean_gap:.4f} exceeds 2% at 500 steps"
+
+    @pytest.mark.slow
+    def test_gap_no_amplification(self, tmp_path):
+        """Gap does not amplify: < 2% at 5000 steps across 3 seeds."""
+        gaps = []
+        for seed in range(3):
+            cpu = self._get_accept_rate(_BINARY, tmp_path, seed, 5000, 50, False)
+            gpu = self._get_accept_rate(_BINARY, tmp_path, seed, 5000, 50, True)
+            gaps.append(abs(gpu - cpu))
+        mean_gap = np.mean(gaps)
+        assert mean_gap < 0.02, f"Mean gap {mean_gap:.4f} exceeds 2% at 5000 steps"
+
+
 @pytest.mark.slow
 class TestGridConvergence:
     """Verify that different grid sizes with same physical time produce similar physics."""

@@ -256,19 +256,70 @@ static void phase2_grid_cpu(SimState *s) {
     int n2 = n * n;
     float dx = (float)s->dx;
     float kappa = (float)s->kappa;
+    int half = n2 / 2;
 
     int *tcr_count = (int *)malloc(n2 * sizeof(int));
     int *cd45_count = (int *)malloc(n2 * sizeof(int));
     bin_molecules(s->tcr_pos, s->n_tcr, n, s->dx, tcr_count);
     bin_molecules(s->cd45_pos, s->n_cd45, n, s->dx, cd45_count);
 
-    /* Two-pass checkerboard: color 0 (even sum) then color 1 (odd sum).
-       Matches GPU kernel's update order for dynamical equivalence. */
+    /* Per-cell buffers for the three-pass approach matching GPU. */
+    float *old_vals = (float *)malloc(half * sizeof(float));
+    float *u_accepts = (float *)malloc(half * sizeof(float));
+    int *cell_gi = (int *)malloc(half * sizeof(int));
+    int *cell_gj = (int *)malloc(half * sizeof(int));
+    int *accepted_flags = (int *)malloc(half * sizeof(int));
+
+    /* Read-only snapshot for bending_delta evaluation. */
+    float *h_snapshot = (float *)malloc(n2 * sizeof(float));
+
+    /* Three-pass checkerboard matching GPU propose→snapshot→evaluate→apply:
+       Pass 1: generate all proposals for a color, write to h[].
+       Snapshot: copy h[] (all proposals visible) for consistent reads.
+       Pass 2: compute bending deltas against snapshot, decide accept/reject.
+       Pass 3: restore rejected cells in h[].
+       This ensures ALL cells evaluate against the same consistent state. */
     for (int color = 0; color < 2; color++) {
-    for (int gi = 0; gi < n; gi++) {
-        for (int gj = 0; gj < n; gj++) {
-            if ((gi + gj) % 2 != color) continue;
-            float old_h_val = s->h[gi * n + gj];
+        int cidx = 0;
+
+        /* Pass 1 (propose): generate proposals, write ALL to h[]. */
+        for (int gi = 0; gi < n; gi++) {
+            for (int gj = 0; gj < n; gj++) {
+                if ((gi + gj) % 2 != color) continue;
+
+                float old_h_val = s->h[gi * n + gj];
+
+                /* Float32 Box-Muller matching GPU shader precision. */
+                float u1_f = pcg64_uniform_f(&s->rng);
+                if (u1_f < 1e-30f) u1_f = 1e-30f;
+                float u2_f = pcg64_uniform_f(&s->rng);
+                float normal_f = (float)s->step_size_h
+                               * sqrtf(-2.0f * logf(u1_f))
+                               * cosf(6.2831853071795864f * u2_f);
+                float new_h_val = old_h_val + normal_f;
+                if (new_h_val < 0.0f) new_h_val = 0.0f;
+
+                float u_f = pcg64_uniform_f(&s->rng);
+
+                old_vals[cidx] = old_h_val;
+                u_accepts[cidx] = u_f;
+                cell_gi[cidx] = gi;
+                cell_gj[cidx] = gj;
+                cidx++;
+
+                s->h[gi * n + gj] = new_h_val;
+            }
+        }
+
+        /* Snapshot: freeze h[] so all evaluations read the same state. */
+        memcpy(h_snapshot, s->h, n2 * sizeof(float));
+
+        /* Pass 2 (evaluate): bending deltas read from frozen snapshot. */
+        for (int k = 0; k < cidx; k++) {
+            int gi = cell_gi[k];
+            int gj = cell_gj[k];
+            float old_h_val = old_vals[k];
+            float new_h_val = h_snapshot[gi * n + gj];
 
             int n_tcr_cell = tcr_count[gi * n + gj];
             int n_cd45_cell = cd45_count[gi * n + gj];
@@ -276,28 +327,34 @@ static void phase2_grid_cpu(SimState *s) {
             float old_mol_e = n_tcr_cell * tcr_potential_f(old_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM)
                             + n_cd45_cell * cd45_repulsion_f(old_h_val, (float)CD45_HEIGHT_NM);
 
-            float new_h_val = old_h_val + (float)pcg64_normal(&s->rng, s->step_size_h);
-            if (new_h_val < 0.0f) new_h_val = 0.0f;
-
-            s->h[gi * n + gj] = new_h_val;
-
-            float dE_bend = bending_energy_delta_f(s->h, n, kappa, dx,
+            float dE_bend = bending_energy_delta_f(h_snapshot, n, kappa, dx,
                                                    gi, gj, old_h_val, new_h_val);
             float new_mol_e = n_tcr_cell * tcr_potential_f(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM)
                             + n_cd45_cell * cd45_repulsion_f(new_h_val, (float)CD45_HEIGHT_NM);
 
             float dE = dE_bend + (new_mol_e - old_mol_e);
             s->total_proposals++;
-            double u = pcg64_uniform(&s->rng);
-            if (dE <= 0.0f || (u > 0.0 && log(u) < (double)(-dE))) {
-                s->accepted++;
-            } else {
-                s->h[gi * n + gj] = old_h_val;
+            float u_f = u_accepts[k];
+            accepted_flags[k] = (dE <= 0.0f || (u_f > 0.0f && logf(u_f) < -dE));
+            if (accepted_flags[k]) s->accepted++;
+        }
+
+        /* Pass 3 (apply): restore rejected cells. */
+        for (int k = 0; k < cidx; k++) {
+            if (!accepted_flags[k]) {
+                int gi = cell_gi[k];
+                int gj = cell_gj[k];
+                s->h[gi * n + gj] = old_vals[k];
             }
         }
-    }
     } /* end color loop */
 
+    free(old_vals);
+    free(u_accepts);
+    free(cell_gi);
+    free(cell_gj);
+    free(accepted_flags);
+    free(h_snapshot);
     free(tcr_count);
     free(cd45_count);
 }
