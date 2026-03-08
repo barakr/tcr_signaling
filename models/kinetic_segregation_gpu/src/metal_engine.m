@@ -14,6 +14,7 @@ typedef struct {
     float u_assoc;
     float sigma_bind;
     float cd45_height;
+    float k_rep;
     int color;
     uint32_t rng_key0;
     uint32_t rng_key1;
@@ -40,6 +41,7 @@ typedef struct {
     id<MTLBuffer> h_snap_buf;         /* float[n^2] — frozen snapshot for evaluate */
     id<MTLBuffer> tcr_count_buf;      /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> cd45_count_buf;     /* int[n^2]   — molecule count per cell */
+    id<MTLBuffer> pmhc_count_buf;     /* int[n^2]   — pMHC count per cell */
     id<MTLBuffer> params_buf;         /* GridParams — color 0 */
     id<MTLBuffer> params_buf2;        /* GridParams — color 1 */
     id<MTLBuffer> accept_buf;         /* atomic_int[1] */
@@ -153,6 +155,8 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
                                                  options:MTLResourceStorageModeShared];
         eng->cd45_count_buf = [device newBufferWithLength:n2 * sizeof(int)
                                                   options:MTLResourceStorageModeShared];
+        eng->pmhc_count_buf = [device newBufferWithLength:n2 * sizeof(int)
+                                                  options:MTLResourceStorageModeShared];
         eng->params_buf = [device newBufferWithLength:sizeof(GridParams)
                                               options:MTLResourceStorageModeShared];
         eng->params_buf2 = [device newBufferWithLength:sizeof(GridParams)
@@ -191,9 +195,10 @@ static void bin_molecules_f(const double *pos, int n_mol, int grid_size,
 void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                               double kappa, double dx, double step_size_h,
                               double u_assoc, double sigma_bind,
-                              double cd45_height,
+                              double cd45_height, double k_rep,
                               const double *tcr_pos, int n_tcr,
                               const double *cd45_pos, int n_cd45,
+                              const int *pmhc_count,
                               long *accepted, long *total_proposals) {
     @autoreleasepool {
         MetalEngine *eng = (MetalEngine *)ctx;
@@ -210,6 +215,14 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
         bin_molecules_f(cd45_pos, n_cd45, grid_size, dx,
                         (int *)[eng->cd45_count_buf contents]);
 
+        /* Copy pMHC counts (or fill with 1s if NULL = all cells have pMHC). */
+        int *pmhc_gpu = (int *)[eng->pmhc_count_buf contents];
+        if (pmhc_count) {
+            memcpy(pmhc_gpu, pmhc_count, n2 * sizeof(int));
+        } else {
+            for (int i = 0; i < n2; i++) pmhc_gpu[i] = 1;
+        }
+
         /* Set params for color 0. */
         GridParams *p0 = (GridParams *)[eng->params_buf contents];
         p0->grid_size = grid_size;
@@ -219,6 +232,7 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
         p0->u_assoc = (float)u_assoc;
         p0->sigma_bind = (float)sigma_bind;
         p0->cd45_height = (float)cd45_height;
+        p0->k_rep = (float)k_rep;
         p0->color = 0;
         p0->rng_key0 = eng->rng_key0;
         p0->rng_key1 = eng->rng_key1;
@@ -289,6 +303,7 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                 [enc setBuffer:paramsBufs[c] offset:0 atIndex:3];
                 [enc setBuffer:eng->accept_buf offset:0 atIndex:4];
                 [enc setBuffer:eng->proposals_buf offset:0 atIndex:5];
+                [enc setBuffer:eng->pmhc_count_buf offset:0 atIndex:6];
                 [enc dispatchThreads:halfGrid threadsPerThreadgroup:etg];
                 [enc endEncoding];
             }

@@ -35,9 +35,9 @@ def lib():
     lib.tcr_pmhc_potential.restype = ctypes.c_double
     lib.tcr_pmhc_potential.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
 
-    # cd45_repulsion(double h, double cd45_height) -> double
+    # cd45_repulsion(double h, double cd45_height, double k_rep) -> double
     lib.cd45_repulsion.restype = ctypes.c_double
-    lib.cd45_repulsion.argtypes = [ctypes.c_double, ctypes.c_double]
+    lib.cd45_repulsion.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
 
     # bending_energy_delta(double *h, int n, double kappa, double dx,
     #                      int gi, int gj, double old_val, double new_val) -> double
@@ -86,16 +86,16 @@ class TestTcrPotentialC:
 
 class TestCd45RepulsionC:
     def test_above_height(self, lib):
-        assert lib.cd45_repulsion(35.0, 35.0) == 0.0
-        assert lib.cd45_repulsion(50.0, 35.0) == 0.0
+        assert lib.cd45_repulsion(35.0, 35.0, 1.0) == 0.0
+        assert lib.cd45_repulsion(50.0, 35.0, 1.0) == 0.0
 
     def test_below_height(self, lib):
-        e = lib.cd45_repulsion(30.0, 35.0)
+        e = lib.cd45_repulsion(30.0, 35.0, 1.0)
         expected = 0.5 * (35.0 - 30.0) ** 2
         assert e == pytest.approx(expected)
 
     def test_zero_height(self, lib):
-        e = lib.cd45_repulsion(0.0, 35.0)
+        e = lib.cd45_repulsion(0.0, 35.0, 1.0)
         expected = 0.5 * 35.0 ** 2
         assert e == pytest.approx(expected)
 
@@ -103,8 +103,8 @@ class TestCd45RepulsionC:
         from models.kinetic_segregation.potentials import cd45_repulsion as py_cd45
 
         for h in [0.0, 5.0, 20.0, 34.9, 35.0, 50.0]:
-            c_val = lib.cd45_repulsion(h, 35.0)
-            py_val = py_cd45(h, 35.0)
+            c_val = lib.cd45_repulsion(h, 35.0, 1.0)
+            py_val = py_cd45(h, 35.0, 1.0)
             assert c_val == pytest.approx(py_val, abs=1e-12), f"Mismatch at h={h}"
 
 

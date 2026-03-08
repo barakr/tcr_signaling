@@ -6,6 +6,66 @@
 
 ## Decision Log
 
+### 2026-03-08: Align KS implementations with MATLAB & paper
+- **Goal**: Make Python/C/GPU use the same algorithm, aligned with MATLAB's
+  physics while keeping the paper's continuous Gaussian TCR potential.
+- **Change 1 — Reflecting height boundary**: Replaced `max(0, h)` clamping with
+  `abs(h)` reflection (matching MATLAB) in all three implementations. A proposed
+  height of −3 now becomes 3 instead of 0.
+- **Change 2 — Python checkerboard grid update**: Replaced sequential Gauss-Seidel
+  `for gi, for gj` loop with two-pass checkerboard + snapshot approach matching
+  C/GPU. Pre-bins molecules to grid counts once per step (O(N) instead of O(N)
+  per cell). This closes the ~14% accept rate gap between Python and C/GPU.
+- **Change 3 — pMHC molecules**: Added static pMHC positions on APC surface.
+  TCR binding potential only applies at grid cells where pMHC is present.
+  API: `n_pmhc` (int, 0=binding everywhere for backward compat), `pmhc_pos`
+  (NDArray), `pmhc_seed` (int). Binned to grid once at initialization.
+  Implemented in Python, C CPU, and GPU (Metal shader gets `pmhc_count` buffer).
+- **Change 4 — Configurable CD45 parameters**: Made `k_rep` and `cd45_height`
+  configurable via CLI and `simulate_ks()`. Defaults remain paper values
+  (k_rep=1.0, cd45_height=35.0). MATLAB values (k=0.001, h=50nm) can be used
+  for comparison.
+- **Change 5 — Periodic molecule boundaries**: Switched molecule positions from
+  `clip(pos, 0, L)` to `pos % L` (periodic wrap) in all implementations.
+  Matches MATLAB's periodic BCs.
+- **Change 6 — Soft molecular repulsion**: Added truncated harmonic repulsive
+  potential between nearby molecules: `E = eps * (1 - r/r_cut)^2` for r < r_cut.
+  Configurable via `mol_repulsion_eps` (default 0 = disabled) and
+  `mol_repulsion_rcut` (default 10nm). Brute-force O(N²) per type — fine for
+  N=50-150. Phase 1 only (no GPU shader changes needed).
+- **Backward compatibility**: All changes are backward-compatible. Default
+  parameters reproduce previous behavior (n_pmhc=0, mol_repulsion_eps=0,
+  cd45_height=35, cd45_k_rep=1.0).
+- **Tests**: 21 new tests covering all 6 changes. 83 total tests pass
+  (65 Python KS + 18 GPU). No regressions.
+- **Files modified** (Python): `model.py`, `potentials.py`, `__main__.py`,
+  `test_alignment_changes.py` (new).
+  (C/GPU): `simulation.h`, `simulation.c`, `potentials.h`, `potentials.c`,
+  `shaders.metal`, `metal_engine.h`, `metal_engine.m`, `main.m`, `__main__.py`,
+  `test_potentials.py`.
+
+### 2026-03-08: Paper retrieval + cross-implementation comparison
+- **Paper**: Retrieved Neve-Oz et al. 2024 (*Frontiers in Immunology*,
+  DOI: 10.3389/fimmu.2024.1412221) — main PDF, 9 figures, supplementary DataSheet1.
+- **Location**: `original_paper/` with `figures/` and `supplementary/` subdirs.
+- **Comparison document**: `original_paper/implementation_comparison.md` — detailed
+  comparison of energy formulas, Metropolis criterion, step sizes, grid update order,
+  boundary conditions, RNG, and precision across 4 sources: paper methods, Python,
+  C CPU, and C GPU (Metal).
+- **Key findings**:
+  1. Energy formulas (bending, TCR, CD45, delta) are identical across all 4 sources.
+  2. Metropolis: paper uses `exp(-min(dE,500))`, implementations use log-space
+     `log(u) < -dE` — mathematically equivalent, numerically superior.
+  3. Step sizes: paper uses heuristics, implementations use Brownian dynamics
+     derivation — more physically motivated, grid-resolution independent.
+  4. Grid order: paper unspecified; Python sequential; C/GPU checkerboard+snapshot.
+  5. No dissimilarities affect physical conclusions.
+- **License**: Frontiers CC-BY 4.0 (open access).
+- **Files added**: `original_paper/Neve-Oz_et_al_2024_Frontiers.pdf`,
+  `original_paper/figures/figure_{1..9}.webp`,
+  `original_paper/supplementary/DataSheet1.pdf`,
+  `original_paper/implementation_comparison.md`.
+
 ### 2026-03-07: Close CPU vs GPU acceptance rate gap — snapshot-based parallel Metropolis
 - **Problem**: Persistent ~2.7% systematic acceptance rate gap between C CPU
   and C GPU Phase 2, amplifying to ~14% at 5000 steps. The checkerboard update

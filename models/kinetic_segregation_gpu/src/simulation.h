@@ -34,6 +34,15 @@ typedef struct {
     double dt;                /* physical time step (seconds) */
     double D_mol;             /* molecular diffusion coefficient (nm²/s) */
     double D_h;               /* membrane height diffusion coefficient (nm²/s) */
+    double cd45_height;       /* CD45 ectodomain height (nm) */
+    double k_rep;             /* CD45 repulsive spring constant (kT/nm²) */
+    double mol_repulsion_eps; /* soft molecular repulsion strength (kT) */
+    double mol_repulsion_rcut;/* soft molecular repulsion cutoff (nm) */
+
+    /* pMHC: static positions on APC surface, gating TCR binding */
+    int n_pmhc;
+    double *pmhc_pos;         /* n_pmhc x 2 (x, y), NULL if n_pmhc=0 */
+    int *pmhc_count;          /* grid_size x grid_size binned counts, NULL if n_pmhc=0 */
 
     /* Diagnostics */
     long accepted;
@@ -50,11 +59,20 @@ typedef struct {
 
 /* Allocate and initialize simulation state.
  * D_mol, D_h: diffusion coefficients (nm²/s). Pass 0 for defaults.
- * dt_override: if > 0, use this dt instead of auto-computing. */
+ * dt_override: if > 0, use this dt instead of auto-computing.
+ * cd45_height: CD45 ectodomain height (nm). Pass 0 for default (35nm).
+ * k_rep: CD45 repulsive spring constant (kT/nm²). Pass 0 for default (1.0).
+ * mol_repulsion_eps: soft molecular repulsion strength (kT). 0 = disabled.
+ * mol_repulsion_rcut: cutoff distance (nm). 0 = default (10nm).
+ * n_pmhc: number of static pMHC molecules. 0 = binding everywhere.
+ * pmhc_seed: seed for pMHC random positions. */
 SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
-                     double D_mol, double D_h, double dt_override);
+                     double D_mol, double D_h, double dt_override,
+                     double cd45_height, double k_rep,
+                     double mol_repulsion_eps, double mol_repulsion_rcut,
+                     int n_pmhc, uint64_t pmhc_seed);
 
 /* Free simulation state. */
 void sim_destroy(SimState *s);

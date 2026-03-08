@@ -62,6 +62,10 @@ int main(int argc, const char *argv[]) {
         int dump_frames = 0;
         int dump_interval = 1;
         double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0;
+        double cd45_height_arg = 0.0, cd45_k_rep_arg = 0.0;
+        double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
+        int n_pmhc_arg = 0;
+        int pmhc_seed_arg = -1;
         const char *run_dir = NULL;
 
         /* Simple argument parsing. */
@@ -94,6 +98,18 @@ int main(int argc, const char *argv[]) {
                 D_h_arg = atof(argv[++i]);
             else if (strcmp(argv[i], "--dt") == 0 && i + 1 < argc)
                 dt_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--cd45_height") == 0 && i + 1 < argc)
+                cd45_height_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--cd45_k_rep") == 0 && i + 1 < argc)
+                cd45_k_rep_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--mol_repulsion_eps") == 0 && i + 1 < argc)
+                mol_repulsion_eps_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--mol_repulsion_rcut") == 0 && i + 1 < argc)
+                mol_repulsion_rcut_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--n_pmhc") == 0 && i + 1 < argc)
+                n_pmhc_arg = (int)atof(argv[++i]);
+            else if (strcmp(argv[i], "--pmhc_seed") == 0 && i + 1 < argc)
+                pmhc_seed_arg = atoi(argv[++i]);
             else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
                 print_usage(argv[0]);
                 return 0;
@@ -115,9 +131,13 @@ int main(int argc, const char *argv[]) {
                                                   attributes:nil
                                                        error:nil];
 
+        uint64_t pmhc_sd = (pmhc_seed_arg >= 0) ? (uint64_t)pmhc_seed_arg : (point_seed + 1);
         SimState *sim = sim_create(grid_size, n_tcr, n_cd45,
                                    rigidity, U_ASSOC_DEFAULT, point_seed,
-                                   use_gpu, D_mol_arg, D_h_arg, dt_arg);
+                                   use_gpu, D_mol_arg, D_h_arg, dt_arg,
+                                   cd45_height_arg, cd45_k_rep_arg,
+                                   mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
+                                   n_pmhc_arg, pmhc_sd);
 
         /* Compute n_steps: explicit override or auto from time_sec / dt. */
         int n_steps;

@@ -10,6 +10,7 @@ struct GridParams {
     float u_assoc;
     float sigma_bind;
     float cd45_height;
+    float k_rep;
     int color;        /* 0 = red (even sum), 1 = black (odd sum) */
     uint rng_key0;    /* derived from CPU seed */
     uint rng_key1;    /* derived from CPU seed */
@@ -47,10 +48,10 @@ static float tcr_potential(float h, float u_assoc, float sigma_bind) {
 }
 
 /* CD45 soft repulsive barrier. */
-static float cd45_repulsion(float h, float cd45_height) {
+static float cd45_repulsion(float h, float cd45_height, float k_rep) {
     if (h < cd45_height) {
         float diff = cd45_height - h;
-        return 0.5f * diff * diff;
+        return 0.5f * k_rep * diff * diff;
     }
     return 0.0f;
 }
@@ -133,7 +134,7 @@ kernel void grid_propose_kernel(
     float old_h_val = h[cell_idx];
 
     float new_h_val = old_h_val + normal;
-    if (new_h_val < 0.0f) new_h_val = 0.0f;
+    if (new_h_val < 0.0f) new_h_val = -new_h_val;
 
     proposals[tid].old_h = old_h_val;
     proposals[tid].u_accept = u_accept;
@@ -161,6 +162,7 @@ kernel void grid_evaluate_kernel(
     constant GridParams &params             [[buffer(3)]],
     device atomic_int *accept_count         [[buffer(4)]],
     device CellProposal *proposals          [[buffer(5)]],
+    device const int *pmhc_count            [[buffer(6)]],
     uint tid                                [[thread_position_in_grid]])
 {
     int n = params.grid_size;
@@ -177,14 +179,17 @@ kernel void grid_evaluate_kernel(
 
     int n_tcr_cell = tcr_count[cell_idx];
     int n_cd45_cell = cd45_count[cell_idx];
+    int has_pmhc = pmhc_count[cell_idx] > 0;
 
-    float old_mol_e = n_tcr_cell * tcr_potential(old_h_val, params.u_assoc, params.sigma_bind)
-                    + n_cd45_cell * cd45_repulsion(old_h_val, params.cd45_height);
+    float tcr_e_old = has_pmhc ? n_tcr_cell * tcr_potential(old_h_val, params.u_assoc, params.sigma_bind) : 0.0f;
+    float old_mol_e = tcr_e_old
+                    + n_cd45_cell * cd45_repulsion(old_h_val, params.cd45_height, params.k_rep);
 
     float dE_bend = bending_delta(h_snap, n, params.kappa, params.dx,
                                   gi, gj, old_h_val, new_h_val);
-    float new_mol_e = n_tcr_cell * tcr_potential(new_h_val, params.u_assoc, params.sigma_bind)
-                    + n_cd45_cell * cd45_repulsion(new_h_val, params.cd45_height);
+    float tcr_e_new = has_pmhc ? n_tcr_cell * tcr_potential(new_h_val, params.u_assoc, params.sigma_bind) : 0.0f;
+    float new_mol_e = tcr_e_new
+                    + n_cd45_cell * cd45_repulsion(new_h_val, params.cd45_height, params.k_rep);
 
     float dE = dE_bend + (new_mol_e - old_mol_e);
 

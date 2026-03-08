@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from .potentials import bending_energy_delta, cd45_repulsion, tcr_pmhc_potential
+from .potentials import bending_energy_delta, cd45_repulsion, mol_repulsion, tcr_pmhc_potential
 
 # Default physical parameters from Supplementary Table S1
 PATCH_SIZE_NM = 2000.0  # 2 um patch
@@ -41,7 +41,7 @@ def _initial_positions(
         center = patch_size / 2.0
         spread = patch_size / 6.0
         pos = rng.normal(loc=center, scale=spread, size=(n, 2))
-        return np.clip(pos, 0.0, patch_size)
+        return pos % patch_size
     return rng.uniform(0.0, patch_size, size=(n, 2))
 
 
@@ -84,6 +84,13 @@ def simulate_ks(
     D_mol: float = D_MOL_DEFAULT,
     D_h: float = D_H_DEFAULT,
     dt_override: float | None = None,
+    cd45_height: float = CD45_HEIGHT_NM,
+    cd45_k_rep: float = 1.0,
+    mol_repulsion_eps: float = 0.0,
+    mol_repulsion_rcut: float = 10.0,
+    n_pmhc: int = 0,
+    pmhc_pos: NDArray[np.float64] | None = None,
+    pmhc_seed: int | None = None,
 ) -> dict:
     """Run kinetic segregation Monte Carlo simulation.
 
@@ -117,7 +124,7 @@ def simulate_ks(
     kappa = rigidity_kT_nm2
 
     # Initialize membrane height field — flat at CD45 height (equilibrium gap)
-    h = np.full((grid_size, grid_size), CD45_HEIGHT_NM, dtype=np.float64)
+    h = np.full((grid_size, grid_size), cd45_height, dtype=np.float64)
     # Depress center to create initial tight-contact seed
     center_idx = grid_size // 2
     radius_idx = max(1, grid_size // 8)
@@ -128,6 +135,19 @@ def simulate_ks(
     # Initialize molecule positions
     tcr_pos = _initial_positions(n_tcr, patch, rng, center_bias=True)
     cd45_pos = _initial_positions(n_cd45, patch, rng, center_bias=False)
+
+    # Initialize pMHC: static positions on APC surface, binned to grid once
+    # When n_pmhc=0 and pmhc_pos=None, all cells have pMHC (backward compat)
+    pmhc_grid: NDArray[np.int32] | None = None
+    if n_pmhc > 0 or pmhc_pos is not None:
+        if pmhc_pos is None:
+            pmhc_rng = np.random.default_rng(pmhc_seed if pmhc_seed is not None else seed + 1)
+            pmhc_pos = pmhc_rng.uniform(0.0, patch, size=(n_pmhc, 2))
+        pmhc_grid = np.zeros((grid_size, grid_size), dtype=np.int32)
+        pi = (pmhc_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1)
+        pj = (pmhc_pos[:, 1] // dx).astype(int).clip(0, grid_size - 1)
+        for a, b in zip(pi, pj):
+            pmhc_grid[a, b] += 1
 
     # Brownian dynamics time step: dt = σ² / (2D), with stability constraint
     # dt_stable = dx² / (2 * D_h * κ)
@@ -164,20 +184,44 @@ def simulate_ks(
                 # Compute old energy for this molecule
                 old_h = _height_at(mol_set[idx : idx + 1], h, dx)
                 if is_tcr:
-                    old_e = tcr_pmhc_potential(float(old_h[0]), u_assoc, SIGMA_BIND_NM)
+                    old_gi = min(int(mol_set[idx, 0] // dx), grid_size - 1)
+                    old_gj = min(int(mol_set[idx, 1] // dx), grid_size - 1)
+                    has_pmhc_old = pmhc_grid is None or pmhc_grid[old_gi, old_gj] > 0
+                    old_e = (
+                        tcr_pmhc_potential(float(old_h[0]), u_assoc, SIGMA_BIND_NM)
+                        if has_pmhc_old
+                        else 0.0
+                    )
                 else:
-                    old_e = cd45_repulsion(float(old_h[0]), CD45_HEIGHT_NM)
+                    old_e = cd45_repulsion(float(old_h[0]), cd45_height, cd45_k_rep)
+                if mol_repulsion_eps > 0.0:
+                    old_e += mol_repulsion(
+                        mol_set[idx], idx, mol_set, mol_repulsion_eps,
+                        mol_repulsion_rcut, patch,
+                    )
 
-                # Propose displacement
+                # Propose displacement (periodic wrap)
                 mol_set[idx] += rng.normal(0, step_size_mol, size=2)
-                mol_set[idx] = np.clip(mol_set[idx], 0.0, patch)
+                mol_set[idx] = mol_set[idx] % patch
 
                 # Compute new energy
                 new_h = _height_at(mol_set[idx : idx + 1], h, dx)
                 if is_tcr:
-                    new_e = tcr_pmhc_potential(float(new_h[0]), u_assoc, SIGMA_BIND_NM)
+                    new_gi = min(int(mol_set[idx, 0] // dx), grid_size - 1)
+                    new_gj = min(int(mol_set[idx, 1] // dx), grid_size - 1)
+                    has_pmhc_new = pmhc_grid is None or pmhc_grid[new_gi, new_gj] > 0
+                    new_e = (
+                        tcr_pmhc_potential(float(new_h[0]), u_assoc, SIGMA_BIND_NM)
+                        if has_pmhc_new
+                        else 0.0
+                    )
                 else:
-                    new_e = cd45_repulsion(float(new_h[0]), CD45_HEIGHT_NM)
+                    new_e = cd45_repulsion(float(new_h[0]), cd45_height, cd45_k_rep)
+                if mol_repulsion_eps > 0.0:
+                    new_e += mol_repulsion(
+                        mol_set[idx], idx, mol_set, mol_repulsion_eps,
+                        mol_repulsion_rcut, patch,
+                    )
 
                 dE = new_e - old_e
                 total_proposals += 1
@@ -187,45 +231,84 @@ def simulate_ks(
                 else:
                     mol_set[idx] = old_pos
 
-        # --- Phase 2: Sweep ALL grid cells ---
-        for gi in range(grid_size):
-            for gj in range(grid_size):
-                old_h_val = h[gi, gj]
+        # --- Phase 2: Checkerboard + snapshot grid update (matching C/GPU) ---
+        # Pre-bin molecules to grid counts (O(N) instead of O(N) per cell)
+        tcr_gi = (tcr_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1)
+        tcr_gj = (tcr_pos[:, 1] // dx).astype(int).clip(0, grid_size - 1)
+        cd45_gi = (cd45_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1)
+        cd45_gj = (cd45_pos[:, 1] // dx).astype(int).clip(0, grid_size - 1)
+        tcr_count = np.zeros((grid_size, grid_size), dtype=int)
+        cd45_count = np.zeros((grid_size, grid_size), dtype=int)
+        for ti, tj in zip(tcr_gi, tcr_gj):
+            tcr_count[ti, tj] += 1
+        for ci, cj in zip(cd45_gi, cd45_gj):
+            cd45_count[ci, cj] += 1
 
-                # Energy from molecules at this grid cell
-                old_mol_e = 0.0
-                cell_tcr = np.where((tcr_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1) == gi)[
-                    0
-                ]
-                cell_tcr = cell_tcr[
-                    (tcr_pos[cell_tcr, 1] // dx).astype(int).clip(0, grid_size - 1) == gj
-                ]
-                old_mol_e += len(cell_tcr) * tcr_pmhc_potential(old_h_val, u_assoc, SIGMA_BIND_NM)
+        for color in range(2):
+            # Collect cells of this color
+            cells = [
+                (gi, gj)
+                for gi in range(grid_size)
+                for gj in range(grid_size)
+                if (gi + gj) % 2 == color
+            ]
 
-                cell_cd45 = np.where(
-                    (cd45_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1) == gi
-                )[0]
-                cell_cd45 = cell_cd45[
-                    (cd45_pos[cell_cd45, 1] // dx).astype(int).clip(0, grid_size - 1) == gj
-                ]
-                old_mol_e += len(cell_cd45) * cd45_repulsion(old_h_val, CD45_HEIGHT_NM)
+            # Pass 1 (propose): generate proposals, write ALL to h[]
+            old_vals = np.empty(len(cells))
+            u_accepts = np.empty(len(cells))
+            for k, (gi, gj) in enumerate(cells):
+                old_vals[k] = h[gi, gj]
+                new_h_val = h[gi, gj] + rng.normal(0, step_size_h)
+                new_h_val = abs(new_h_val)  # reflecting boundary
+                h[gi, gj] = new_h_val
+                u_accepts[k] = rng.random()
 
-                # Propose new height
-                h[gi, gj] = old_h_val + rng.normal(0, step_size_h)
-                h[gi, gj] = max(0.0, h[gi, gj])  # membrane can't go below 0
+            # Snapshot: freeze h[] for consistent reads
+            h_snap = h.copy()
 
-                dE_bend = bending_energy_delta(h, kappa, dx, gi, gj, old_h_val, h[gi, gj])
-                new_mol_e = len(cell_tcr) * tcr_pmhc_potential(
-                    h[gi, gj], u_assoc, SIGMA_BIND_NM
-                ) + len(cell_cd45) * cd45_repulsion(h[gi, gj], CD45_HEIGHT_NM)
+            # Pass 2 (evaluate): bending deltas from frozen snapshot
+            accepted_flags = np.zeros(len(cells), dtype=bool)
+            for k, (gi, gj) in enumerate(cells):
+                old_h_val = old_vals[k]
+                new_h_val = h_snap[gi, gj]
+
+                n_tcr_cell = tcr_count[gi, gj]
+                n_cd45_cell = cd45_count[gi, gj]
+
+                # TCR contribution only where pMHC is present
+                has_pmhc = pmhc_grid is None or pmhc_grid[gi, gj] > 0
+                tcr_old = (
+                    n_tcr_cell * tcr_pmhc_potential(old_h_val, u_assoc, SIGMA_BIND_NM)
+                    if has_pmhc
+                    else 0.0
+                )
+                old_mol_e = tcr_old + n_cd45_cell * cd45_repulsion(
+                    old_h_val, cd45_height, cd45_k_rep
+                )
+
+                dE_bend = bending_energy_delta(
+                    h_snap, kappa, dx, gi, gj, old_h_val, new_h_val
+                )
+                tcr_new = (
+                    n_tcr_cell * tcr_pmhc_potential(new_h_val, u_assoc, SIGMA_BIND_NM)
+                    if has_pmhc
+                    else 0.0
+                )
+                new_mol_e = tcr_new + n_cd45_cell * cd45_repulsion(
+                    new_h_val, cd45_height, cd45_k_rep
+                )
 
                 dE = dE_bend + (new_mol_e - old_mol_e)
                 total_proposals += 1
-                u = rng.random()
+                u = u_accepts[k]
                 if dE <= 0 or (u > 0.0 and np.log(u) < -dE):
                     accepted += 1
-                else:
-                    h[gi, gj] = old_h_val
+                    accepted_flags[k] = True
+
+            # Pass 3 (apply): restore rejected cells
+            for k, (gi, gj) in enumerate(cells):
+                if not accepted_flags[k]:
+                    h[gi, gj] = old_vals[k]
 
         # Record snapshot
         if snapshot_interval > 0 and (step_i + 1) % snapshot_interval == 0:

@@ -5,12 +5,35 @@ double tcr_pmhc_potential(double h, double u_assoc, double sigma_bind) {
     return -u_assoc * exp(-(h * h) / (2.0 * sigma_bind * sigma_bind));
 }
 
-double cd45_repulsion(double h, double cd45_height) {
+double cd45_repulsion(double h, double cd45_height, double k_rep) {
     if (h < cd45_height) {
         double diff = cd45_height - h;
-        return 0.5 * 1.0 * diff * diff;  /* k_rep = 1.0 kT/nm^2 */
+        return 0.5 * k_rep * diff * diff;
     }
     return 0.0;
+}
+
+double mol_repulsion(const double *pos, int idx, const double *all_pos, int n_mol,
+                     double eps, double r_cut, double patch_size) {
+    if (eps <= 0.0 || r_cut <= 0.0) return 0.0;
+    double total = 0.0;
+    double half_patch = patch_size / 2.0;
+    double px = pos[0], py = pos[1];
+    for (int j = 0; j < n_mol; j++) {
+        if (j == idx) continue;
+        double dx = px - all_pos[2 * j];
+        double dy = py - all_pos[2 * j + 1];
+        if (dx > half_patch) dx -= patch_size;
+        else if (dx < -half_patch) dx += patch_size;
+        if (dy > half_patch) dy -= patch_size;
+        else if (dy < -half_patch) dy += patch_size;
+        double r = sqrt(dx * dx + dy * dy);
+        if (r < r_cut) {
+            double ratio = 1.0 - r / r_cut;
+            total += eps * ratio * ratio;
+        }
+    }
+    return total;
 }
 
 static double lap_at(const double *h, int n, int i, int j, double dx2) {

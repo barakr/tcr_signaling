@@ -11,15 +11,20 @@ extern void metal_engine_destroy(void *ctx);
 extern void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                                      double kappa, double dx, double step_size_h,
                                      double u_assoc, double sigma_bind,
-                                     double cd45_height,
+                                     double cd45_height, double k_rep,
                                      const double *tcr_pos, int n_tcr,
                                      const double *cd45_pos, int n_cd45,
+                                     const int *pmhc_count,
                                      long *accepted, long *total_proposals);
+
+/* Forward declaration. */
+static void bin_molecules(const double *pos, int n_mol, int n, double dx,
+                          int *count_grid);
 
 static void init_height_field(SimState *s) {
     int n = s->grid_size;
     for (int i = 0; i < n * n; i++)
-        s->h[i] = (float)CD45_HEIGHT_NM;
+        s->h[i] = (float)s->cd45_height;
 
     /* Depress center to create initial tight-contact seed. */
     int center = n / 2;
@@ -41,12 +46,10 @@ static void init_positions(double *pos, int n, double patch, pcg64_t *rng,
     double spread = patch / 6.0;
     for (int i = 0; i < n; i++) {
         if (center_bias) {
-            pos[2 * i] = center + pcg64_normal(rng, spread);
-            pos[2 * i + 1] = center + pcg64_normal(rng, spread);
-            if (pos[2 * i] < 0.0) pos[2 * i] = 0.0;
-            if (pos[2 * i] > patch) pos[2 * i] = patch;
-            if (pos[2 * i + 1] < 0.0) pos[2 * i + 1] = 0.0;
-            if (pos[2 * i + 1] > patch) pos[2 * i + 1] = patch;
+            pos[2 * i] = fmod(center + pcg64_normal(rng, spread), patch);
+            if (pos[2 * i] < 0.0) pos[2 * i] += patch;
+            pos[2 * i + 1] = fmod(center + pcg64_normal(rng, spread), patch);
+            if (pos[2 * i + 1] < 0.0) pos[2 * i + 1] += patch;
         } else {
             pos[2 * i] = pcg64_uniform(rng) * patch;
             pos[2 * i + 1] = pcg64_uniform(rng) * patch;
@@ -57,7 +60,10 @@ static void init_positions(double *pos, int n, double patch, pcg64_t *rng,
 SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
-                     double D_mol, double D_h, double dt_override) {
+                     double D_mol, double D_h, double dt_override,
+                     double cd45_height, double k_rep,
+                     double mol_repulsion_eps, double mol_repulsion_rcut,
+                     int n_pmhc, uint64_t pmhc_seed) {
     SimState *s = (SimState *)calloc(1, sizeof(SimState));
     s->grid_size = grid_size;
     s->dx = PATCH_SIZE_NM / grid_size;
@@ -65,6 +71,13 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->n_cd45 = n_cd45;
     s->kappa = kappa;
     s->u_assoc = u_assoc;
+    s->cd45_height = (cd45_height > 0.0) ? cd45_height : CD45_HEIGHT_NM;
+    s->k_rep = (k_rep > 0.0) ? k_rep : 1.0;
+    s->mol_repulsion_eps = mol_repulsion_eps;
+    s->mol_repulsion_rcut = (mol_repulsion_rcut > 0.0) ? mol_repulsion_rcut : 10.0;
+    s->n_pmhc = n_pmhc;
+    s->pmhc_pos = NULL;
+    s->pmhc_count = NULL;
 
     /* Apply defaults if zero. */
     if (D_mol <= 0.0) D_mol = D_MOL_DEFAULT;
@@ -94,6 +107,19 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     init_positions(s->tcr_pos, n_tcr, PATCH_SIZE_NM, &s->rng, 1);
     init_positions(s->cd45_pos, n_cd45, PATCH_SIZE_NM, &s->rng, 0);
 
+    /* Initialize pMHC: static positions binned to grid. */
+    if (n_pmhc > 0) {
+        s->pmhc_pos = (double *)malloc(n_pmhc * 2 * sizeof(double));
+        s->pmhc_count = (int *)calloc(grid_size * grid_size, sizeof(int));
+        pcg64_t pmhc_rng;
+        pcg64_seed(&pmhc_rng, pmhc_seed);
+        for (int i = 0; i < n_pmhc; i++) {
+            s->pmhc_pos[2 * i] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+            s->pmhc_pos[2 * i + 1] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+        }
+        bin_molecules(s->pmhc_pos, n_pmhc, grid_size, s->dx, s->pmhc_count);
+    }
+
     s->accepted = 0;
     s->total_proposals = 0;
 
@@ -118,6 +144,8 @@ void sim_destroy(SimState *s) {
     free(s->h);
     free(s->tcr_pos);
     free(s->cd45_pos);
+    free(s->pmhc_pos);
+    free(s->pmhc_count);
     free(s);
 }
 
@@ -141,25 +169,44 @@ static void phase1_molecules(SimState *s) {
         double ox = s->tcr_pos[2 * idx];
         double oy = s->tcr_pos[2 * idx + 1];
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
-        double old_e = tcr_pmhc_potential(old_h, s->u_assoc, SIGMA_BIND_NM);
+        int old_ix = (int)(ox / dx); if (old_ix >= n) old_ix = n - 1;
+        int old_iy = (int)(oy / dx); if (old_iy >= n) old_iy = n - 1;
+        int has_pmhc_old = (s->pmhc_count == NULL) || (s->pmhc_count[old_ix * n + old_iy] > 0);
+        double old_e = has_pmhc_old ? tcr_pmhc_potential(old_h, s->u_assoc, SIGMA_BIND_NM) : 0.0;
+        if (s->mol_repulsion_eps > 0.0) {
+            double old_pos2[2] = {ox, oy};
+            old_e += mol_repulsion(old_pos2, idx, s->tcr_pos, s->n_tcr,
+                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
+        }
 
         double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
         double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
-        if (nx_ < 0.0) nx_ = 0.0;
-        if (nx_ > patch) nx_ = patch;
-        if (ny_ < 0.0) ny_ = 0.0;
-        if (ny_ > patch) ny_ = patch;
+        nx_ = fmod(nx_, patch); if (nx_ < 0.0) nx_ += patch;
+        ny_ = fmod(ny_, patch); if (ny_ < 0.0) ny_ += patch;
 
         double new_h = (double)height_at_pos_f(s->h, n, dx, nx_, ny_);
-        double new_e = tcr_pmhc_potential(new_h, s->u_assoc, SIGMA_BIND_NM);
+        int new_ix = (int)(nx_ / dx); if (new_ix >= n) new_ix = n - 1;
+        int new_iy = (int)(ny_ / dx); if (new_iy >= n) new_iy = n - 1;
+        int has_pmhc_new = (s->pmhc_count == NULL) || (s->pmhc_count[new_ix * n + new_iy] > 0);
+        double new_e = has_pmhc_new ? tcr_pmhc_potential(new_h, s->u_assoc, SIGMA_BIND_NM) : 0.0;
+
+        /* Temporarily update position for repulsion calculation. */
+        s->tcr_pos[2 * idx] = nx_;
+        s->tcr_pos[2 * idx + 1] = ny_;
+        if (s->mol_repulsion_eps > 0.0) {
+            double new_pos2[2] = {nx_, ny_};
+            new_e += mol_repulsion(new_pos2, idx, s->tcr_pos, s->n_tcr,
+                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
+        }
 
         double dE = new_e - old_e;
         s->total_proposals++;
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
-            s->tcr_pos[2 * idx] = nx_;
-            s->tcr_pos[2 * idx + 1] = ny_;
             s->accepted++;
+        } else {
+            s->tcr_pos[2 * idx] = ox;
+            s->tcr_pos[2 * idx + 1] = oy;
         }
     }
 
@@ -168,25 +215,38 @@ static void phase1_molecules(SimState *s) {
         double ox = s->cd45_pos[2 * idx];
         double oy = s->cd45_pos[2 * idx + 1];
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
-        double old_e = cd45_repulsion(old_h, CD45_HEIGHT_NM);
+        double old_e = cd45_repulsion(old_h, s->cd45_height, s->k_rep);
+        if (s->mol_repulsion_eps > 0.0) {
+            double old_pos2[2] = {ox, oy};
+            old_e += mol_repulsion(old_pos2, idx, s->cd45_pos, s->n_cd45,
+                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
+        }
 
         double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
         double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
-        if (nx_ < 0.0) nx_ = 0.0;
-        if (nx_ > patch) nx_ = patch;
-        if (ny_ < 0.0) ny_ = 0.0;
-        if (ny_ > patch) ny_ = patch;
+        nx_ = fmod(nx_, patch); if (nx_ < 0.0) nx_ += patch;
+        ny_ = fmod(ny_, patch); if (ny_ < 0.0) ny_ += patch;
 
         double new_h = (double)height_at_pos_f(s->h, n, dx, nx_, ny_);
-        double new_e = cd45_repulsion(new_h, CD45_HEIGHT_NM);
+        double new_e = cd45_repulsion(new_h, s->cd45_height, s->k_rep);
+
+        /* Temporarily update position for repulsion calculation. */
+        s->cd45_pos[2 * idx] = nx_;
+        s->cd45_pos[2 * idx + 1] = ny_;
+        if (s->mol_repulsion_eps > 0.0) {
+            double new_pos2[2] = {nx_, ny_};
+            new_e += mol_repulsion(new_pos2, idx, s->cd45_pos, s->n_cd45,
+                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
+        }
 
         double dE = new_e - old_e;
         s->total_proposals++;
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
-            s->cd45_pos[2 * idx] = nx_;
-            s->cd45_pos[2 * idx + 1] = ny_;
             s->accepted++;
+        } else {
+            s->cd45_pos[2 * idx] = ox;
+            s->cd45_pos[2 * idx + 1] = oy;
         }
     }
 }
@@ -243,10 +303,10 @@ static float tcr_potential_f(float h, float u_assoc, float sigma_bind) {
     return -u_assoc * expf(-(h * h) / (2.0f * sigma_bind * sigma_bind));
 }
 
-static float cd45_repulsion_f(float h, float cd45_height) {
+static float cd45_repulsion_f(float h, float cd45_height, float k_rep) {
     if (h < cd45_height) {
         float diff = cd45_height - h;
-        return 0.5f * diff * diff;
+        return 0.5f * k_rep * diff * diff;
     }
     return 0.0f;
 }
@@ -297,7 +357,7 @@ static void phase2_grid_cpu(SimState *s) {
                                * sqrtf(-2.0f * logf(u1_f))
                                * cosf(6.2831853071795864f * u2_f);
                 float new_h_val = old_h_val + normal_f;
-                if (new_h_val < 0.0f) new_h_val = 0.0f;
+                if (new_h_val < 0.0f) new_h_val = -new_h_val;
 
                 float u_f = pcg64_uniform_f(&s->rng);
 
@@ -323,14 +383,17 @@ static void phase2_grid_cpu(SimState *s) {
 
             int n_tcr_cell = tcr_count[gi * n + gj];
             int n_cd45_cell = cd45_count[gi * n + gj];
+            int cell_has_pmhc = (s->pmhc_count == NULL) || (s->pmhc_count[gi * n + gj] > 0);
 
-            float old_mol_e = n_tcr_cell * tcr_potential_f(old_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM)
-                            + n_cd45_cell * cd45_repulsion_f(old_h_val, (float)CD45_HEIGHT_NM);
+            float tcr_e_old = cell_has_pmhc ? n_tcr_cell * tcr_potential_f(old_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
+            float old_mol_e = tcr_e_old
+                            + n_cd45_cell * cd45_repulsion_f(old_h_val, (float)s->cd45_height, (float)s->k_rep);
 
             float dE_bend = bending_energy_delta_f(h_snapshot, n, kappa, dx,
                                                    gi, gj, old_h_val, new_h_val);
-            float new_mol_e = n_tcr_cell * tcr_potential_f(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM)
-                            + n_cd45_cell * cd45_repulsion_f(new_h_val, (float)CD45_HEIGHT_NM);
+            float tcr_e_new = cell_has_pmhc ? n_tcr_cell * tcr_potential_f(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
+            float new_mol_e = tcr_e_new
+                            + n_cd45_cell * cd45_repulsion_f(new_h_val, (float)s->cd45_height, (float)s->k_rep);
 
             float dE = dE_bend + (new_mol_e - old_mol_e);
             s->total_proposals++;
@@ -364,9 +427,11 @@ void sim_step(SimState *s) {
     if (s->use_gpu && s->metal_ctx) {
         metal_engine_grid_update(s->metal_ctx, s->h, s->grid_size,
                                  s->kappa, s->dx, s->step_size_h,
-                                 s->u_assoc, SIGMA_BIND_NM, CD45_HEIGHT_NM,
+                                 s->u_assoc, SIGMA_BIND_NM, s->cd45_height,
+                                 s->k_rep,
                                  s->tcr_pos, s->n_tcr,
                                  s->cd45_pos, s->n_cd45,
+                                 s->pmhc_count,
                                  &s->accepted, &s->total_proposals);
     } else {
         phase2_grid_cpu(s);

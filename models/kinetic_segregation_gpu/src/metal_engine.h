@@ -16,9 +16,10 @@ void metal_engine_destroy(void *ctx);
 void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                               double kappa, double dx, double step_size_h,
                               double u_assoc, double sigma_bind,
-                              double cd45_height,
+                              double cd45_height, double k_rep,
                               const double *tcr_pos, int n_tcr,
                               const double *cd45_pos, int n_cd45,
+                              const int *pmhc_count,
                               long *accepted, long *total_proposals);
 
 #endif /* METAL_ENGINE_H */

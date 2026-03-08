@@ -101,7 +101,57 @@ def tcr_pmhc_potential(h_at_mol: float, u_assoc: float, sigma_bind: float = 3.0)
     return float(-u_assoc * np.exp(-(h_at_mol**2) / (2.0 * sigma_bind**2)))
 
 
-def cd45_repulsion(h_at_mol: float, cd45_height: float = 35.0) -> float:
+def mol_repulsion(
+    pos: NDArray[np.float64],
+    idx: int,
+    all_pos: NDArray[np.float64],
+    eps: float,
+    r_cut: float,
+    patch_size: float,
+) -> float:
+    """Soft pairwise repulsive potential between nearby molecules.
+
+    Truncated harmonic repulsion: E = eps * (1 - r/r_cut)^2 for r < r_cut.
+
+    Uses minimum-image convention for periodic boundaries.
+
+    Parameters
+    ----------
+    pos : Position of the molecule being evaluated (shape (2,)).
+    idx : Index of the molecule (excluded from self-interaction).
+    all_pos : All positions of molecules of the same type (shape (N, 2)).
+    eps : Repulsion strength (kT).
+    r_cut : Cutoff distance (nm).
+    patch_size : Simulation domain size for periodic wrapping (nm).
+    """
+    if eps <= 0.0 or r_cut <= 0.0:
+        return 0.0
+    total = 0.0
+    half_patch = patch_size / 2.0
+    for j in range(len(all_pos)):
+        if j == idx:
+            continue
+        dx = pos[0] - all_pos[j, 0]
+        dy = pos[1] - all_pos[j, 1]
+        # Minimum image convention
+        if dx > half_patch:
+            dx -= patch_size
+        elif dx < -half_patch:
+            dx += patch_size
+        if dy > half_patch:
+            dy -= patch_size
+        elif dy < -half_patch:
+            dy += patch_size
+        r = np.sqrt(dx * dx + dy * dy)
+        if r < r_cut:
+            ratio = 1.0 - r / r_cut
+            total += eps * ratio * ratio
+    return float(total)
+
+
+def cd45_repulsion(
+    h_at_mol: float, cd45_height: float = 35.0, k_rep: float = 1.0
+) -> float:
     """Soft repulsive barrier for CD45 when membrane height < CD45 ectodomain height.
 
     CD45 has a large ectodomain (~35 nm) and is excluded from regions where the
@@ -114,8 +164,8 @@ def cd45_repulsion(h_at_mol: float, cd45_height: float = 35.0) -> float:
     ----------
     h_at_mol : Membrane height at CD45 position (nm).
     cd45_height : Ectodomain height (nm), default 35 nm.
+    k_rep : Repulsive spring constant (kT/nm²), default 1.0.
     """
-    k_rep = 1.0  # repulsive spring constant in kT/nm^2
     if h_at_mol < cd45_height:
         return float(0.5 * k_rep * (cd45_height - h_at_mol) ** 2)
     return 0.0

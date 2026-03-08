@@ -26,6 +26,12 @@ def main() -> int:
     parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s, default 1e5)")
     parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s, default 5e4)")
     parser.add_argument("--dt", type=float, default=None, help="Override time step (seconds, auto if omitted)")
+    parser.add_argument("--cd45_height", type=float, default=None, help="CD45 ectodomain height (nm, default 35)")
+    parser.add_argument("--cd45_k_rep", type=float, default=None, help="CD45 repulsive spring constant (kT/nm², default 1.0)")
+    parser.add_argument("--mol_repulsion_eps", type=float, default=None, help="Soft molecular repulsion strength (kT, default 0=off)")
+    parser.add_argument("--mol_repulsion_rcut", type=float, default=None, help="Soft molecular repulsion cutoff (nm, default 10)")
+    parser.add_argument("--n_pmhc", type=lambda x: int(float(x)), default=None, help="Number of static pMHC molecules (0=all cells have pMHC)")
+    parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC random positions")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -45,6 +51,18 @@ def main() -> int:
         extra_kwargs["D_h"] = args.D_h
     if args.dt is not None:
         extra_kwargs["dt_override"] = args.dt
+    if args.cd45_height is not None:
+        extra_kwargs["cd45_height"] = args.cd45_height
+    if args.cd45_k_rep is not None:
+        extra_kwargs["cd45_k_rep"] = args.cd45_k_rep
+    if args.mol_repulsion_eps is not None:
+        extra_kwargs["mol_repulsion_eps"] = args.mol_repulsion_eps
+    if args.mol_repulsion_rcut is not None:
+        extra_kwargs["mol_repulsion_rcut"] = args.mol_repulsion_rcut
+    if args.n_pmhc is not None:
+        extra_kwargs["n_pmhc"] = args.n_pmhc
+    if args.pmhc_seed is not None:
+        extra_kwargs["pmhc_seed"] = args.pmhc_seed
 
     result = simulate_ks(
         time_sec=args.time_sec,

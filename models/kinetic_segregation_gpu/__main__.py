@@ -37,6 +37,12 @@ def main() -> int:
     parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s)")
     parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s)")
     parser.add_argument("--dt", type=float, default=None, help="Override time step (seconds)")
+    parser.add_argument("--cd45_height", type=float, default=None, help="CD45 ectodomain height (nm)")
+    parser.add_argument("--cd45_k_rep", type=float, default=None, help="CD45 repulsive spring constant (kT/nm²)")
+    parser.add_argument("--mol_repulsion_eps", type=float, default=None, help="Soft molecular repulsion strength (kT)")
+    parser.add_argument("--mol_repulsion_rcut", type=float, default=None, help="Soft molecular repulsion cutoff (nm)")
+    parser.add_argument("--n_pmhc", type=lambda x: int(float(x)), default=None, help="Number of static pMHC molecules")
+    parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC positions")
     args = parser.parse_args()
 
     binary = _find_binary()
@@ -60,6 +66,18 @@ def main() -> int:
         cmd.extend(["--D_h", str(args.D_h)])
     if args.dt is not None:
         cmd.extend(["--dt", str(args.dt)])
+    if args.cd45_height is not None:
+        cmd.extend(["--cd45_height", str(args.cd45_height)])
+    if args.cd45_k_rep is not None:
+        cmd.extend(["--cd45_k_rep", str(args.cd45_k_rep)])
+    if args.mol_repulsion_eps is not None:
+        cmd.extend(["--mol_repulsion_eps", str(args.mol_repulsion_eps)])
+    if args.mol_repulsion_rcut is not None:
+        cmd.extend(["--mol_repulsion_rcut", str(args.mol_repulsion_rcut)])
+    if args.n_pmhc is not None:
+        cmd.extend(["--n_pmhc", str(args.n_pmhc)])
+    if args.pmhc_seed is not None:
+        cmd.extend(["--pmhc_seed", str(args.pmhc_seed)])
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
