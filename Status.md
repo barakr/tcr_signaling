@@ -6,6 +6,37 @@
 
 ## Decision Log
 
+### 2026-03-09: Align with paper physics — forced binding + paper step mode
+- **Motivation**: Detailed comparison with Supplementary DataSheet1.pdf revealed
+  7 discrepancies between implementation and paper. Implemented Tier 1 (defaults)
+  + Tier 2 (forced binding + height constraints). Skipped Tier 3 (lattice rewrite).
+- **Tier 1 — Default parameter fixes**:
+  - CD45 height: 35nm → 50nm (paper Table S1)
+  - Initial membrane height: 35nm → 70nm (paper)
+  - TCR-pMHC bond length: defined as H0_TCR_NM = 13nm
+  - N_TCR default: 50 → 125, N_CD45 default: 100 → 500 (paper Table S1)
+  - D_mol default: 1e5 → 1e4 nm²/s (paper: 10,000 nm²/s for TCR)
+- **Tier 2A — Forced TCR-pMHC binding** (`binding_mode="forced"`, new default):
+  - `tcr_bound` boolean array tracks bound TCRs
+  - Bound TCRs skip Phase 1 moves (immobile, per paper)
+  - After accepted TCR move, binding state updated based on pMHC grid
+  - Phase 2: cells with bound TCR have height frozen at h0_tcr (13nm)
+  - Result includes `n_tcr_bound` count
+- **Tier 2B — Paper step mode** (`step_mode="paper"`, new default):
+  - Fixed dt=0.01s (paper), step_h=1.0nm (paper)
+  - step_mol = sqrt(2 * D_mol * dt) — derived from diffusion
+  - Auto spring constant: k_rep = 10*κ/dx² (paper Table S1)
+  - `step_mode="brownian"` preserves previous auto-computed dynamics
+- **New CLI args**: `--binding_mode`, `--step_mode`, `--h0_tcr`, `--init_height`
+  in all CLIs (Python, C binary, GPU wrapper, animate).
+- **Tests**: Updated existing tests to use `step_mode="brownian"` where they
+  test Brownian dynamics properties. Added 7 new tests for forced binding and
+  paper mode. Relaxed GPU physics thresholds for init_height=70nm. Reduced CLI
+  test sizes for faster execution. 81 Python + 25 GPU tests pass.
+- **Files modified**: model.py, simulation.h, simulation.c, main.m,
+  __main__.py (×2), animate.py, test_model.py, test_cli.py,
+  test_alignment_changes.py, test_gpu_physics.py.
+
 ### 2026-03-08: Configurable pMHC initialization + JSON param file support
 - **Change 1 — pMHC inner circle mode**: Added `pmhc_mode` parameter
   (`"inner_circle"` default, `"uniform"` for backward compat). In inner_circle

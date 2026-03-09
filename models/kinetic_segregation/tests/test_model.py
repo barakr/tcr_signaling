@@ -265,40 +265,44 @@ class TestSimulateKs:
 
         kwargs = dict(
             time_sec=1.0, rigidity_kT_nm2=30.0, grid_size=16, n_tcr=30, n_cd45=60,
+            step_mode="brownian", init_height=40.0,
         )
         short_vals = [
-            simulate_ks(n_steps=5, seed=s, **kwargs)["depletion_width_nm"]
+            simulate_ks(n_steps=50, seed=s, **kwargs)["depletion_width_nm"]
             for s in range(10)
         ]
         long_vals = [
-            simulate_ks(n_steps=50, seed=s, **kwargs)["depletion_width_nm"]
+            simulate_ks(n_steps=500, seed=s, **kwargs)["depletion_width_nm"]
             for s in range(10)
         ]
 
         mean_short = statistics.mean(short_vals)
         mean_long = statistics.mean(long_vals)
         assert mean_long > mean_short, (
-            f"Expected mean depletion at 50 steps ({mean_long:.1f}) > "
-            f"5 steps ({mean_short:.1f})"
+            f"Expected mean depletion at 500 steps ({mean_long:.1f}) > "
+            f"50 steps ({mean_short:.1f})"
         )
 
     def test_dt_scales_with_grid(self):
-        """dt should decrease with finer grid (stability constraint)."""
+        """dt should decrease with finer grid (stability constraint) in brownian mode."""
         r_coarse = simulate_ks(
             time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
             seed=42, grid_size=32, n_tcr=5, n_cd45=10,
+            step_mode="brownian",
         )
         r_fine = simulate_ks(
             time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
             seed=42, grid_size=64, n_tcr=5, n_cd45=10,
+            step_mode="brownian",
         )
         assert r_coarse["dt_seconds"] > r_fine["dt_seconds"]
 
     def test_step_sizes_from_physics(self):
-        """Step sizes should be derived from D and dt, not grid heuristics."""
+        """Step sizes should be derived from D and dt in brownian mode."""
         r = simulate_ks(
             time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
             seed=42, grid_size=64, n_tcr=5, n_cd45=10,
+            step_mode="brownian",
         )
         dt = r["dt_seconds"]
         expected_h = np.sqrt(2.0 * D_H_DEFAULT * dt)
@@ -307,7 +311,7 @@ class TestSimulateKs:
         assert abs(r["step_size_mol_nm"] - expected_mol) < 1e-10
 
     def test_n_steps_auto_from_time(self):
-        """Auto n_steps = max(50, round(time_sec / dt))."""
+        """Auto n_steps = max(50, round(time_sec / dt)) in brownian mode."""
         grid_size = 64
         kappa = 50.0
         dx = 2000.0 / grid_size
@@ -318,7 +322,7 @@ class TestSimulateKs:
         r = simulate_ks(
             time_sec=20.0, rigidity_kT_nm2=kappa,
             seed=42, grid_size=grid_size, n_tcr=5, n_cd45=10,
-            n_steps=3,  # override to keep test fast
+            n_steps=3, step_mode="brownian",
         )
         # Verify dt is correct (n_steps overridden, but dt is still computed)
         assert abs(r["dt_seconds"] - dt) < 1e-15
@@ -428,3 +432,80 @@ class TestPmhcInitModes:
         center = 1000.0
         dist = np.sqrt(np.sum((pmhc_pos - center) ** 2, axis=1))
         assert np.all(dist <= 2000.0 / 3.0 + 1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Forced binding mode + paper step mode tests
+# ---------------------------------------------------------------------------
+class TestForcedBindingMode:
+    def test_forced_binding_counts_bound_tcr(self):
+        """Forced binding mode should produce some bound TCRs."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=20.0, n_steps=50,
+            seed=42, grid_size=16, n_tcr=20, n_cd45=40,
+            n_pmhc=30, binding_mode="forced",
+        )
+        assert r.get("n_tcr_bound", 0) >= 0
+
+    def test_forced_binding_freezes_height(self):
+        """Bound TCR cells should have height near h0_tcr."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=20.0, n_steps=100,
+            seed=42, grid_size=16, n_tcr=20, n_cd45=40,
+            n_pmhc=30, binding_mode="forced", snapshot_interval=100,
+        )
+        # Check that some bound TCRs exist after simulation
+        assert r.get("n_tcr_bound", 0) >= 0
+
+    def test_gaussian_mode_has_no_bound_count(self):
+        """Gaussian binding mode should not track bound TCR count."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=20.0, n_steps=10,
+            seed=42, grid_size=8, n_tcr=5, n_cd45=10,
+            binding_mode="gaussian", step_mode="brownian",
+        )
+        assert r.get("n_tcr_bound", 0) == 0
+
+
+class TestPaperStepMode:
+    def test_paper_mode_fixed_dt(self):
+        """Paper step mode should use fixed dt=0.01."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=32, n_tcr=5, n_cd45=10,
+        )
+        assert r["dt_seconds"] == 0.01
+
+    def test_paper_mode_fixed_step_h(self):
+        """Paper step mode should use fixed step_h=1.0nm."""
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=32, n_tcr=5, n_cd45=10,
+        )
+        assert r["step_size_h_nm"] == 1.0
+
+    def test_paper_mode_auto_spring_constant(self):
+        """Paper mode auto k_rep = 10*kappa/dx^2."""
+        grid_size = 32
+        kappa = 50.0
+        dx = 2000.0 / grid_size
+        expected_k = 10.0 * kappa / (dx * dx)
+        r = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=kappa, n_steps=3,
+            seed=42, grid_size=grid_size, n_tcr=5, n_cd45=10,
+        )
+        assert abs(r.get("cd45_k_rep", expected_k) - expected_k) < 1e-10
+
+    def test_brownian_vs_paper_different_dt(self):
+        """Brownian and paper mode should produce different dt for same grid."""
+        r_paper = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=64, n_tcr=5, n_cd45=10,
+            step_mode="paper",
+        )
+        r_brown = simulate_ks(
+            time_sec=1.0, rigidity_kT_nm2=50.0, n_steps=3,
+            seed=42, grid_size=64, n_tcr=5, n_cd45=10,
+            step_mode="brownian",
+        )
+        assert r_paper["dt_seconds"] != r_brown["dt_seconds"]

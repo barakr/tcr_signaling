@@ -18,15 +18,21 @@ from .potentials import bending_energy_delta, cd45_repulsion, mol_repulsion, tcr
 
 # Default physical parameters from Supplementary Table S1
 PATCH_SIZE_NM = 2000.0  # 2 um patch
-N_TCR_DEFAULT = 50
-N_CD45_DEFAULT = 100
-CD45_HEIGHT_NM = 35.0  # ectodomain height
-SIGMA_BIND_NM = 3.0  # TCR-pMHC binding well width
+N_TCR_DEFAULT = 125
+N_CD45_DEFAULT = 500
+CD45_HEIGHT_NM = 50.0   # CD45 ectodomain resting length (paper: 50 nm)
+H0_TCR_NM = 13.0        # TCR-pMHC resting bond length (paper: 13 nm)
+INIT_HEIGHT_NM = 70.0   # initial inter-membrane distance (paper: 70 nm)
+SIGMA_BIND_NM = 3.0     # TCR-pMHC binding well width
 
 # Brownian dynamics diffusion coefficients (nm²/s)
-D_MOL_DEFAULT = 1e5  # membrane protein diffusion
+D_MOL_DEFAULT = 1e4  # membrane protein diffusion (paper: 10,000 nm²/s for TCR)
 D_H_DEFAULT = 5e4    # membrane height relaxation
 DT_SAFETY = 0.5      # stability safety factor
+
+# Paper defaults for step mode
+DT_PAPER = 0.01      # fixed dt = 0.01 s (paper)
+STEP_H_PAPER = 1.0   # fixed height step sigma = 1 nm (paper)
 
 
 def _initial_positions(
@@ -85,7 +91,7 @@ def simulate_ks(
     D_h: float = D_H_DEFAULT,
     dt_override: float | None = None,
     cd45_height: float = CD45_HEIGHT_NM,
-    cd45_k_rep: float = 1.0,
+    cd45_k_rep: float | None = None,
     mol_repulsion_eps: float = 0.0,
     mol_repulsion_rcut: float = 10.0,
     n_pmhc: int = 0,
@@ -93,49 +99,68 @@ def simulate_ks(
     pmhc_seed: int | None = None,
     pmhc_mode: str = "inner_circle",
     pmhc_radius: float | None = None,
+    h0_tcr: float = H0_TCR_NM,
+    init_height: float = INIT_HEIGHT_NM,
+    binding_mode: str = "forced",
+    step_mode: str = "paper",
 ) -> dict:
     """Run kinetic segregation Monte Carlo simulation.
 
     Parameters
     ----------
-    time_sec : Simulation time (sec). Mapped to MC steps via Brownian dynamics dt.
+    time_sec : Simulation time (sec). Mapped to MC steps via dt.
     rigidity_kT_nm2 : Membrane bending rigidity (kT).
-    u_assoc : TCR-pMHC binding potential depth (kT).
+    u_assoc : TCR-pMHC binding potential depth (kT). Only used in gaussian mode.
     n_tcr : Number of TCR molecules.
     n_cd45 : Number of CD45 molecules.
     grid_size : Number of grid points per dimension for membrane height field.
-    n_steps : Number of full MC sweeps. If given, overrides auto-computation
-        from time_sec / dt. Each sweep updates every molecule and every grid
-        cell once.
+    n_steps : Number of full MC sweeps. If given, overrides auto-computation.
     seed : Random seed.
     snapshot_interval : If > 0, record (tcr_pos, cd45_pos, h) every N steps.
     D_mol : Molecular diffusion coefficient (nm²/s).
     D_h : Membrane height diffusion coefficient (nm²/s).
-    dt_override : If given, use this time step instead of auto-computing from
-        stability constraint. Step sizes are still derived from D and dt.
+    dt_override : If given, use this time step instead of auto-computing.
+    cd45_height : CD45 ectodomain resting length (nm).
+    cd45_k_rep : CD45 repulsive spring constant (kT/nm²). None=auto from paper.
+    h0_tcr : TCR-pMHC resting bond length (nm).
+    init_height : Initial membrane height field value (nm).
+    binding_mode : 'forced' (paper: hard binding + immobile) or 'gaussian' (soft).
+    step_mode : 'paper' (fixed dt=0.01, step_h=1nm) or 'brownian' (auto dt).
 
     Returns
     -------
-    dict with keys: depletion_width_nm, final_tcr_mean_r, final_cd45_mean_r,
-                    accept_rate, n_steps_actual, dt_seconds, step_size_h_nm,
-                    step_size_mol_nm, and optionally snapshots
+    dict with simulation results and diagnostics.
     """
     if pmhc_mode not in ("uniform", "inner_circle"):
         raise ValueError(f"Unknown pmhc_mode: {pmhc_mode!r} (expected 'uniform' or 'inner_circle')")
+    if binding_mode not in ("forced", "gaussian"):
+        raise ValueError(
+            f"Unknown binding_mode: {binding_mode!r} (expected 'forced' or 'gaussian')"
+        )
+    if step_mode not in ("paper", "brownian"):
+        raise ValueError(f"Unknown step_mode: {step_mode!r} (expected 'paper' or 'brownian')")
 
     rng = np.random.default_rng(seed)
     patch = PATCH_SIZE_NM
     dx = patch / grid_size
     kappa = rigidity_kT_nm2
 
-    # Initialize membrane height field — flat at CD45 height (equilibrium gap)
-    h = np.full((grid_size, grid_size), cd45_height, dtype=np.float64)
+    # Spring constant: paper formula k = 10*kappa/a^2, or explicit override
+    if cd45_k_rep is not None:
+        k_rep = cd45_k_rep
+    elif step_mode == "paper":
+        k_rep = 10.0 * kappa / (dx * dx)
+    else:
+        k_rep = 1.0
+
+    # Initialize membrane height field — flat at init_height (paper: 70 nm)
+    h = np.full((grid_size, grid_size), init_height, dtype=np.float64)
     # Depress center to create initial tight-contact seed
     center_idx = grid_size // 2
     radius_idx = max(1, grid_size // 8)
     y_idx, x_idx = np.ogrid[:grid_size, :grid_size]
     dist_sq = (x_idx - center_idx) ** 2 + (y_idx - center_idx) ** 2
-    h[dist_sq <= radius_idx**2] = 5.0  # tight contact ~5 nm
+    h[dist_sq <= radius_idx**2] = h0_tcr  # tight contact at TCR bond length
 
     # --- pMHC initialization (before TCR so TCR can co-locate) ---
     # When n_pmhc=0 and pmhc_pos=None, all cells have pMHC (backward compat)
@@ -178,17 +203,31 @@ def simulate_ks(
     # CD45: always uniform
     cd45_pos = _initial_positions(n_cd45, patch, rng, center_bias=False)
 
-    # Brownian dynamics time step: dt = σ² / (2D), with stability constraint
-    # dt_stable = dx² / (2 * D_h * κ)
+    # --- TCR binding state (forced mode) ---
+    tcr_bound = np.zeros(n_tcr, dtype=bool)
+    if binding_mode == "forced" and pmhc_grid is not None:
+        for idx in range(n_tcr):
+            gi = min(int(tcr_pos[idx, 0] // dx), grid_size - 1)
+            gj = min(int(tcr_pos[idx, 1] // dx), grid_size - 1)
+            if pmhc_grid[gi, gj] > 0:
+                tcr_bound[idx] = True
+                h[gi, gj] = h0_tcr  # enforce height constraint
+
+    # --- Time step and step sizes ---
     if dt_override is not None:
         dt = dt_override
+        step_size_mol = np.sqrt(2.0 * D_mol * dt)
+        step_size_h = np.sqrt(2.0 * D_h * dt)
+    elif step_mode == "paper":
+        dt = DT_PAPER
+        step_size_mol = np.sqrt(2.0 * D_mol * dt)
+        step_size_h = STEP_H_PAPER
     else:
+        # Brownian dynamics: dt from stability constraint
         dt_stable = dx**2 / (2.0 * D_h * kappa)
         dt = dt_stable * DT_SAFETY
-
-    # Derive step sizes from physics: σ = sqrt(2 * D * dt)
-    step_size_mol = np.sqrt(2.0 * D_mol * dt)
-    step_size_h = np.sqrt(2.0 * D_h * dt)
+        step_size_mol = np.sqrt(2.0 * D_mol * dt)
+        step_size_h = np.sqrt(2.0 * D_h * dt)
 
     # Auto-compute n_steps from physical time if not explicitly given
     if n_steps is None:
@@ -206,61 +245,102 @@ def simulate_ks(
 
     for step_i in range(n_steps):
         # --- Phase 1: Sweep ALL molecules ---
-        for mol_set, is_tcr in [(tcr_pos, True), (cd45_pos, False)]:
-            for idx in range(len(mol_set)):
-                old_pos = mol_set[idx].copy()
+        # TCR molecules
+        for idx in range(n_tcr):
+            # Forced binding: bound TCRs are immobile
+            if binding_mode == "forced" and tcr_bound[idx]:
+                continue
 
-                # Compute old energy for this molecule
-                old_h = _height_at(mol_set[idx : idx + 1], h, dx)
-                if is_tcr:
-                    old_gi = min(int(mol_set[idx, 0] // dx), grid_size - 1)
-                    old_gj = min(int(mol_set[idx, 1] // dx), grid_size - 1)
-                    has_pmhc_old = pmhc_grid is None or pmhc_grid[old_gi, old_gj] > 0
-                    old_e = (
-                        tcr_pmhc_potential(float(old_h[0]), u_assoc, SIGMA_BIND_NM)
-                        if has_pmhc_old
-                        else 0.0
-                    )
-                else:
-                    old_e = cd45_repulsion(float(old_h[0]), cd45_height, cd45_k_rep)
-                if mol_repulsion_eps > 0.0:
-                    old_e += mol_repulsion(
-                        mol_set[idx], idx, mol_set, mol_repulsion_eps,
-                        mol_repulsion_rcut, patch,
-                    )
+            old_pos = tcr_pos[idx].copy()
+            old_h = _height_at(tcr_pos[idx : idx + 1], h, dx)
+            old_gi = min(int(tcr_pos[idx, 0] // dx), grid_size - 1)
+            old_gj = min(int(tcr_pos[idx, 1] // dx), grid_size - 1)
+            has_pmhc_old = pmhc_grid is None or pmhc_grid[old_gi, old_gj] > 0
+            old_e = (
+                tcr_pmhc_potential(float(old_h[0]), u_assoc, SIGMA_BIND_NM)
+                if has_pmhc_old
+                else 0.0
+            )
+            if mol_repulsion_eps > 0.0:
+                old_e += mol_repulsion(
+                    tcr_pos[idx], idx, tcr_pos, mol_repulsion_eps,
+                    mol_repulsion_rcut, patch,
+                )
 
-                # Propose displacement (periodic wrap)
-                mol_set[idx] += rng.normal(0, step_size_mol, size=2)
-                mol_set[idx] = mol_set[idx] % patch
+            # Propose displacement (periodic wrap)
+            tcr_pos[idx] += rng.normal(0, step_size_mol, size=2)
+            tcr_pos[idx] = tcr_pos[idx] % patch
 
-                # Compute new energy
-                new_h = _height_at(mol_set[idx : idx + 1], h, dx)
-                if is_tcr:
-                    new_gi = min(int(mol_set[idx, 0] // dx), grid_size - 1)
-                    new_gj = min(int(mol_set[idx, 1] // dx), grid_size - 1)
-                    has_pmhc_new = pmhc_grid is None or pmhc_grid[new_gi, new_gj] > 0
-                    new_e = (
-                        tcr_pmhc_potential(float(new_h[0]), u_assoc, SIGMA_BIND_NM)
-                        if has_pmhc_new
-                        else 0.0
-                    )
-                else:
-                    new_e = cd45_repulsion(float(new_h[0]), cd45_height, cd45_k_rep)
-                if mol_repulsion_eps > 0.0:
-                    new_e += mol_repulsion(
-                        mol_set[idx], idx, mol_set, mol_repulsion_eps,
-                        mol_repulsion_rcut, patch,
-                    )
+            # Compute new energy
+            new_h = _height_at(tcr_pos[idx : idx + 1], h, dx)
+            new_gi = min(int(tcr_pos[idx, 0] // dx), grid_size - 1)
+            new_gj = min(int(tcr_pos[idx, 1] // dx), grid_size - 1)
+            has_pmhc_new = pmhc_grid is None or pmhc_grid[new_gi, new_gj] > 0
+            new_e = (
+                tcr_pmhc_potential(float(new_h[0]), u_assoc, SIGMA_BIND_NM)
+                if has_pmhc_new
+                else 0.0
+            )
+            if mol_repulsion_eps > 0.0:
+                new_e += mol_repulsion(
+                    tcr_pos[idx], idx, tcr_pos, mol_repulsion_eps,
+                    mol_repulsion_rcut, patch,
+                )
 
-                dE = new_e - old_e
-                total_proposals += 1
-                u = rng.random()
-                if dE <= 0 or (u > 0.0 and np.log(u) < -dE):
-                    accepted += 1
-                else:
-                    mol_set[idx] = old_pos
+            dE = new_e - old_e
+            total_proposals += 1
+            u = rng.random()
+            if dE <= 0 or (u > 0.0 and np.log(u) < -dE):
+                accepted += 1
+                # Update binding state after accepted move
+                if binding_mode == "forced" and pmhc_grid is not None:
+                    tcr_bound[idx] = pmhc_grid[new_gi, new_gj] > 0
+                    if tcr_bound[idx]:
+                        h[new_gi, new_gj] = h0_tcr
+            else:
+                tcr_pos[idx] = old_pos
+
+        # CD45 molecules
+        for idx in range(n_cd45):
+            old_pos = cd45_pos[idx].copy()
+            old_h = _height_at(cd45_pos[idx : idx + 1], h, dx)
+            old_e = cd45_repulsion(float(old_h[0]), cd45_height, k_rep)
+            if mol_repulsion_eps > 0.0:
+                old_e += mol_repulsion(
+                    cd45_pos[idx], idx, cd45_pos, mol_repulsion_eps,
+                    mol_repulsion_rcut, patch,
+                )
+
+            cd45_pos[idx] += rng.normal(0, step_size_mol, size=2)
+            cd45_pos[idx] = cd45_pos[idx] % patch
+
+            new_h = _height_at(cd45_pos[idx : idx + 1], h, dx)
+            new_e = cd45_repulsion(float(new_h[0]), cd45_height, k_rep)
+            if mol_repulsion_eps > 0.0:
+                new_e += mol_repulsion(
+                    cd45_pos[idx], idx, cd45_pos, mol_repulsion_eps,
+                    mol_repulsion_rcut, patch,
+                )
+
+            dE = new_e - old_e
+            total_proposals += 1
+            u = rng.random()
+            if dE <= 0 or (u > 0.0 and np.log(u) < -dE):
+                accepted += 1
+            else:
+                cd45_pos[idx] = old_pos
 
         # --- Phase 2: Checkerboard + snapshot grid update (matching C/GPU) ---
+        # Build frozen cell mask for forced binding mode
+        frozen = np.zeros((grid_size, grid_size), dtype=bool)
+        if binding_mode == "forced" and pmhc_grid is not None:
+            for idx in range(n_tcr):
+                if tcr_bound[idx]:
+                    gi = min(int(tcr_pos[idx, 0] // dx), grid_size - 1)
+                    gj = min(int(tcr_pos[idx, 1] // dx), grid_size - 1)
+                    frozen[gi, gj] = True
+                    h[gi, gj] = h0_tcr  # enforce constraint
+
         # Pre-bin molecules to grid counts (O(N) instead of O(N) per cell)
         tcr_gi = (tcr_pos[:, 0] // dx).astype(int).clip(0, grid_size - 1)
         tcr_gj = (tcr_pos[:, 1] // dx).astype(int).clip(0, grid_size - 1)
@@ -287,10 +367,15 @@ def simulate_ks(
             u_accepts = np.empty(len(cells))
             for k, (gi, gj) in enumerate(cells):
                 old_vals[k] = h[gi, gj]
-                new_h_val = h[gi, gj] + rng.normal(0, step_size_h)
-                new_h_val = abs(new_h_val)  # reflecting boundary
-                h[gi, gj] = new_h_val
-                u_accepts[k] = rng.random()
+                if frozen[gi, gj]:
+                    # Frozen cell: keep at h0_tcr, consume RNG to stay in sync
+                    rng.normal(0, step_size_h)
+                    u_accepts[k] = rng.random()
+                else:
+                    new_h_val = h[gi, gj] + rng.normal(0, step_size_h)
+                    new_h_val = abs(new_h_val)  # reflecting boundary
+                    h[gi, gj] = new_h_val
+                    u_accepts[k] = rng.random()
 
             # Snapshot: freeze h[] for consistent reads
             h_snap = h.copy()
@@ -298,6 +383,12 @@ def simulate_ks(
             # Pass 2 (evaluate): bending deltas from frozen snapshot
             accepted_flags = np.zeros(len(cells), dtype=bool)
             for k, (gi, gj) in enumerate(cells):
+                if frozen[gi, gj]:
+                    accepted_flags[k] = True  # forced acceptance at h0_tcr
+                    total_proposals += 1
+                    accepted += 1
+                    continue
+
                 old_h_val = old_vals[k]
                 new_h_val = h_snap[gi, gj]
 
@@ -312,7 +403,7 @@ def simulate_ks(
                     else 0.0
                 )
                 old_mol_e = tcr_old + n_cd45_cell * cd45_repulsion(
-                    old_h_val, cd45_height, cd45_k_rep
+                    old_h_val, cd45_height, k_rep
                 )
 
                 dE_bend = bending_energy_delta(
@@ -324,7 +415,7 @@ def simulate_ks(
                     else 0.0
                 )
                 new_mol_e = tcr_new + n_cd45_cell * cd45_repulsion(
-                    new_h_val, cd45_height, cd45_k_rep
+                    new_h_val, cd45_height, k_rep
                 )
 
                 dE = dE_bend + (new_mol_e - old_mol_e)
@@ -369,10 +460,14 @@ def simulate_ks(
         "step_size_mol_nm": step_size_mol,
         "D_mol_nm2_per_s": D_mol,
         "D_h_nm2_per_s": D_h,
+        "binding_mode": binding_mode,
+        "step_mode": step_mode,
     }
     result["pmhc_mode"] = pmhc_mode
     if pmhc_radius is not None:
         result["pmhc_radius_nm"] = pmhc_radius
+    if binding_mode == "forced" and pmhc_grid is not None:
+        result["n_tcr_bound"] = int(np.sum(tcr_bound))
     if snapshot_interval > 0:
         result["snapshots"] = snapshots
     if pmhc_pos is not None:

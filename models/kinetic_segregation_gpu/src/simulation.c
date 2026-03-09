@@ -24,7 +24,7 @@ static void bin_molecules(const double *pos, int n_mol, int n, double dx,
 static void init_height_field(SimState *s) {
     int n = s->grid_size;
     for (int i = 0; i < n * n; i++)
-        s->h[i] = (float)s->cd45_height;
+        s->h[i] = (float)s->init_height;
 
     /* Depress center to create initial tight-contact seed. */
     int center = n / 2;
@@ -35,7 +35,7 @@ static void init_height_field(SimState *s) {
             int di = i - center;
             int dj = j - center;
             if (di * di + dj * dj <= radius * radius)
-                s->h[i * n + j] = 5.0f;
+                s->h[i * n + j] = (float)s->h0_tcr;
         }
     }
 }
@@ -57,6 +57,22 @@ static void init_positions(double *pos, int n, double patch, pcg64_t *rng,
     }
 }
 
+/* Compute initial TCR binding state and enforce height constraints. */
+static void init_binding_state(SimState *s) {
+    if (!s->tcr_bound || !s->pmhc_count) return;
+    int n = s->grid_size;
+    for (int i = 0; i < s->n_tcr; i++) {
+        int gi = (int)(s->tcr_pos[2 * i] / s->dx);
+        if (gi >= n) gi = n - 1;
+        int gj = (int)(s->tcr_pos[2 * i + 1] / s->dx);
+        if (gj >= n) gj = n - 1;
+        if (s->pmhc_count[gi * n + gj] > 0) {
+            s->tcr_bound[i] = 1;
+            s->h[gi * n + gj] = (float)s->h0_tcr;
+        }
+    }
+}
+
 SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
@@ -64,7 +80,9 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double cd45_height, double k_rep,
                      double mol_repulsion_eps, double mol_repulsion_rcut,
                      int n_pmhc, uint64_t pmhc_seed,
-                     int pmhc_mode, double pmhc_radius) {
+                     int pmhc_mode, double pmhc_radius,
+                     int binding_mode, int step_mode,
+                     double h0_tcr, double init_height) {
     SimState *s = (SimState *)calloc(1, sizeof(SimState));
     s->grid_size = grid_size;
     s->dx = PATCH_SIZE_NM / grid_size;
@@ -73,7 +91,10 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->kappa = kappa;
     s->u_assoc = u_assoc;
     s->cd45_height = (cd45_height > 0.0) ? cd45_height : CD45_HEIGHT_NM;
-    s->k_rep = (k_rep > 0.0) ? k_rep : 1.0;
+    s->h0_tcr = (h0_tcr > 0.0) ? h0_tcr : H0_TCR_NM;
+    s->init_height = (init_height > 0.0) ? init_height : INIT_HEIGHT_NM;
+    s->binding_mode = binding_mode;
+    s->step_mode = step_mode;
     s->mol_repulsion_eps = mol_repulsion_eps;
     s->mol_repulsion_rcut = (mol_repulsion_rcut > 0.0) ? mol_repulsion_rcut : 10.0;
     s->n_pmhc = n_pmhc;
@@ -81,6 +102,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->pmhc_count = NULL;
     s->pmhc_mode = pmhc_mode;
     s->pmhc_radius = pmhc_radius;
+    s->tcr_bound = NULL;
 
     /* Apply defaults if zero. */
     if (D_mol <= 0.0) D_mol = D_MOL_DEFAULT;
@@ -88,18 +110,33 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->D_mol = D_mol;
     s->D_h = D_h;
 
-    /* Brownian dynamics time step from stability constraint:
-     * dt_stable = dx² / (2 * D_h * κ) */
-    if (dt_override > 0.0) {
-        s->dt = dt_override;
+    /* Spring constant: paper formula or explicit. */
+    if (k_rep > 0.0) {
+        s->k_rep = k_rep;
+    } else if (step_mode == 1) {
+        /* paper: k = 10*kappa/a^2 */
+        s->k_rep = 10.0 * kappa / (s->dx * s->dx);
     } else {
-        double dt_stable = (s->dx * s->dx) / (2.0 * D_h * kappa);
-        s->dt = dt_stable * DT_SAFETY;
+        s->k_rep = 1.0;
     }
 
-    /* Step sizes derived from physics: σ = sqrt(2 * D * dt) */
-    s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-    s->step_size_h = sqrt(2.0 * D_h * s->dt);
+    /* Time step and step sizes. */
+    if (dt_override > 0.0) {
+        s->dt = dt_override;
+        s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
+        s->step_size_h = sqrt(2.0 * D_h * s->dt);
+    } else if (step_mode == 1) {
+        /* Paper mode: fixed dt and height step. */
+        s->dt = DT_PAPER;
+        s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
+        s->step_size_h = STEP_H_PAPER;
+    } else {
+        /* Brownian dynamics time step from stability constraint. */
+        double dt_stable = (s->dx * s->dx) / (2.0 * D_h * kappa);
+        s->dt = dt_stable * DT_SAFETY;
+        s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
+        s->step_size_h = sqrt(2.0 * D_h * s->dt);
+    }
 
     s->h = (float *)malloc(grid_size * grid_size * sizeof(float));
     s->tcr_pos = (double *)malloc(n_tcr * 2 * sizeof(double));
@@ -163,6 +200,12 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     /* CD45: always uniform */
     init_positions(s->cd45_pos, n_cd45, PATCH_SIZE_NM, &s->rng, 0);
 
+    /* --- TCR binding state (forced mode) --- */
+    if (binding_mode == 1 && s->pmhc_count) {
+        s->tcr_bound = (int *)calloc(n_tcr, sizeof(int));
+        init_binding_state(s);
+    }
+
     s->accepted = 0;
     s->total_proposals = 0;
 
@@ -189,6 +232,7 @@ void sim_destroy(SimState *s) {
     free(s->cd45_pos);
     free(s->pmhc_pos);
     free(s->pmhc_count);
+    free(s->tcr_bound);
     free(s);
 }
 
@@ -209,6 +253,11 @@ static void phase1_molecules(SimState *s) {
 
     /* TCR molecules. */
     for (int idx = 0; idx < s->n_tcr; idx++) {
+        /* Forced binding: bound TCRs are immobile. */
+        if (s->binding_mode == 1 && s->tcr_bound && s->tcr_bound[idx]) {
+            continue;
+        }
+
         double ox = s->tcr_pos[2 * idx];
         double oy = s->tcr_pos[2 * idx + 1];
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
@@ -247,6 +296,13 @@ static void phase1_molecules(SimState *s) {
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
             s->accepted++;
+            /* Update binding state after accepted move. */
+            if (s->binding_mode == 1 && s->tcr_bound && s->pmhc_count) {
+                s->tcr_bound[idx] = (s->pmhc_count[new_ix * n + new_iy] > 0) ? 1 : 0;
+                if (s->tcr_bound[idx]) {
+                    s->h[new_ix * n + new_iy] = (float)s->h0_tcr;
+                }
+            }
         } else {
             s->tcr_pos[2 * idx] = ox;
             s->tcr_pos[2 * idx + 1] = oy;
@@ -303,6 +359,22 @@ static void bin_molecules(const double *pos, int n_mol, int n, double dx,
         if (ix < 0) ix = 0; if (ix >= n) ix = n - 1;
         if (iy < 0) iy = 0; if (iy >= n) iy = n - 1;
         count_grid[ix * n + iy]++;
+    }
+}
+
+/* Build frozen cell mask for forced binding. */
+static void build_frozen_mask(SimState *s, int *frozen) {
+    int n = s->grid_size;
+    memset(frozen, 0, n * n * sizeof(int));
+    if (s->binding_mode != 1 || !s->tcr_bound || !s->pmhc_count) return;
+    for (int i = 0; i < s->n_tcr; i++) {
+        if (!s->tcr_bound[i]) continue;
+        int gi = (int)(s->tcr_pos[2 * i] / s->dx);
+        if (gi >= n) gi = n - 1;
+        int gj = (int)(s->tcr_pos[2 * i + 1] / s->dx);
+        if (gj >= n) gj = n - 1;
+        frozen[gi * n + gj] = 1;
+        s->h[gi * n + gj] = (float)s->h0_tcr;
     }
 }
 
@@ -366,6 +438,10 @@ static void phase2_grid_cpu(SimState *s) {
     bin_molecules(s->tcr_pos, s->n_tcr, n, s->dx, tcr_count);
     bin_molecules(s->cd45_pos, s->n_cd45, n, s->dx, cd45_count);
 
+    /* Build frozen cell mask. */
+    int *frozen = (int *)calloc(n2, sizeof(int));
+    build_frozen_mask(s, frozen);
+
     /* Per-cell buffers for the three-pass approach matching GPU. */
     float *old_vals = (float *)malloc(half * sizeof(float));
     float *u_accepts = (float *)malloc(half * sizeof(float));
@@ -376,12 +452,6 @@ static void phase2_grid_cpu(SimState *s) {
     /* Read-only snapshot for bending_delta evaluation. */
     float *h_snapshot = (float *)malloc(n2 * sizeof(float));
 
-    /* Three-pass checkerboard matching GPU propose→snapshot→evaluate→apply:
-       Pass 1: generate all proposals for a color, write to h[].
-       Snapshot: copy h[] (all proposals visible) for consistent reads.
-       Pass 2: compute bending deltas against snapshot, decide accept/reject.
-       Pass 3: restore rejected cells in h[].
-       This ensures ALL cells evaluate against the same consistent state. */
     for (int color = 0; color < 2; color++) {
         int cidx = 0;
 
@@ -391,6 +461,20 @@ static void phase2_grid_cpu(SimState *s) {
                 if ((gi + gj) % 2 != color) continue;
 
                 float old_h_val = s->h[gi * n + gj];
+
+                if (frozen[gi * n + gj]) {
+                    /* Frozen cell: consume RNG to stay in sync. */
+                    pcg64_uniform_f(&s->rng);
+                    pcg64_uniform_f(&s->rng);
+                    float u_f = pcg64_uniform_f(&s->rng);
+
+                    old_vals[cidx] = old_h_val;
+                    u_accepts[cidx] = u_f;
+                    cell_gi[cidx] = gi;
+                    cell_gj[cidx] = gj;
+                    cidx++;
+                    continue;
+                }
 
                 /* Float32 Box-Muller matching GPU shader precision. */
                 float u1_f = pcg64_uniform_f(&s->rng);
@@ -421,6 +505,15 @@ static void phase2_grid_cpu(SimState *s) {
         for (int k = 0; k < cidx; k++) {
             int gi = cell_gi[k];
             int gj = cell_gj[k];
+
+            if (frozen[gi * n + gj]) {
+                /* Frozen: always accepted. */
+                accepted_flags[k] = 1;
+                s->total_proposals++;
+                s->accepted++;
+                continue;
+            }
+
             float old_h_val = old_vals[k];
             float new_h_val = h_snapshot[gi * n + gj];
 
@@ -463,6 +556,7 @@ static void phase2_grid_cpu(SimState *s) {
     free(h_snapshot);
     free(tcr_count);
     free(cd45_count);
+    free(frozen);
 }
 
 void sim_step(SimState *s) {
@@ -535,4 +629,13 @@ double sim_mean_r(const double *pos, int n) {
         sum += sqrt(dx_ * dx_ + dy_ * dy_);
     }
     return sum / n;
+}
+
+int sim_count_bound_tcr(const SimState *s) {
+    if (!s->tcr_bound) return 0;
+    int count = 0;
+    for (int i = 0; i < s->n_tcr; i++) {
+        if (s->tcr_bound[i]) count++;
+    }
+    return count;
 }

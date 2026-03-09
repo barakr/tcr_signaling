@@ -26,7 +26,13 @@ class TestKsCli:
                 "--seed",
                 "42",
                 "--n_steps",
-                "200",
+                "50",
+                "--n_tcr",
+                "20",
+                "--n_cd45",
+                "40",
+                "--grid_size",
+                "16",
                 "--run-dir",
                 str(tmp_path),
             ],
@@ -59,7 +65,13 @@ class TestKsCli:
                 "--seed",
                 "1",
                 "--n_steps",
-                "100",
+                "50",
+                "--n_tcr",
+                "20",
+                "--n_cd45",
+                "40",
+                "--grid_size",
+                "16",
                 "--run-dir",
                 str(tmp_path),
             ],
@@ -94,8 +106,11 @@ class TestKsCli:
         params = {
             "time_sec": 5.0,
             "rigidity_kT_nm2": 8.0,
-            "n_steps": 100,
+            "n_steps": 20,
             "seed": 7,
+            "n_tcr": 10,
+            "n_cd45": 20,
+            "grid_size": 16,
         }
         param_file = tmp_path / "params.json"
         param_file.write_text(json.dumps(params))
@@ -124,8 +139,11 @@ class TestKsCli:
         params = {
             "time_sec": 5.0,
             "rigidity_kT_nm2": 8.0,
-            "n_steps": 100,
+            "n_steps": 20,
             "n_pmhc": 50,
+            "n_tcr": 10,
+            "n_cd45": 20,
+            "grid_size": 16,
         }
         param_file = tmp_path / "params.json"
         param_file.write_text(json.dumps(params))

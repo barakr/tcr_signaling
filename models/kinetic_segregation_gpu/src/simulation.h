@@ -3,16 +3,22 @@
 
 #include "rng.h"
 
-/* Physical constants matching the Python model. */
+/* Physical constants matching the Python model (paper defaults). */
 #define PATCH_SIZE_NM    2000.0
-#define CD45_HEIGHT_NM   35.0
+#define CD45_HEIGHT_NM   50.0    /* CD45 ectodomain resting length (paper) */
+#define H0_TCR_NM        13.0    /* TCR-pMHC resting bond length (paper) */
+#define INIT_HEIGHT_NM   70.0    /* initial inter-membrane distance (paper) */
 #define SIGMA_BIND_NM    3.0
 #define U_ASSOC_DEFAULT  20.0
 
 /* Brownian dynamics defaults (nm^2/s). */
-#define D_MOL_DEFAULT    1e5
+#define D_MOL_DEFAULT    1e4     /* paper: 10,000 nm²/s for TCR */
 #define D_H_DEFAULT      5e4
 #define DT_SAFETY        0.5
+
+/* Paper fixed step defaults. */
+#define DT_PAPER         0.01    /* paper: 0.01 s */
+#define STEP_H_PAPER     1.0     /* paper: 1 nm */
 
 typedef struct {
     /* Grid */
@@ -38,6 +44,10 @@ typedef struct {
     double k_rep;             /* CD45 repulsive spring constant (kT/nm²) */
     double mol_repulsion_eps; /* soft molecular repulsion strength (kT) */
     double mol_repulsion_rcut;/* soft molecular repulsion cutoff (nm) */
+    double h0_tcr;            /* TCR-pMHC resting bond length (nm) */
+    double init_height;       /* initial membrane height (nm) */
+    int binding_mode;         /* 0=gaussian, 1=forced */
+    int step_mode;            /* 0=brownian, 1=paper */
 
     /* pMHC: static positions on APC surface, gating TCR binding */
     int n_pmhc;
@@ -45,6 +55,9 @@ typedef struct {
     int *pmhc_count;          /* grid_size x grid_size binned counts, NULL if n_pmhc=0 */
     int pmhc_mode;            /* 0=uniform, 1=inner_circle */
     double pmhc_radius;       /* placement disc radius (nm), 0=auto (patch/3) */
+
+    /* TCR binding state (forced mode) */
+    int *tcr_bound;           /* n_tcr array: 1=bound, 0=free. NULL if gaussian mode */
 
     /* Diagnostics */
     long accepted;
@@ -59,17 +72,7 @@ typedef struct {
     void *metal_ctx;          /* opaque pointer to MetalEngine */
 } SimState;
 
-/* Allocate and initialize simulation state.
- * D_mol, D_h: diffusion coefficients (nm²/s). Pass 0 for defaults.
- * dt_override: if > 0, use this dt instead of auto-computing.
- * cd45_height: CD45 ectodomain height (nm). Pass 0 for default (35nm).
- * k_rep: CD45 repulsive spring constant (kT/nm²). Pass 0 for default (1.0).
- * mol_repulsion_eps: soft molecular repulsion strength (kT). 0 = disabled.
- * mol_repulsion_rcut: cutoff distance (nm). 0 = default (10nm).
- * n_pmhc: number of static pMHC molecules. 0 = binding everywhere.
- * pmhc_seed: seed for pMHC random positions.
- * pmhc_mode: 0=uniform, 1=inner_circle (default).
- * pmhc_radius: placement disc radius (nm). 0 = auto (patch/3). */
+/* Allocate and initialize simulation state. */
 SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
@@ -77,7 +80,9 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double cd45_height, double k_rep,
                      double mol_repulsion_eps, double mol_repulsion_rcut,
                      int n_pmhc, uint64_t pmhc_seed,
-                     int pmhc_mode, double pmhc_radius);
+                     int pmhc_mode, double pmhc_radius,
+                     int binding_mode, int step_mode,
+                     double h0_tcr, double init_height);
 
 /* Free simulation state. */
 void sim_destroy(SimState *s);
@@ -93,5 +98,8 @@ double sim_depletion_width(const SimState *s);
 
 /* Compute mean radial distance for TCR and CD45. */
 double sim_mean_r(const double *pos, int n);
+
+/* Count bound TCRs. */
+int sim_count_bound_tcr(const SimState *s);
 
 #endif /* SIMULATION_H */

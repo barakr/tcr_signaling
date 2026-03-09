@@ -42,6 +42,10 @@ def main() -> int:
     parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC random positions")
     parser.add_argument("--pmhc_mode", type=str, default=None, help="pMHC placement: 'uniform' or 'inner_circle'")
     parser.add_argument("--pmhc_radius", type=float, default=None, help="pMHC placement radius (nm)")
+    parser.add_argument("--h0_tcr", type=float, default=None, help="TCR-pMHC bond length (nm, default 13)")
+    parser.add_argument("--init_height", type=float, default=None, help="Initial membrane height (nm, default 70)")
+    parser.add_argument("--binding_mode", type=str, default=None, help="'forced' or 'gaussian'")
+    parser.add_argument("--step_mode", type=str, default=None, help="'paper' or 'brownian'")
     args = parser.parse_args()
 
     # Load param file and merge (CLI > param file > built-in defaults)
@@ -53,9 +57,9 @@ def main() -> int:
     if args.seed is None:
         args.seed = 42
     if args.n_tcr is None:
-        args.n_tcr = 50
+        args.n_tcr = 125
     if args.n_cd45 is None:
-        args.n_cd45 = 100
+        args.n_cd45 = 500
     if args.grid_size is None:
         args.grid_size = 64
 
@@ -98,6 +102,14 @@ def main() -> int:
         extra_kwargs["pmhc_mode"] = args.pmhc_mode
     if args.pmhc_radius is not None:
         extra_kwargs["pmhc_radius"] = args.pmhc_radius
+    if args.h0_tcr is not None:
+        extra_kwargs["h0_tcr"] = args.h0_tcr
+    if args.init_height is not None:
+        extra_kwargs["init_height"] = args.init_height
+    if args.binding_mode is not None:
+        extra_kwargs["binding_mode"] = args.binding_mode
+    if args.step_mode is not None:
+        extra_kwargs["step_mode"] = args.step_mode
 
     result = simulate_ks(
         time_sec=args.time_sec,

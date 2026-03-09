@@ -69,8 +69,9 @@ class TestConfigurableCd45:
     def test_matlab_params_vs_paper_params(self):
         """MATLAB (50nm, k=0.001) vs paper (35nm, k=1.0) produce different results."""
         kwargs = dict(
-            time_sec=1.0, rigidity_kT_nm2=20.0, n_steps=10,
+            time_sec=1.0, rigidity_kT_nm2=20.0, n_steps=100,
             seed=42, grid_size=16, n_tcr=20, n_cd45=40,
+            step_mode="brownian", init_height=40.0,
         )
         r_paper = simulate_ks(**kwargs, cd45_height=35.0, cd45_k_rep=1.0)
         r_matlab = simulate_ks(**kwargs, cd45_height=50.0, cd45_k_rep=0.001)
