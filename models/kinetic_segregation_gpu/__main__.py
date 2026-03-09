@@ -53,6 +53,12 @@ def main() -> int:
     parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC positions")
     parser.add_argument("--pmhc_mode", type=str, default=None, help="pMHC placement: 'uniform' or 'inner_circle'")
     parser.add_argument("--pmhc_radius", type=float, default=None, help="pMHC placement radius (nm)")
+    parser.add_argument("--binding_mode", type=str, default=None, help="'forced' or 'gaussian'")
+    parser.add_argument("--step_mode", type=str, default=None, help="'paper' or 'brownian'")
+    parser.add_argument("--h0_tcr", type=float, default=None, help="TCR-pMHC bond length (nm)")
+    parser.add_argument("--init_height", type=float, default=None, help="Initial membrane height (nm)")
+    parser.add_argument("--dump-frames", action="store_true", help="Dump binary frame files for movie rendering")
+    parser.add_argument("--dump-interval", type=int, default=None, help="Dump every N steps (default: 1)")
     args = parser.parse_args()
 
     # Load param file and merge (CLI > param file > built-in defaults)
@@ -64,9 +70,9 @@ def main() -> int:
     if args.seed is None:
         args.seed = 42
     if args.n_tcr is None:
-        args.n_tcr = 50
+        args.n_tcr = 125
     if args.n_cd45 is None:
-        args.n_cd45 = 100
+        args.n_cd45 = 500
     if args.grid_size is None:
         args.grid_size = 64
 
@@ -113,6 +119,18 @@ def main() -> int:
         cmd.extend(["--pmhc_mode", str(args.pmhc_mode)])
     if args.pmhc_radius is not None:
         cmd.extend(["--pmhc_radius", str(args.pmhc_radius)])
+    if args.binding_mode is not None:
+        cmd.extend(["--binding_mode", str(args.binding_mode)])
+    if args.step_mode is not None:
+        cmd.extend(["--step_mode", str(args.step_mode)])
+    if args.h0_tcr is not None:
+        cmd.extend(["--h0_tcr", str(args.h0_tcr)])
+    if args.init_height is not None:
+        cmd.extend(["--init_height", str(args.init_height)])
+    if args.dump_frames:
+        cmd.append("--dump-frames")
+    if args.dump_interval is not None:
+        cmd.extend(["--dump-interval", str(args.dump_interval)])
     if args.params is not None:
         cmd.extend(["--params", args.params])
 

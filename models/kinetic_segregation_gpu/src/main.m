@@ -62,7 +62,7 @@ static void dump_frame(const SimState *sim, const char *frames_dir, int step) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         double time_sec = -1, rigidity = -1;
-        int seed = 42, n_tcr = 50, n_cd45 = 100, grid_size = 64;
+        int seed = 42, n_tcr = 125, n_cd45 = 500, grid_size = 64;
         int n_steps_arg = -1;
         int use_gpu = 1;
         int dump_frames = 0;
@@ -74,6 +74,10 @@ int main(int argc, const char *argv[]) {
         int pmhc_seed_arg = -1;
         int pmhc_mode_arg = 1;  /* 1=inner_circle (default), 0=uniform */
         double pmhc_radius_arg = 0.0;  /* 0=auto (patch/3) */
+        int binding_mode_arg = 1;  /* 1=forced (paper), 0=gaussian */
+        int step_mode_arg = 1;    /* 1=paper, 0=brownian */
+        double h0_tcr_arg = 0.0;  /* 0=default (13nm) */
+        double init_height_arg = 0.0;  /* 0=default (70nm) */
         const char *params_file = NULL;
         const char *run_dir = NULL;
 
@@ -128,6 +132,20 @@ int main(int argc, const char *argv[]) {
                 pmhc_radius_arg = atof(argv[++i]);
             else if (strcmp(argv[i], "--params") == 0 && i + 1 < argc)
                 params_file = argv[++i];
+            else if (strcmp(argv[i], "--binding_mode") == 0 && i + 1 < argc) {
+                ++i;
+                if (strcmp(argv[i], "gaussian") == 0) binding_mode_arg = 0;
+                else binding_mode_arg = 1;
+            }
+            else if (strcmp(argv[i], "--step_mode") == 0 && i + 1 < argc) {
+                ++i;
+                if (strcmp(argv[i], "brownian") == 0) step_mode_arg = 0;
+                else step_mode_arg = 1;
+            }
+            else if (strcmp(argv[i], "--h0_tcr") == 0 && i + 1 < argc)
+                h0_tcr_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--init_height") == 0 && i + 1 < argc)
+                init_height_arg = atof(argv[++i]);
             else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
                 print_usage(argv[0]);
                 return 0;
@@ -157,9 +175,9 @@ int main(int argc, const char *argv[]) {
                 rigidity = [params[@"rigidity_kT_nm2"] doubleValue];
             if (seed == 42 && params[@"seed"])
                 seed = [params[@"seed"] intValue];
-            if (n_tcr == 50 && params[@"n_tcr"])
+            if (n_tcr == 125 && params[@"n_tcr"])
                 n_tcr = [params[@"n_tcr"] intValue];
-            if (n_cd45 == 100 && params[@"n_cd45"])
+            if (n_cd45 == 500 && params[@"n_cd45"])
                 n_cd45 = [params[@"n_cd45"] intValue];
             if (n_steps_arg < 0 && params[@"n_steps"])
                 n_steps_arg = [params[@"n_steps"] intValue];
@@ -190,6 +208,20 @@ int main(int argc, const char *argv[]) {
             }
             if (pmhc_radius_arg == 0.0 && params[@"pmhc_radius"])
                 pmhc_radius_arg = [params[@"pmhc_radius"] doubleValue];
+            if (params[@"binding_mode"]) {
+                NSString *mode = params[@"binding_mode"];
+                if ([mode isEqualToString:@"gaussian"]) binding_mode_arg = 0;
+                else binding_mode_arg = 1;
+            }
+            if (params[@"step_mode"]) {
+                NSString *mode = params[@"step_mode"];
+                if ([mode isEqualToString:@"brownian"]) step_mode_arg = 0;
+                else step_mode_arg = 1;
+            }
+            if (h0_tcr_arg == 0.0 && params[@"h0_tcr"])
+                h0_tcr_arg = [params[@"h0_tcr"] doubleValue];
+            if (init_height_arg == 0.0 && params[@"init_height"])
+                init_height_arg = [params[@"init_height"] doubleValue];
         }
 
         if (time_sec < 0 || rigidity < 0 || !run_dir) {
@@ -214,7 +246,9 @@ int main(int argc, const char *argv[]) {
                                    cd45_height_arg, cd45_k_rep_arg,
                                    mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
                                    n_pmhc_arg, pmhc_sd,
-                                   pmhc_mode_arg, pmhc_radius_arg);
+                                   pmhc_mode_arg, pmhc_radius_arg,
+                                   binding_mode_arg, step_mode_arg,
+                                   h0_tcr_arg, init_height_arg);
 
         /* Compute n_steps: explicit override or auto from time_sec / dt. */
         int n_steps;
@@ -244,10 +278,12 @@ int main(int argc, const char *argv[]) {
                 fprintf(mf, "{\"grid_size\":%d,\"n_tcr\":%d,\"n_cd45\":%d,"
                         "\"n_steps\":%d,\"dx\":%.6f,\"patch_nm\":%.1f,"
                         "\"dump_interval\":%d,\"n_frames\":%d,"
-                        "\"dt\":%.10g,\"time_sec\":%.6f,\"n_pmhc\":%d,"
+                        "\"dt\":%.10g,\"time_sec\":%.6f,\"rigidity_kT_nm2\":%.6f,"
+                        "\"n_pmhc\":%d,"
                         "\"pmhc_mode\":\"%s\",\"pmhc_radius\":%.6f}\n",
                         grid_size, n_tcr, n_cd45, n_steps, sim->dx, PATCH_SIZE_NM,
-                        dump_interval, n_frames, sim->dt, time_sec, sim->n_pmhc,
+                        dump_interval, n_frames, sim->dt, time_sec, rigidity,
+                        sim->n_pmhc,
                         (pmhc_mode_arg == 0) ? "uniform" : "inner_circle",
                         sim->pmhc_radius);
                 fclose(mf);

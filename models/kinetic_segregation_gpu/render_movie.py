@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import sys
 from pathlib import Path
 
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
+
+# Auto-detect ffmpeg from the conda env bin directory (may not be on PATH).
+if shutil.which("ffmpeg") is None:
+    _env_ffmpeg = Path(sys.executable).parent / "ffmpeg"
+    if _env_ffmpeg.exists():
+        matplotlib.rcParams["animation.ffmpeg_path"] = str(_env_ffmpeg)
 
 
 PATCH_SIZE_NM = 2000.0
@@ -40,6 +49,8 @@ def main():
     parser.add_argument("--fps", type=int, default=15, help="Frames per second")
     parser.add_argument("--dpi", type=int, default=120, help="Resolution")
     parser.add_argument("--skip", type=int, default=1, help="Frame skip (use every Nth frame)")
+    parser.add_argument("--rigidity", type=float, default=None,
+                        help="Override rigidity label (kT/nm2), otherwise read from meta.json")
     args = parser.parse_args()
 
     frames_dir = Path(args.frames_dir)
@@ -52,6 +63,7 @@ def main():
     dump_interval = meta.get("dump_interval", 1)
     dt = meta.get("dt", 0.0)
 
+    rigidity = args.rigidity if args.rigidity is not None else meta.get("rigidity_kT_nm2")
     n_pmhc = meta.get("n_pmhc", 0)
     n_frames = meta.get("n_frames", n_steps)
     all_frames = list(range(0, n_frames + 1))
@@ -103,7 +115,9 @@ def main():
     ax_h.set_ylabel("y (um)")
     ax_h.set_title("Membrane height (nm)")
     fig.colorbar(im, ax=ax_h, label="h (nm)", shrink=0.8)
-    fig.tight_layout()
+    if rigidity is not None:
+        fig.suptitle(f"Membrane rigidity: {rigidity:g} kT/nm\u00b2", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95] if rigidity is not None else [0, 0, 1, 1])
 
     def update(frame_idx):
         fidx = steps[frame_idx]
@@ -140,8 +154,8 @@ def main():
     if output.endswith(".gif"):
         ani.save(output, writer="pillow", fps=args.fps, dpi=args.dpi)
     else:
-        ani.save(output, writer="ffmpeg", fps=args.fps, dpi=args.dpi,
-                 extra_args=["-pix_fmt", "yuv420p"])
+        writer = animation.FFMpegWriter(fps=args.fps, extra_args=["-pix_fmt", "yuv420p"])
+        ani.save(output, writer=writer, dpi=args.dpi)
     print(f"Done: {output}")
     plt.close()
 
