@@ -4,12 +4,14 @@ from __future__ import annotations
 import ctypes
 import math
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 _PKG_DIR = Path(__file__).resolve().parents[1]
-_LIB_PATH = _PKG_DIR / "build" / "libks_potentials.dylib"
+_LIB_EXT = ".dylib" if sys.platform == "darwin" else ".so"
+_LIB_PATH = _PKG_DIR / "build" / f"libks_potentials{_LIB_EXT}"
 
 
 def _build_testlib():

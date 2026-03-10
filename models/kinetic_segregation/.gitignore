@@ -4,3 +4,9 @@ __pycache__/
 *.pyc
 *.metallib
 *.air
+
+# LaTeX auxiliary files
+Methods/*.aux
+Methods/*.log
+Methods/*.out
+Methods/*.synctex.gz

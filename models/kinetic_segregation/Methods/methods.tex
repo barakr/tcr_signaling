@@ -374,9 +374,67 @@ values from Supplementary Table~S1 of the reference.
 \section{Implementation}
 \label{sec:implementation}
 
-The model is implemented in C (C11) with optional GPU acceleration via
-Apple Metal on Apple Silicon.  A single binary (\texttt{ks\_gpu})
-provides both CPU and GPU execution modes.
+The model is implemented as a portable C99 simulation core with a
+C++20 command-line interface and an optional GPU backend.  A single
+binary (\texttt{ks\_gpu}) provides both CPU and GPU execution modes.
+The build system uses CMake with platform detection: Apple Metal on
+macOS, with a planned CUDA backend for Linux.
+
+\subsection{Code architecture}
+
+The source is organised into four layers (Table~\ref{tab:arch}).
+
+\begin{table}[ht]
+  \centering
+  \caption{Source code organisation.}
+  \label{tab:arch}
+  \small
+  \begin{tabular}{@{}llp{7cm}@{}}
+    \toprule
+    \textbf{Layer} & \textbf{Language} & \textbf{Files / purpose} \\
+    \midrule
+    Simulation core &
+      C99 &
+      \texttt{simulation.c}, \texttt{potentials.c}, \texttt{rng.c}
+      --- MC sweep, molecular potentials, PCG64 RNG.
+      Fully portable; no platform dependencies. \\[4pt]
+    Shared physics &
+      C99 / MSL &
+      \texttt{ks\_physics.h} --- shared \texttt{static inline} float
+      functions for TCR binding, CD45 repulsion, Laplacian, and
+      bending-energy delta.  Preprocessor guards
+      (\texttt{\_\_METAL\_VERSION\_\_}, \texttt{\_\_CUDA\_ARCH\_\_})
+      select Metal address-space qualifiers or CUDA decorators. \\[4pt]
+    GPU backend &
+      Objective-C / MSL &
+      \texttt{gpu\_engine.h} (backend-neutral C~API),
+      \texttt{metal\_engine.m} (Metal implementation),
+      \texttt{shaders.metal} (GPU compute kernels). \\[4pt]
+    CLI &
+      C++20 &
+      \texttt{main.cpp} --- argument parsing, JSON I/O
+      (nlohmann/json, header-only), directory management
+      (\texttt{std::filesystem}), deterministic seed derivation
+      (FNV-1a hash).  No platform-specific dependencies. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The shared physics header (\texttt{ks\_physics.h}) is the single
+source of truth for the four float-precision energy functions used by
+both the CPU Phase~2 path (\texttt{simulation.c}) and the GPU
+evaluate kernel (\texttt{shaders.metal}).  This eliminates the
+previous code duplication and guarantees CPU--GPU equivalence by
+construction.
+
+\subsection{GPU backend interface}
+
+The GPU backend is accessed through a four-function C~API defined in
+\texttt{gpu\_engine.h}: \texttt{gpu\_engine\_create},
+\texttt{gpu\_engine\_destroy}, \texttt{gpu\_engine\_h\_ptr}, and
+\texttt{gpu\_engine\_grid\_update}.  The interface uses an opaque
+\texttt{void*} handle, allowing different backends (Metal, CUDA) to be
+linked at compile time without changing the simulation core.
 
 \subsection{CPU mode}
 

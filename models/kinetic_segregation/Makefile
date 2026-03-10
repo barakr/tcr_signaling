@@ -1,68 +1,23 @@
-CC = clang
-CXX = clang++
-CFLAGS = -O2 -Wall -Wextra -std=c11
-CXXFLAGS = -O2 -Wall -Wextra -std=c++20
-OBJCFLAGS = -O2 -Wall -Wextra -fobjc-arc
-FRAMEWORKS = -framework Metal -framework Foundation
-LDFLAGS = $(FRAMEWORKS)
+# Thin wrapper around CMake — preserves make / make testlib / make pdf / make clean.
+# For direct CMake usage:  cmake -S . -B build && cmake --build build
 
-SRCDIR = src
-BUILDDIR = build
-TARGET = ks_gpu
+.PHONY: all testlib pdf metallib clean
 
-SOURCES_C = $(SRCDIR)/rng.c $(SRCDIR)/potentials.c $(SRCDIR)/simulation.c
-SOURCES_M = $(SRCDIR)/metal_engine.m
-SOURCES_CXX = $(SRCDIR)/main.cpp
-OBJECTS_C = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES_C))
-OBJECTS_M = $(patsubst $(SRCDIR)/%.m,$(BUILDDIR)/%.o,$(SOURCES_M))
-OBJECTS_CXX = $(patsubst $(SRCDIR)/%.cpp,$(BUILDDIR)/%.o,$(SOURCES_CXX))
-OBJECTS = $(OBJECTS_C) $(OBJECTS_M) $(OBJECTS_CXX)
+all:
+	@cmake -S . -B build --log-level=WARNING 2>&1 | grep -v "^$$" || true
+	@cmake --build build
 
-# Shared library for Python ctypes testing of C functions
-TESTLIB = $(BUILDDIR)/libks_potentials.dylib
+testlib:
+	@cmake -S . -B build --log-level=WARNING 2>&1 | grep -v "^$$" || true
+	@cmake --build build --target ks_potentials
 
-# Pre-compiled Metal shader
-METALLIB = $(SRCDIR)/shaders.metallib
-METALAIR = $(BUILDDIR)/shaders.air
+pdf:
+	@cmake -S . -B build --log-level=WARNING 2>&1 | grep -v "^$$" || true
+	@cmake --build build --target pdf
 
-# Check if Metal toolchain is available
-METAL_AVAILABLE := $(shell xcrun -sdk macosx --find metal 2>/dev/null && echo yes || echo no)
-
-.PHONY: all clean testlib metallib
-
-all: $(TARGET)
-ifeq ($(METAL_AVAILABLE),yes)
-all: $(METALLIB)
-endif
-
-metallib: $(METALLIB)
-
-$(TARGET): $(OBJECTS)
-	$(CXX) $(LDFLAGS) -o $@ $^
-
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/*.h | $(BUILDDIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(BUILDDIR)/%.o: $(SRCDIR)/%.m $(SRCDIR)/*.h | $(BUILDDIR)
-	$(CC) $(OBJCFLAGS) -c -o $@ $<
-
-$(BUILDDIR)/%.o: $(SRCDIR)/%.cpp $(SRCDIR)/*.h | $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -c -o $@ $<
-
-$(BUILDDIR):
-	mkdir -p $(BUILDDIR)
-
-# Pre-compile Metal shader to .metallib for faster init
-# Note: -I$(SRCDIR) needed so shaders.metal can #include "ks_physics.h"
-$(METALLIB): $(SRCDIR)/shaders.metal $(SRCDIR)/ks_physics.h | $(BUILDDIR)
-	xcrun -sdk macosx metal -c -I$(SRCDIR) -o $(METALAIR) $<
-	xcrun -sdk macosx metallib -o $@ $(METALAIR)
-
-# Build a shared library exporting potentials + rng for Python test access via ctypes
-testlib: $(TESTLIB)
-
-$(TESTLIB): $(SRCDIR)/potentials.c $(SRCDIR)/rng.c $(SRCDIR)/potentials.h $(SRCDIR)/rng.h | $(BUILDDIR)
-	$(CC) $(CFLAGS) -shared -o $@ $(SRCDIR)/potentials.c $(SRCDIR)/rng.c -lm
+metallib:
+	@cmake -S . -B build --log-level=WARNING 2>&1 | grep -v "^$$" || true
+	@cmake --build build --target metallib
 
 clean:
-	rm -rf $(BUILDDIR) $(TARGET) $(METALLIB)
+	rm -rf build ks_gpu src/shaders.metallib
