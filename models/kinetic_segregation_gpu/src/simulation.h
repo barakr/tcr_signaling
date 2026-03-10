@@ -70,6 +70,8 @@ typedef struct {
     /* Metal GPU availability (0 = CPU fallback, 1 = GPU) */
     int use_gpu;
     void *metal_ctx;          /* opaque pointer to MetalEngine */
+    int h_is_shared;          /* 1 if h points to Metal shared buffer (don't free) */
+    int grid_substeps;        /* Grid Phase 2 substeps per molecular move (default 1) */
 } SimState;
 
 /* Allocate and initialize simulation state. */

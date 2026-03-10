@@ -2,3 +2,5 @@ build/
 ks_gpu
 __pycache__/
 *.pyc
+*.metallib
+*.air

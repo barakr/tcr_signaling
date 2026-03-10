@@ -10,8 +10,14 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key);
 /* Destroy the Metal engine. */
 void metal_engine_destroy(void *ctx);
 
+/* Return a pointer to the shared GPU height buffer.
+   On Apple Silicon unified memory, CPU can read/write this directly,
+   eliminating the need for per-step memcpy. */
+float *metal_engine_h_ptr(void *ctx);
+
 /* Run Phase 2 grid update on GPU using checkerboard decomposition.
    Updates h (float*) in-place. Molecule positions are read-only (for binning).
+   n_substeps batches multiple grid sweeps in a single command buffer commit.
    No CPU RNG consumed — GPU uses Philox counter-based PRNG internally. */
 void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                               double kappa, double dx, double step_size_h,
@@ -20,6 +26,7 @@ void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                               const double *tcr_pos, int n_tcr,
                               const double *cd45_pos, int n_cd45,
                               const int *pmhc_count,
-                              long *accepted, long *total_proposals);
+                              long *accepted, long *total_proposals,
+                              int n_substeps);
 
 #endif /* METAL_ENGINE_H */

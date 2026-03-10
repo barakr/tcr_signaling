@@ -1,0 +1,24 @@
+{
+  "description": "Baseline reference values recorded BEFORE GPU optimizations. Used for regression testing.",
+  "params": {
+    "time_sec": 5.0,
+    "rigidity_kT_nm2": 20.0,
+    "seed": 42,
+    "grid_size": 64,
+    "n_steps": 500,
+    "n_tcr": 125,
+    "n_cd45": 500
+  },
+  "gpu": {
+    "depletion_width_nm": 404.200812,
+    "accept_rate": 0.821961,
+    "final_tcr_mean_r_nm": 454.083346,
+    "final_cd45_mean_r_nm": 771.835678
+  },
+  "cpu": {
+    "depletion_width_nm": 276.123648,
+    "accept_rate": 0.823329,
+    "final_tcr_mean_r_nm": 520.490964,
+    "final_cd45_mean_r_nm": 776.378474
+  }
+}

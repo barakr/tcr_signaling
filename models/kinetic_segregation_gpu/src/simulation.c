@@ -8,6 +8,7 @@
 /* Forward declarations for Metal engine (defined in metal_engine.m). */
 extern void *metal_engine_create(int grid_size, uint64_t gpu_rng_key);
 extern void metal_engine_destroy(void *ctx);
+extern float *metal_engine_h_ptr(void *ctx);
 extern void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                                      double kappa, double dx, double step_size_h,
                                      double u_assoc, double sigma_bind,
@@ -15,7 +16,8 @@ extern void metal_engine_grid_update(void *ctx, float *h, int grid_size,
                                      const double *tcr_pos, int n_tcr,
                                      const double *cd45_pos, int n_cd45,
                                      const int *pmhc_count,
-                                     long *accepted, long *total_proposals);
+                                     long *accepted, long *total_proposals,
+                                     int n_substeps);
 
 /* Forward declaration. */
 static void bin_molecules(const double *pos, int n_mol, int n, double dx,
@@ -212,12 +214,21 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     /* Try to init Metal GPU engine. Derive GPU RNG key from CPU seed. */
     s->use_gpu = 0;
     s->metal_ctx = NULL;
+    s->h_is_shared = 0;
+    s->grid_substeps = 1;
     if (use_gpu) {
         /* Use a deterministic key derived from the seed for GPU Philox RNG. */
         uint64_t gpu_key = seed ^ 0xA5A5A5A5A5A5A5A5ULL;
         s->metal_ctx = metal_engine_create(grid_size, gpu_key);
         if (s->metal_ctx) {
             s->use_gpu = 1;
+            /* Move h to the Metal shared buffer so CPU and GPU share memory
+               directly (no per-step memcpy needed on unified memory). */
+            float *shared_h = metal_engine_h_ptr(s->metal_ctx);
+            memcpy(shared_h, s->h, grid_size * grid_size * sizeof(float));
+            free(s->h);
+            s->h = shared_h;
+            s->h_is_shared = 1;
         }
     }
 
@@ -227,7 +238,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
 void sim_destroy(SimState *s) {
     if (!s) return;
     if (s->metal_ctx) metal_engine_destroy(s->metal_ctx);
-    free(s->h);
+    if (!s->h_is_shared) free(s->h);
     free(s->tcr_pos);
     free(s->cd45_pos);
     free(s->pmhc_pos);
@@ -560,8 +571,10 @@ static void phase2_grid_cpu(SimState *s) {
 }
 
 void sim_step(SimState *s) {
+    int K = s->grid_substeps > 1 ? s->grid_substeps : 1;
     phase1_molecules(s);
     if (s->use_gpu && s->metal_ctx) {
+        /* GPU: all K substeps batched in one command buffer commit. */
         metal_engine_grid_update(s->metal_ctx, s->h, s->grid_size,
                                  s->kappa, s->dx, s->step_size_h,
                                  s->u_assoc, SIGMA_BIND_NM, s->cd45_height,
@@ -569,9 +582,13 @@ void sim_step(SimState *s) {
                                  s->tcr_pos, s->n_tcr,
                                  s->cd45_pos, s->n_cd45,
                                  s->pmhc_count,
-                                 &s->accepted, &s->total_proposals);
+                                 &s->accepted, &s->total_proposals,
+                                 K);
     } else {
-        phase2_grid_cpu(s);
+        /* CPU: loop K times. */
+        for (int sub = 0; sub < K; sub++) {
+            phase2_grid_cpu(s);
+        }
     }
 }
 

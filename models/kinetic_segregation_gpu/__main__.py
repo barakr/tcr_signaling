@@ -59,6 +59,7 @@ def main() -> int:
     parser.add_argument("--init_height", type=float, default=None, help="Initial membrane height (nm)")
     parser.add_argument("--dump-frames", action="store_true", help="Dump binary frame files for movie rendering")
     parser.add_argument("--dump-interval", type=int, default=None, help="Dump every N steps (default: 1)")
+    parser.add_argument("--grid-substeps", type=int, default=None, help="Grid Phase 2 substeps per molecular move (default: 1)")
     args = parser.parse_args()
 
     # Load param file and merge (CLI > param file > built-in defaults)
@@ -131,6 +132,8 @@ def main() -> int:
         cmd.append("--dump-frames")
     if args.dump_interval is not None:
         cmd.extend(["--dump-interval", str(args.dump_interval)])
+    if args.grid_substeps is not None:
+        cmd.extend(["--grid-substeps", str(args.grid_substeps)])
     if args.params is not None:
         cmd.extend(["--params", args.params])
 

@@ -31,7 +31,7 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "Usage: %s --time_sec FLOAT --rigidity_kT_nm2 FLOAT --run-dir PATH\n"
                     "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
                     "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
-                    "       [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n"
+                    "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n"
                     "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n", prog);
 }
 
@@ -67,6 +67,7 @@ int main(int argc, const char *argv[]) {
         int use_gpu = 1;
         int dump_frames = 0;
         int dump_interval = 1;
+        int grid_substeps = 1;
         double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0;
         double cd45_height_arg = 0.0, cd45_k_rep_arg = 0.0;
         double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
@@ -146,6 +147,8 @@ int main(int argc, const char *argv[]) {
                 h0_tcr_arg = atof(argv[++i]);
             else if (strcmp(argv[i], "--init_height") == 0 && i + 1 < argc)
                 init_height_arg = atof(argv[++i]);
+            else if (strcmp(argv[i], "--grid-substeps") == 0 && i + 1 < argc)
+                grid_substeps = atoi(argv[++i]);
             else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
                 print_usage(argv[0]);
                 return 0;
@@ -249,6 +252,7 @@ int main(int argc, const char *argv[]) {
                                    pmhc_mode_arg, pmhc_radius_arg,
                                    binding_mode_arg, step_mode_arg,
                                    h0_tcr_arg, init_height_arg);
+        if (grid_substeps > 1) sim->grid_substeps = grid_substeps;
 
         /* Compute n_steps: explicit override or auto from time_sec / dt. */
         int n_steps;
