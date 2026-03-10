@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
-#include "metal_engine.h"
+#include "gpu_engine.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,7 +53,7 @@ typedef struct {
     uint32_t rng_counter; /* Monotonically increasing offset for unique streams */
 } MetalEngine;
 
-void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
+void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) {
@@ -137,6 +137,21 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
                 return NULL;
             }
 
+            /* Metal runtime compilation doesn't support #include paths.
+               Manually resolve #include "ks_physics.h" by inlining the header. */
+            NSString *shaderDir = [shaderPath stringByDeletingLastPathComponent];
+            NSString *physicsPath = [shaderDir stringByAppendingPathComponent:@"ks_physics.h"];
+            NSString *physicsSource = [NSString stringWithContentsOfFile:physicsPath
+                                                               encoding:NSUTF8StringEncoding
+                                                                  error:&error];
+            if (physicsSource) {
+                source = [source stringByReplacingOccurrencesOfString:@"#include \"ks_physics.h\""
+                                                          withString:physicsSource];
+            } else {
+                fprintf(stderr, "Metal: warning: could not read ks_physics.h for inline include: %s\n",
+                        [[error localizedDescription] UTF8String]);
+            }
+
             MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
             library = [device newLibraryWithSource:source options:opts error:&error];
             if (!library) {
@@ -203,14 +218,14 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
     }
 }
 
-void metal_engine_destroy(void *ctx) {
+void gpu_engine_destroy(void *ctx) {
     if (!ctx) return;
     MetalEngine *eng = (MetalEngine *)ctx;
     /* ARC handles ObjC objects. */
     free(eng);
 }
 
-float *metal_engine_h_ptr(void *ctx) {
+float *gpu_engine_h_ptr(void *ctx) {
     if (!ctx) return NULL;
     MetalEngine *eng = (MetalEngine *)ctx;
     return (float *)[eng->h_buf contents];
@@ -229,7 +244,7 @@ static void bin_molecules_f(const double *pos, int n_mol, int grid_size,
     }
 }
 
-void metal_engine_grid_update(void *ctx, float *h, int grid_size,
+void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                               double kappa, double dx, double step_size_h,
                               double u_assoc, double sigma_bind,
                               double cd45_height, double k_rep,

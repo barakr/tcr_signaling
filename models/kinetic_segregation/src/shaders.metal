@@ -1,5 +1,5 @@
-#include <metal_stdlib>
-using namespace metal;
+/* Shared physics included before metal_stdlib to get KS_DEVICE defined. */
+#include "ks_physics.h"
 
 /* Parameters passed to the grid update kernels. */
 struct GridParams {
@@ -42,55 +42,8 @@ static uint4 philox4x32_10(uint4 ctr, uint2 key) {
     return ctr;
 }
 
-/* TCR-pMHC attractive Gaussian well. */
-static float tcr_potential(float h, float u_assoc, float sigma_bind) {
-    return -u_assoc * exp(-(h * h) / (2.0f * sigma_bind * sigma_bind));
-}
-
-/* CD45 soft repulsive barrier. */
-static float cd45_repulsion(float h, float cd45_height, float k_rep) {
-    if (h < cd45_height) {
-        float diff = cd45_height - h;
-        return 0.5f * k_rep * diff * diff;
-    }
-    return 0.0f;
-}
-
-/* Discrete Laplacian at (i,j) with periodic BCs. */
-static float lap_at(device const float *h, int n, int i, int j, float dx2) {
-    int im = (i - 1 + n) % n;
-    int ip = (i + 1) % n;
-    int jm = (j - 1 + n) % n;
-    int jp = (j + 1) % n;
-    return (h[im * n + j] + h[ip * n + j] +
-            h[i * n + jm] + h[i * n + jp] -
-            4.0f * h[i * n + j]) / dx2;
-}
-
-/* Bending energy delta when h[gi][gj] changes. h must already contain new value. */
-static float bending_delta(device const float *h, int n, float kappa, float dx,
-                           int gi, int gj, float old_val, float new_val) {
-    float dx2 = dx * dx;
-    float delta_h = new_val - old_val;
-    float delta_e = 0.0f;
-
-    int affected_i[5] = {gi, (gi - 1 + n) % n, (gi + 1) % n, gi, gi};
-    int affected_j[5] = {gj, gj, gj, (gj - 1 + n) % n, (gj + 1) % n};
-
-    for (int k = 0; k < 5; k++) {
-        int ai = affected_i[k];
-        int aj = affected_j[k];
-        float new_lap = lap_at(h, n, ai, aj, dx2);
-        float shift;
-        if (ai == gi && aj == gj)
-            shift = -4.0f * delta_h / dx2;
-        else
-            shift = delta_h / dx2;
-        float old_lap = new_lap - shift;
-        delta_e += new_lap * new_lap - old_lap * old_lap;
-    }
-    return 0.5f * kappa * delta_e * dx2;
-}
+/* Physics functions (ks_tcr_potential, ks_cd45_repulsion, ks_lap_at,
+ * ks_bending_delta) are provided by ks_physics.h above. */
 
 /* Map linear thread id to (gi, gj) for the given checkerboard color. */
 static void decode_cell(int linear, int n, int color, thread int &gi, thread int &gj) {
@@ -181,15 +134,15 @@ kernel void grid_evaluate_kernel(
     int n_cd45_cell = cd45_count[cell_idx];
     int has_pmhc = pmhc_count[cell_idx] > 0;
 
-    float tcr_e_old = has_pmhc ? n_tcr_cell * tcr_potential(old_h_val, params.u_assoc, params.sigma_bind) : 0.0f;
+    float tcr_e_old = has_pmhc ? n_tcr_cell * ks_tcr_potential(old_h_val, params.u_assoc, params.sigma_bind) : 0.0f;
     float old_mol_e = tcr_e_old
-                    + n_cd45_cell * cd45_repulsion(old_h_val, params.cd45_height, params.k_rep);
+                    + n_cd45_cell * ks_cd45_repulsion(old_h_val, params.cd45_height, params.k_rep);
 
-    float dE_bend = bending_delta(h_snap, n, params.kappa, params.dx,
+    float dE_bend = ks_bending_delta(h_snap, n, params.kappa, params.dx,
                                   gi, gj, old_h_val, new_h_val);
-    float tcr_e_new = has_pmhc ? n_tcr_cell * tcr_potential(new_h_val, params.u_assoc, params.sigma_bind) : 0.0f;
+    float tcr_e_new = has_pmhc ? n_tcr_cell * ks_tcr_potential(new_h_val, params.u_assoc, params.sigma_bind) : 0.0f;
     float new_mol_e = tcr_e_new
-                    + n_cd45_cell * cd45_repulsion(new_h_val, params.cd45_height, params.k_rep);
+                    + n_cd45_cell * ks_cd45_repulsion(new_h_val, params.cd45_height, params.k_rep);
 
     float dE = dE_bend + (new_mol_e - old_mol_e);
 

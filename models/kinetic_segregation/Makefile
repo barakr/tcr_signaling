@@ -1,5 +1,7 @@
 CC = clang
+CXX = clang++
 CFLAGS = -O2 -Wall -Wextra -std=c11
+CXXFLAGS = -O2 -Wall -Wextra -std=c++20
 OBJCFLAGS = -O2 -Wall -Wextra -fobjc-arc
 FRAMEWORKS = -framework Metal -framework Foundation
 LDFLAGS = $(FRAMEWORKS)
@@ -9,10 +11,12 @@ BUILDDIR = build
 TARGET = ks_gpu
 
 SOURCES_C = $(SRCDIR)/rng.c $(SRCDIR)/potentials.c $(SRCDIR)/simulation.c
-SOURCES_M = $(SRCDIR)/main.m $(SRCDIR)/metal_engine.m
+SOURCES_M = $(SRCDIR)/metal_engine.m
+SOURCES_CXX = $(SRCDIR)/main.cpp
 OBJECTS_C = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES_C))
 OBJECTS_M = $(patsubst $(SRCDIR)/%.m,$(BUILDDIR)/%.o,$(SOURCES_M))
-OBJECTS = $(OBJECTS_C) $(OBJECTS_M)
+OBJECTS_CXX = $(patsubst $(SRCDIR)/%.cpp,$(BUILDDIR)/%.o,$(SOURCES_CXX))
+OBJECTS = $(OBJECTS_C) $(OBJECTS_M) $(OBJECTS_CXX)
 
 # Shared library for Python ctypes testing of C functions
 TESTLIB = $(BUILDDIR)/libks_potentials.dylib
@@ -34,7 +38,7 @@ endif
 metallib: $(METALLIB)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CXX) $(LDFLAGS) -o $@ $^
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/*.h | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -42,12 +46,16 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/*.h | $(BUILDDIR)
 $(BUILDDIR)/%.o: $(SRCDIR)/%.m $(SRCDIR)/*.h | $(BUILDDIR)
 	$(CC) $(OBJCFLAGS) -c -o $@ $<
 
+$(BUILDDIR)/%.o: $(SRCDIR)/%.cpp $(SRCDIR)/*.h | $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -c -o $@ $<
+
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
 
 # Pre-compile Metal shader to .metallib for faster init
-$(METALLIB): $(SRCDIR)/shaders.metal | $(BUILDDIR)
-	xcrun -sdk macosx metal -c -o $(METALAIR) $<
+# Note: -I$(SRCDIR) needed so shaders.metal can #include "ks_physics.h"
+$(METALLIB): $(SRCDIR)/shaders.metal $(SRCDIR)/ks_physics.h | $(BUILDDIR)
+	xcrun -sdk macosx metal -c -I$(SRCDIR) -o $(METALAIR) $<
 	xcrun -sdk macosx metallib -o $@ $(METALAIR)
 
 # Build a shared library exporting potentials + rng for Python test access via ctypes

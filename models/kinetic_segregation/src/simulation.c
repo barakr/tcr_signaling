@@ -5,19 +5,8 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Forward declarations for Metal engine (defined in metal_engine.m). */
-extern void *metal_engine_create(int grid_size, uint64_t gpu_rng_key);
-extern void metal_engine_destroy(void *ctx);
-extern float *metal_engine_h_ptr(void *ctx);
-extern void metal_engine_grid_update(void *ctx, float *h, int grid_size,
-                                     double kappa, double dx, double step_size_h,
-                                     double u_assoc, double sigma_bind,
-                                     double cd45_height, double k_rep,
-                                     const double *tcr_pos, int n_tcr,
-                                     const double *cd45_pos, int n_cd45,
-                                     const int *pmhc_count,
-                                     long *accepted, long *total_proposals,
-                                     int n_substeps);
+/* GPU backend (Metal on macOS, CUDA on Linux — see gpu_engine.h). */
+#include "gpu_engine.h"
 
 /* Forward declaration. */
 static void bin_molecules(const double *pos, int n_mol, int n, double dx,
@@ -219,12 +208,12 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     if (use_gpu) {
         /* Use a deterministic key derived from the seed for GPU Philox RNG. */
         uint64_t gpu_key = seed ^ 0xA5A5A5A5A5A5A5A5ULL;
-        s->metal_ctx = metal_engine_create(grid_size, gpu_key);
+        s->metal_ctx = gpu_engine_create(grid_size, gpu_key);
         if (s->metal_ctx) {
             s->use_gpu = 1;
             /* Move h to the Metal shared buffer so CPU and GPU share memory
                directly (no per-step memcpy needed on unified memory). */
-            float *shared_h = metal_engine_h_ptr(s->metal_ctx);
+            float *shared_h = gpu_engine_h_ptr(s->metal_ctx);
             memcpy(shared_h, s->h, grid_size * grid_size * sizeof(float));
             free(s->h);
             s->h = shared_h;
@@ -237,7 +226,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
 
 void sim_destroy(SimState *s) {
     if (!s) return;
-    if (s->metal_ctx) metal_engine_destroy(s->metal_ctx);
+    if (s->metal_ctx) gpu_engine_destroy(s->metal_ctx);
     if (!s->h_is_shared) free(s->h);
     free(s->tcr_pos);
     free(s->cd45_pos);
@@ -389,53 +378,8 @@ static void build_frozen_mask(SimState *s, int *frozen) {
     }
 }
 
-/* Float-based bending energy delta for CPU path (mirrors GPU shader logic). */
-static float lap_at_f(const float *h, int n, int i, int j, float dx2) {
-    int im = (i - 1 + n) % n;
-    int ip = (i + 1) % n;
-    int jm = (j - 1 + n) % n;
-    int jp = (j + 1) % n;
-    return (h[im * n + j] + h[ip * n + j] +
-            h[i * n + jm] + h[i * n + jp] -
-            4.0f * h[i * n + j]) / dx2;
-}
-
-static float bending_energy_delta_f(const float *h, int n, float kappa, float dx,
-                                    int gi, int gj, float old_val, float new_val) {
-    float dx2 = dx * dx;
-    float delta_h = new_val - old_val;
-    float delta_e = 0.0f;
-
-    int affected_i[5] = {gi, (gi - 1 + n) % n, (gi + 1) % n, gi, gi};
-    int affected_j[5] = {gj, gj, gj, (gj - 1 + n) % n, (gj + 1) % n};
-
-    for (int k = 0; k < 5; k++) {
-        int ai = affected_i[k];
-        int aj = affected_j[k];
-        float new_lap = lap_at_f(h, n, ai, aj, dx2);
-        float shift;
-        if (ai == gi && aj == gj)
-            shift = -4.0f * delta_h / dx2;
-        else
-            shift = delta_h / dx2;
-        float old_lap = new_lap - shift;
-        delta_e += new_lap * new_lap - old_lap * old_lap;
-    }
-    return 0.5f * kappa * delta_e * dx2;
-}
-
-/* Float-based potential functions for CPU Phase 2. */
-static float tcr_potential_f(float h, float u_assoc, float sigma_bind) {
-    return -u_assoc * expf(-(h * h) / (2.0f * sigma_bind * sigma_bind));
-}
-
-static float cd45_repulsion_f(float h, float cd45_height, float k_rep) {
-    if (h < cd45_height) {
-        float diff = cd45_height - h;
-        return 0.5f * k_rep * diff * diff;
-    }
-    return 0.0f;
-}
+/* Float-precision physics shared between CPU Phase 2 and GPU shaders. */
+#include "ks_physics.h"
 
 static void phase2_grid_cpu(SimState *s) {
     int n = s->grid_size;
@@ -532,15 +476,15 @@ static void phase2_grid_cpu(SimState *s) {
             int n_cd45_cell = cd45_count[gi * n + gj];
             int cell_has_pmhc = (s->pmhc_count == NULL) || (s->pmhc_count[gi * n + gj] > 0);
 
-            float tcr_e_old = cell_has_pmhc ? n_tcr_cell * tcr_potential_f(old_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
+            float tcr_e_old = cell_has_pmhc ? n_tcr_cell * ks_tcr_potential(old_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
             float old_mol_e = tcr_e_old
-                            + n_cd45_cell * cd45_repulsion_f(old_h_val, (float)s->cd45_height, (float)s->k_rep);
+                            + n_cd45_cell * ks_cd45_repulsion(old_h_val, (float)s->cd45_height, (float)s->k_rep);
 
-            float dE_bend = bending_energy_delta_f(h_snapshot, n, kappa, dx,
+            float dE_bend = ks_bending_delta(h_snapshot, n, kappa, dx,
                                                    gi, gj, old_h_val, new_h_val);
-            float tcr_e_new = cell_has_pmhc ? n_tcr_cell * tcr_potential_f(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
+            float tcr_e_new = cell_has_pmhc ? n_tcr_cell * ks_tcr_potential(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
             float new_mol_e = tcr_e_new
-                            + n_cd45_cell * cd45_repulsion_f(new_h_val, (float)s->cd45_height, (float)s->k_rep);
+                            + n_cd45_cell * ks_cd45_repulsion(new_h_val, (float)s->cd45_height, (float)s->k_rep);
 
             float dE = dE_bend + (new_mol_e - old_mol_e);
             s->total_proposals++;
@@ -575,7 +519,7 @@ void sim_step(SimState *s) {
     phase1_molecules(s);
     if (s->use_gpu && s->metal_ctx) {
         /* GPU: all K substeps batched in one command buffer commit. */
-        metal_engine_grid_update(s->metal_ctx, s->h, s->grid_size,
+        gpu_engine_grid_update(s->metal_ctx, s->h, s->grid_size,
                                  s->kappa, s->dx, s->step_size_h,
                                  s->u_assoc, SIGMA_BIND_NM, s->cd45_height,
                                  s->k_rep,

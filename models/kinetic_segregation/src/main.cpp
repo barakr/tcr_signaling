@@ -1,0 +1,373 @@
+/*
+ * main.cpp — CLI entry point for the kinetic segregation simulation.
+ *
+ * C++20.  Platform-independent (no ObjC/Foundation dependencies).
+ * The simulation core (simulation.h) is pure C and linked via extern "C".
+ */
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <string_view>
+
+#include "nlohmann/json.hpp"
+
+extern "C" {
+#include "simulation.h"
+}
+
+namespace fs = std::filesystem;
+using json = nlohmann::json;
+
+/* ---------- FNV-1a seed derivation (portable, deterministic) ---------- */
+
+static uint64_t fnv1a_bytes(const void *data, size_t len) {
+    auto p = static_cast<const uint8_t *>(data);
+    uint64_t h = 0xcbf29ce484222325ULL;  /* FNV offset basis */
+    for (size_t i = 0; i < len; i++) {
+        h ^= p[i];
+        h *= 0x100000001b3ULL;  /* FNV prime */
+    }
+    return h;
+}
+
+static uint64_t derive_seed(uint64_t base_seed, double time_sec, double rigidity) {
+    double vals[2] = {time_sec, rigidity};
+    uint64_t hash_val = fnv1a_bytes(vals, sizeof(vals));
+    return base_seed + (hash_val & 0xFFFFFFFFULL);
+}
+
+/* ---------- Usage ---------- */
+
+static void print_usage(std::string_view prog) {
+    std::cerr << "Usage: " << prog
+              << " --time_sec FLOAT --rigidity_kT_nm2 FLOAT --run-dir PATH\n"
+              << "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
+              << "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
+              << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n"
+              << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n";
+}
+
+/* ---------- Frame dump (raw binary I/O) ---------- */
+
+static void dump_frame(const SimState *sim, const fs::path &frames_dir, int step) {
+    int n = sim->grid_size;
+    int n2 = n * n;
+    char name[32];
+
+    /* Height field as raw float32 binary. */
+    std::snprintf(name, sizeof(name), "h_%05d.bin", step);
+    if (std::ofstream ofs(frames_dir / name, std::ios::binary); ofs) {
+        ofs.write(reinterpret_cast<const char *>(sim->h), n2 * sizeof(float));
+    }
+
+    /* Molecule positions as raw float64 binary. */
+    std::snprintf(name, sizeof(name), "mol_%05d.bin", step);
+    if (std::ofstream ofs(frames_dir / name, std::ios::binary); ofs) {
+        ofs.write(reinterpret_cast<const char *>(sim->tcr_pos),
+                  sim->n_tcr * 2 * sizeof(double));
+        ofs.write(reinterpret_cast<const char *>(sim->cd45_pos),
+                  sim->n_cd45 * 2 * sizeof(double));
+    }
+}
+
+/* ---------- CLI argument helpers ---------- */
+
+static bool match(const char *arg, std::string_view flag) {
+    return flag == arg;
+}
+
+/* ---------- JSON param file loading ---------- */
+
+static void load_params_file(const std::string &path,
+                             double &time_sec, double &rigidity,
+                             int &seed, int &n_tcr, int &n_cd45,
+                             int &n_steps_arg, int &grid_size,
+                             double &D_mol_arg, double &D_h_arg, double &dt_arg,
+                             double &cd45_height_arg, double &cd45_k_rep_arg,
+                             double &mol_repulsion_eps_arg, double &mol_repulsion_rcut_arg,
+                             int &n_pmhc_arg, int &pmhc_seed_arg,
+                             int &pmhc_mode_arg, double &pmhc_radius_arg,
+                             int &binding_mode_arg, int &step_mode_arg,
+                             double &h0_tcr_arg, double &init_height_arg) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        std::cerr << "Error: cannot read param file: " << path << "\n";
+        std::exit(1);
+    }
+    json params;
+    try {
+        params = json::parse(ifs);
+    } catch (const json::parse_error &) {
+        std::cerr << "Error: invalid JSON in param file: " << path << "\n";
+        std::exit(1);
+    }
+
+    auto get_d = [&](const char *key, double sentinel, double &val) {
+        if (val == sentinel && params.contains(key))
+            val = params[key].get<double>();
+    };
+    auto get_i = [&](const char *key, int sentinel, int &val) {
+        if (val == sentinel && params.contains(key))
+            val = params[key].get<int>();
+    };
+
+    get_d("time_sec", -1.0, time_sec);
+    get_d("rigidity_kT_nm2", -1.0, rigidity);
+    get_i("seed", 42, seed);
+    get_i("n_tcr", 125, n_tcr);
+    get_i("n_cd45", 500, n_cd45);
+    get_i("n_steps", -1, n_steps_arg);
+    get_i("grid_size", 64, grid_size);
+    get_d("D_mol", 0.0, D_mol_arg);
+    get_d("D_h", 0.0, D_h_arg);
+    get_d("dt", -1.0, dt_arg);
+    get_d("cd45_height", 0.0, cd45_height_arg);
+    get_d("cd45_k_rep", 0.0, cd45_k_rep_arg);
+    get_d("mol_repulsion_eps", 0.0, mol_repulsion_eps_arg);
+    get_d("mol_repulsion_rcut", 0.0, mol_repulsion_rcut_arg);
+    get_i("n_pmhc", 0, n_pmhc_arg);
+    get_i("pmhc_seed", -1, pmhc_seed_arg);
+    get_d("pmhc_radius", 0.0, pmhc_radius_arg);
+    get_d("h0_tcr", 0.0, h0_tcr_arg);
+    get_d("init_height", 0.0, init_height_arg);
+
+    if (params.contains("pmhc_mode")) {
+        auto mode = params["pmhc_mode"].get<std::string>();
+        pmhc_mode_arg = (mode == "uniform") ? 0 : 1;
+    }
+    if (params.contains("binding_mode")) {
+        auto mode = params["binding_mode"].get<std::string>();
+        binding_mode_arg = (mode == "gaussian") ? 0 : 1;
+    }
+    if (params.contains("step_mode")) {
+        auto mode = params["step_mode"].get<std::string>();
+        step_mode_arg = (mode == "brownian") ? 0 : 1;
+    }
+}
+
+/* ---------- Main ---------- */
+
+int main(int argc, const char *argv[]) {
+    double time_sec = -1, rigidity = -1;
+    int seed = 42, n_tcr = 125, n_cd45 = 500, grid_size = 64;
+    int n_steps_arg = -1;
+    int use_gpu = 1;
+    bool dump_frames_flag = false;
+    int dump_interval = 1;
+    int grid_substeps = 1;
+    double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0;
+    double cd45_height_arg = 0.0, cd45_k_rep_arg = 0.0;
+    double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
+    int n_pmhc_arg = 0;
+    int pmhc_seed_arg = -1;
+    int pmhc_mode_arg = 1;     /* 1=inner_circle (default), 0=uniform */
+    double pmhc_radius_arg = 0.0;
+    int binding_mode_arg = 1;  /* 1=forced (paper), 0=gaussian */
+    int step_mode_arg = 1;     /* 1=paper, 0=brownian */
+    double h0_tcr_arg = 0.0;
+    double init_height_arg = 0.0;
+    std::string params_file;
+    std::string run_dir;
+
+    /* Argument parsing. */
+    for (int i = 1; i < argc; i++) {
+        if (match(argv[i], "--time_sec") && i + 1 < argc)
+            time_sec = std::atof(argv[++i]);
+        else if (match(argv[i], "--rigidity_kT_nm2") && i + 1 < argc)
+            rigidity = std::atof(argv[++i]);
+        else if (match(argv[i], "--seed") && i + 1 < argc)
+            seed = std::atoi(argv[++i]);
+        else if (match(argv[i], "--run-dir") && i + 1 < argc)
+            run_dir = argv[++i];
+        else if (match(argv[i], "--n_tcr") && i + 1 < argc)
+            n_tcr = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--n_cd45") && i + 1 < argc)
+            n_cd45 = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--n_steps") && i + 1 < argc)
+            n_steps_arg = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--grid_size") && i + 1 < argc)
+            grid_size = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--no-gpu"))
+            use_gpu = 0;
+        else if (match(argv[i], "--dump-frames"))
+            dump_frames_flag = true;
+        else if (match(argv[i], "--dump-interval") && i + 1 < argc)
+            dump_interval = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--D_mol") && i + 1 < argc)
+            D_mol_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--D_h") && i + 1 < argc)
+            D_h_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--dt") && i + 1 < argc)
+            dt_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--cd45_height") && i + 1 < argc)
+            cd45_height_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--cd45_k_rep") && i + 1 < argc)
+            cd45_k_rep_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--mol_repulsion_eps") && i + 1 < argc)
+            mol_repulsion_eps_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--mol_repulsion_rcut") && i + 1 < argc)
+            mol_repulsion_rcut_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--n_pmhc") && i + 1 < argc)
+            n_pmhc_arg = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--pmhc_seed") && i + 1 < argc)
+            pmhc_seed_arg = std::atoi(argv[++i]);
+        else if (match(argv[i], "--pmhc_mode") && i + 1 < argc) {
+            ++i;
+            pmhc_mode_arg = match(argv[i], "uniform") ? 0 : 1;
+        }
+        else if (match(argv[i], "--pmhc_radius") && i + 1 < argc)
+            pmhc_radius_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--params") && i + 1 < argc)
+            params_file = argv[++i];
+        else if (match(argv[i], "--binding_mode") && i + 1 < argc) {
+            ++i;
+            binding_mode_arg = match(argv[i], "gaussian") ? 0 : 1;
+        }
+        else if (match(argv[i], "--step_mode") && i + 1 < argc) {
+            ++i;
+            step_mode_arg = match(argv[i], "brownian") ? 0 : 1;
+        }
+        else if (match(argv[i], "--h0_tcr") && i + 1 < argc)
+            h0_tcr_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--init_height") && i + 1 < argc)
+            init_height_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--grid-substeps") && i + 1 < argc)
+            grid_substeps = std::atoi(argv[++i]);
+        else if (match(argv[i], "--help") || match(argv[i], "-h")) {
+            print_usage(argv[0]);
+            return 0;
+        }
+    }
+
+    /* Load JSON param file if given (CLI values already set override). */
+    if (!params_file.empty()) {
+        load_params_file(params_file,
+                         time_sec, rigidity, seed, n_tcr, n_cd45,
+                         n_steps_arg, grid_size, D_mol_arg, D_h_arg, dt_arg,
+                         cd45_height_arg, cd45_k_rep_arg,
+                         mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
+                         n_pmhc_arg, pmhc_seed_arg,
+                         pmhc_mode_arg, pmhc_radius_arg,
+                         binding_mode_arg, step_mode_arg,
+                         h0_tcr_arg, init_height_arg);
+    }
+
+    if (time_sec < 0 || rigidity < 0 || run_dir.empty()) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    /* Derive seed. */
+    auto point_seed = derive_seed(static_cast<uint64_t>(seed), time_sec, rigidity);
+
+    /* Create output directory. */
+    auto out_dir = fs::path(run_dir) / "out";
+    fs::create_directories(out_dir);
+
+    uint64_t pmhc_sd = (pmhc_seed_arg >= 0)
+        ? static_cast<uint64_t>(pmhc_seed_arg)
+        : (point_seed + 1);
+    auto *sim = sim_create(grid_size, n_tcr, n_cd45,
+                           rigidity, U_ASSOC_DEFAULT, point_seed,
+                           use_gpu, D_mol_arg, D_h_arg, dt_arg,
+                           cd45_height_arg, cd45_k_rep_arg,
+                           mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
+                           n_pmhc_arg, pmhc_sd,
+                           pmhc_mode_arg, pmhc_radius_arg,
+                           binding_mode_arg, step_mode_arg,
+                           h0_tcr_arg, init_height_arg);
+    if (grid_substeps > 1) sim->grid_substeps = grid_substeps;
+
+    /* Compute n_steps: explicit override or auto from time_sec / dt. */
+    int n_steps;
+    if (n_steps_arg > 0) {
+        n_steps = n_steps_arg;
+    } else {
+        n_steps = static_cast<int>(std::round(time_sec / sim->dt));
+        if (n_steps < 50) n_steps = 50;
+    }
+
+    if (dump_frames_flag) {
+        auto frames_dir = fs::path(run_dir) / "frames";
+        fs::create_directories(frames_dir);
+
+        if (dump_interval < 1) dump_interval = 1;
+        int n_frames = n_steps / dump_interval;
+
+        /* Write metadata. */
+        json meta = {
+            {"grid_size", grid_size}, {"n_tcr", n_tcr}, {"n_cd45", n_cd45},
+            {"n_steps", n_steps}, {"dx", sim->dx}, {"patch_nm", PATCH_SIZE_NM},
+            {"dump_interval", dump_interval}, {"n_frames", n_frames},
+            {"dt", sim->dt}, {"time_sec", time_sec},
+            {"rigidity_kT_nm2", rigidity}, {"n_pmhc", sim->n_pmhc},
+            {"pmhc_mode", (pmhc_mode_arg == 0) ? "uniform" : "inner_circle"},
+            {"pmhc_radius", sim->pmhc_radius}
+        };
+        if (std::ofstream ofs(frames_dir / "meta.json"); ofs)
+            ofs << meta.dump() << "\n";
+
+        /* Dump pMHC positions once (static). */
+        if (sim->n_pmhc > 0 && sim->pmhc_pos) {
+            if (std::ofstream ofs(frames_dir / "pmhc.bin", std::ios::binary); ofs)
+                ofs.write(reinterpret_cast<const char *>(sim->pmhc_pos),
+                          sim->n_pmhc * 2 * sizeof(double));
+        }
+
+        /* Dump initial state as frame 0. */
+        dump_frame(sim, frames_dir, 0);
+        sim->n_steps = n_steps;
+        int frame_idx = 1;
+        for (int step = 1; step <= n_steps; step++) {
+            sim_step(sim);
+            if (step % dump_interval == 0) {
+                dump_frame(sim, frames_dir, frame_idx);
+                frame_idx++;
+            }
+        }
+    } else {
+        sim_run(sim, n_steps);
+    }
+
+    double depletion = sim_depletion_width(sim);
+    double tcr_mean_r = sim_mean_r(sim->tcr_pos, sim->n_tcr);
+    double cd45_mean_r = sim_mean_r(sim->cd45_pos, sim->n_cd45);
+    double accept_rate = (sim->total_proposals > 0)
+        ? static_cast<double>(sim->accepted) / sim->total_proposals : 0.0;
+
+    /* Build JSON output. */
+    json output = {
+        {"depletion_width_nm", depletion},
+        {"diagnostics", {
+            {"D_h_nm2_per_s", sim->D_h},
+            {"D_mol_nm2_per_s", sim->D_mol},
+            {"accept_rate", accept_rate},
+            {"dt_seconds", sim->dt},
+            {"final_cd45_mean_r_nm", cd45_mean_r},
+            {"final_tcr_mean_r_nm", tcr_mean_r},
+            {"n_steps_actual", n_steps},
+            {"step_size_h_nm", sim->step_size_h},
+            {"step_size_mol_nm", sim->step_size_mol}
+        }},
+        {"inputs", {
+            {"rigidity_kT_nm2", rigidity},
+            {"time_sec", time_sec}
+        }}
+    };
+
+    auto json_str = output.dump(2);
+
+    /* Write to file. */
+    if (std::ofstream ofs(out_dir / "segregation.json"); ofs)
+        ofs << json_str << "\n";
+
+    /* Print to stdout. */
+    std::cout << json_str << std::endl;
+
+    sim_destroy(sim);
+    return 0;
+}
