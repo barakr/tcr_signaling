@@ -27,8 +27,19 @@ INIT_HEIGHT_NM = 70.0
 # ── Paul Tol bright palette (colorblind-safe) ────────────────────────
 COLOR_TCR = "#EE6677"       # rose — warm, prominent
 COLOR_CD45 = "#4477AA"      # blue — cool, easily separated from rose
-COLOR_PMHC = "#BBBBBB"      # neutral gray — subtle, static background
+COLOR_PMHC = "#228833"      # green — distinct from rose TCR and blue CD45
 COLOR_DEPLETION = "#CCBB44"  # muted gold — annotation
+
+
+def _even_figsize(w_in, h_in, dpi):
+    """Round figure size so pixel dimensions are even (h264 requirement)."""
+    w_px = round(w_in * dpi)
+    h_px = round(h_in * dpi)
+    if w_px % 2:
+        w_px += 1
+    if h_px % 2:
+        h_px += 1
+    return w_px / dpi, h_px / dpi
 
 
 def load_frame(frames_dir: Path, step: int, grid_size: int, n_tcr: int, n_cd45: int):
@@ -111,7 +122,19 @@ def main():
     center = patch_nm / 2.0
     extent_um = [0, patch_nm / 1000, 0, patch_nm / 1000]
 
-    fig, (ax_mol, ax_h) = plt.subplots(1, 2, figsize=(13, 5.5))
+    # Ensure even pixel dimensions for h264 codec.
+    # Use figsize that produces even pixel counts at the target DPI.
+    fig_w, fig_h = _even_figsize(13, 6, args.dpi)
+    fig, (ax_mol, ax_h) = plt.subplots(1, 2, figsize=(fig_w, fig_h))
+    fig.set_layout_engine('none')
+
+    # Fixed layout — never use tight_layout (causes per-frame jitter in animations)
+    if rigidity is not None:
+        fig.subplots_adjust(left=0.06, right=0.95, bottom=0.10, top=0.88,
+                            wspace=0.28)
+    else:
+        fig.subplots_adjust(left=0.06, right=0.95, bottom=0.10, top=0.93,
+                            wspace=0.28)
 
     # ── Left panel: molecules with depletion zone ────────────────────
     ax_mol.set_xlim(0, patch_nm / 1000)
@@ -120,14 +143,16 @@ def main():
     ax_mol.set_xlabel("x (\u00b5m)")
     ax_mol.set_ylabel("y (\u00b5m)")
 
-    tcr_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=20, alpha=0.7,
-                              label="TCR", zorder=3)
-    cd45_scat = ax_mol.scatter([], [], c=COLOR_CD45, s=12, alpha=0.5,
-                               label="CD45", zorder=2)
+    # Draw pMHC first (background), then CD45, then TCR on top
     if pmhc_pos is not None:
         pmhc_um = pmhc_pos / 1000.0
-        ax_mol.scatter(pmhc_um[:, 0], pmhc_um[:, 1], c=COLOR_PMHC, marker="+",
-                       s=15, alpha=0.35, label="pMHC", zorder=1, linewidths=0.5)
+        ax_mol.scatter(pmhc_um[:, 0], pmhc_um[:, 1], c=COLOR_PMHC, marker="x",
+                       s=30, alpha=0.7, label="pMHC", zorder=1, linewidths=1.0)
+
+    cd45_scat = ax_mol.scatter([], [], c=COLOR_CD45, s=12, alpha=0.5,
+                               label="CD45", zorder=2)
+    tcr_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=20, alpha=0.7,
+                              label="TCR", zorder=3)
 
     c_um = center / 1000.0
     depl_annulus = Annulus(
@@ -158,9 +183,6 @@ def main():
     if rigidity is not None:
         fig.suptitle(f"Membrane rigidity: {rigidity:g} kT/nm\u00b2",
                      fontsize=13, fontweight="bold")
-
-    fig.tight_layout(rect=[0, 0.04, 1, 0.95] if rigidity is not None
-                     else [0, 0.04, 1, 1])
 
     # Thin progress track at the bottom of the figure
     ax_prog = fig.add_axes([0.05, 0.012, 0.9, 0.012])
@@ -217,7 +239,7 @@ def main():
     else:
         writer = animation.FFMpegWriter(
             fps=args.fps,
-            extra_args=["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p"],
+            extra_args=["-pix_fmt", "yuv420p"],
         )
         ani.save(output, writer=writer, dpi=args.dpi)
     print(f"Done: {output}")
