@@ -291,6 +291,21 @@ where $\mathcal{N}(i,j) = \{(i,j),\,(i\pm1,j),\,(i,j\pm1)\}$ with
 periodic wrapping.
 
 
+\subsection{Checkerboard decomposition for Phase~2}
+
+Phase~2 (membrane height updates) uses a red--black checkerboard
+decomposition.  Grid cells are coloured so that each cell of a given
+colour has only opposite-colour neighbours in the five-point stencil.
+All same-colour cells can then be updated simultaneously without data
+races, because their energy deltas depend only on the frozen
+opposite-colour neighbours.
+
+Each sweep processes both colours sequentially (red then black),
+ensuring that every grid cell is updated exactly once.  On the CPU
+this proceeds serially within each colour; on the GPU, all cells of a
+given colour are dispatched in parallel.
+
+
 \subsection{Initial conditions}
 
 \begin{itemize}
@@ -350,6 +365,73 @@ values from Supplementary Table~S1 of the reference.
     Bending rigidity    & $\kappa$              & Swept (input parameter) \\
     Simulation time     & $t$                   & Swept (input parameter) \\
     Random seed         & ---                   & 42 (per-point hash derived) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+%% ----------------------------------------------------------------
+\section{Implementation}
+\label{sec:implementation}
+
+The model is implemented in C (C11) with optional GPU acceleration via
+Apple Metal on Apple Silicon.  A single binary (\texttt{ks\_gpu})
+provides both CPU and GPU execution modes.
+
+\subsection{CPU mode}
+
+In CPU mode, Phase~1 (molecular moves) and Phase~2 (grid height
+updates) both execute sequentially.  Random numbers are generated with
+the PCG64 algorithm, seeded deterministically from the user-provided
+seed.  Phase~2 uses the checkerboard decomposition described above but
+updates each colour's cells serially.
+
+\subsection{GPU acceleration (Metal)}
+
+On Apple Silicon, Phase~2 is offloaded to the GPU via Metal compute
+shaders.  The pipeline consists of four kernel dispatches per colour:
+
+\begin{enumerate}
+  \item \textbf{Propose}: Each thread proposes a new height for one
+    cell using a Philox counter-based RNG.
+  \item \textbf{Snapshot}: Copies the full height field to a frozen
+    buffer so that the evaluate kernel reads consistent neighbour
+    values.
+  \item \textbf{Evaluate}: Computes the energy delta (bending +
+    molecular contributions) and the Metropolis acceptance criterion.
+  \item \textbf{Apply}: Writes accepted proposals back to the
+    authoritative height buffer.
+\end{enumerate}
+
+\noindent
+Phase~1 remains on the CPU (few molecules, inherently sequential).
+The height field resides in a Metal shared buffer
+(\texttt{MTLResourceStorageModeShared}), allowing zero-copy access
+from both CPU and GPU on unified memory.
+
+A grid-substep parameter $K$ allows batching $K$ Phase~2 sweeps per
+Phase~1 molecular move, reducing CPU--GPU synchronisation overhead.
+All $K \times 8$ kernel dispatches are encoded into a single Metal
+command buffer before committing.
+
+\subsection{Performance}
+
+Table~\ref{tab:perf} shows representative timings on Apple M3 for
+500-step simulations.
+
+\begin{table}[ht]
+  \centering
+  \caption{CPU vs GPU wall-clock time (500 steps, $\kappa=20$,
+    $N_\text{TCR}=125$, $N_\text{CD45}=500$).}
+  \label{tab:perf}
+  \begin{tabular}{@{}rrrr@{}}
+    \toprule
+    $N_\text{grid}$ & CPU (s) & GPU (s) & Speedup \\
+    \midrule
+     64  & 0.14  & 0.06  & $2.3\times$ \\
+    128  & 0.50  & 0.06  & $8.7\times$ \\
+    256  & 1.78  & 0.07  & $25\times$ \\
+    512  & 6.29  & 0.09  & $69\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}

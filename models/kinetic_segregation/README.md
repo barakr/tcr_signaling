@@ -1,21 +1,19 @@
-# GPU-Accelerated Kinetic Segregation Model
+# Kinetic Segregation Model
 
-C + Metal (Apple Silicon) implementation of the kinetic segregation Monte Carlo
-model. Provides 50-500x speedup over the pure Python version.
+C implementation of the kinetic segregation Monte Carlo model with optional
+Metal GPU acceleration on Apple Silicon.
 
 ## Build
 
 Requires macOS with Command Line Tools (Xcode not needed):
 
 ```bash
-cd models/kinetic_segregation_gpu
+cd models/kinetic_segregation
 make          # builds ./ks_gpu binary
 make testlib  # builds shared library for Python ctypes tests
 ```
 
 ## Usage
-
-Identical CLI contract to the Python `kinetic_segregation` model:
 
 ```bash
 ./ks_gpu --time_sec 20 --rigidity_kT_nm2 20 --run-dir /tmp/test
@@ -27,7 +25,7 @@ Identical CLI contract to the Python `kinetic_segregation` model:
 Python wrapper (for framework compatibility):
 
 ```bash
-python -m models.kinetic_segregation_gpu --time_sec 20 --rigidity_kT_nm2 20 --run-dir /tmp/test
+python -m models.kinetic_segregation --time_sec 20 --rigidity_kT_nm2 20 --run-dir /tmp/test
 ```
 
 ## Architecture
@@ -35,10 +33,10 @@ python -m models.kinetic_segregation_gpu --time_sec 20 --rigidity_kT_nm2 20 --ru
 ```
 Phase 1 (CPU): Molecular moves (~150 molecules, sequential)
     |
-Phase 2 (GPU): Grid height updates (64x64 = 4096 cells)
+Phase 2 (GPU or CPU): Grid height updates (64x64 = 4096 cells)
     - Checkerboard decomposition: red cells, then black cells
-    - Each half-sweep: 2048 threads in parallel
-    - Pre-filled random buffers from CPU RNG (deterministic)
+    - GPU: Each half-sweep runs in parallel via Metal compute
+    - CPU: Sequential fallback when Metal unavailable
     |
 Repeat for n_steps MC sweeps
 ```
@@ -46,16 +44,14 @@ Repeat for n_steps MC sweeps
 - **CPU fallback**: When Metal unavailable (CI, SSH, headless), Phase 2 runs
   sequentially in C.
 - **float32 on GPU**: Heights are 0-50 nm; float32 precision is sufficient for
-  GPU kernels. CPU uses float64 for reference compatibility.
-- **Deterministic**: Same seed produces identical output (CPU path).
+  GPU kernels.
+- **Deterministic**: Same seed produces identical output within each mode.
 
 ## Tests
 
 ```bash
 # From projects/tcr_signaling/
-pytest models/kinetic_segregation_gpu/tests/test_potentials.py -v
-pytest models/kinetic_segregation_gpu/tests/test_cli.py -v
-pytest models/kinetic_segregation_gpu/tests/test_equivalence.py -v -m slow
+pytest models/kinetic_segregation/tests/ -v
 ```
 
 ## Benchmarking

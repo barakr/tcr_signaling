@@ -1,9 +1,7 @@
-"""Physics consistency tests: compare C CPU, C GPU, and Python height fields."""
+"""Physics consistency tests: compare C CPU and C GPU height fields."""
 from __future__ import annotations
 
-import hashlib
 import json
-import struct
 import subprocess
 from pathlib import Path
 
@@ -13,7 +11,6 @@ from scipy import stats
 
 _PKG_DIR = Path(__file__).resolve().parents[1]
 _BINARY = _PKG_DIR / "ks_gpu"
-_SUBMODULE_ROOT = str(Path(__file__).resolve().parents[3])
 
 GRID_SIZE = 100
 RIGIDITY = 50.0
@@ -32,12 +29,6 @@ def _ensure_binary():
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
-
-
-def _derive_seed(base_seed, time_sec, rigidity):
-    raw = struct.pack("dd", time_sec, rigidity)
-    input_hash = int(hashlib.md5(raw).hexdigest()[:8], 16)
-    return base_seed + input_hash
 
 
 def _run_c(tmp_path, seed, use_gpu=False, label="c"):
@@ -68,25 +59,6 @@ def _run_c(tmp_path, seed, use_gpu=False, label="c"):
     return h, tcr, cd45, output
 
 
-def _run_python(seed):
-    """Run Python model, return final h and molecule positions."""
-    import sys
-    sys.path.insert(0, _SUBMODULE_ROOT)
-    from models.kinetic_segregation.model import simulate_ks
-
-    point_seed = _derive_seed(seed, TIME_SEC, RIGIDITY)
-    result = simulate_ks(
-        time_sec=TIME_SEC,
-        rigidity_kT_nm2=RIGIDITY,
-        seed=point_seed,
-        n_steps=N_STEPS,
-        grid_size=GRID_SIZE,
-        snapshot_interval=N_STEPS,
-    )
-    snap = result["snapshots"][-1]
-    return snap["h"], snap["tcr_pos"], snap["cd45_pos"], result
-
-
 def _center_edge_means(h):
     """Return (center_mean, edge_mean) for the height field."""
     n = h.shape[0]
@@ -107,12 +79,11 @@ class TestHeightFieldStatistics:
             pytest.skip("Binary not available")
 
     def test_center_depressed(self, tmp_path):
-        """Center of the membrane should be depressed (tight contact) in all three."""
+        """Center of the membrane should be depressed (tight contact) in both modes."""
         cpu_h, _, _, _ = _run_c(tmp_path, seed=42, use_gpu=False, label="cpu")
         gpu_h, _, _, _ = _run_c(tmp_path, seed=42, use_gpu=True, label="gpu")
-        py_h, _, _, _ = _run_python(seed=42)
 
-        for name, h in [("Python", py_h), ("C CPU", cpu_h), ("C GPU", gpu_h)]:
+        for name, h in [("C CPU", cpu_h), ("C GPU", gpu_h)]:
             center_mean, edge_mean = _center_edge_means(h)
             assert center_mean < 30.0, f"{name}: center too high ({center_mean:.1f}nm)"
             assert edge_mean > 30.0, f"{name}: edge too low ({edge_mean:.1f}nm)"
@@ -124,9 +95,8 @@ class TestHeightFieldStatistics:
         """Height field should stay within physical bounds (0 to ~50nm)."""
         cpu_h, _, _, _ = _run_c(tmp_path, seed=7, use_gpu=False, label="cpu")
         gpu_h, _, _, _ = _run_c(tmp_path, seed=7, use_gpu=True, label="gpu")
-        py_h, _, _, _ = _run_python(seed=7)
 
-        for name, h in [("Python", py_h), ("C CPU", cpu_h), ("C GPU", gpu_h)]:
+        for name, h in [("C CPU", cpu_h), ("C GPU", gpu_h)]:
             assert h.min() >= 0.0, f"{name}: negative height {h.min()}"
             assert h.max() < 100.0, f"{name}: unreasonably high {h.max()}"
             assert 20.0 < h.mean() < 80.0, f"{name}: mean out of range {h.mean():.1f}"
@@ -135,7 +105,6 @@ class TestHeightFieldStatistics:
         """Edge region should show thermal fluctuations (std > 0 for non-depressed cells)."""
         cpu_h, _, _, _ = _run_c(tmp_path, seed=99, use_gpu=False, label="cpu")
         gpu_h, _, _, _ = _run_c(tmp_path, seed=99, use_gpu=True, label="gpu")
-        py_h, _, _, _ = _run_python(seed=99)
 
         n = GRID_SIZE
         c = n // 2
@@ -143,7 +112,7 @@ class TestHeightFieldStatistics:
         Y, X = np.ogrid[:n, :n]
         edge_mask = ((X - c) ** 2 + (Y - c) ** 2) > r ** 2
 
-        for name, h in [("Python", py_h), ("C CPU", cpu_h), ("C GPU", gpu_h)]:
+        for name, h in [("C CPU", cpu_h), ("C GPU", gpu_h)]:
             edge_std = h[edge_mask].std()
             assert edge_std > 0.5, f"{name}: edge std too low ({edge_std:.2f}) — membrane frozen?"
 
@@ -314,71 +283,3 @@ class TestGridConvergence:
         )
 
 
-@pytest.mark.slow
-class TestPythonCpuGpuEquivalence:
-    """Three-way statistical equivalence: Python vs C CPU vs C GPU."""
-
-    @pytest.fixture(autouse=True)
-    def _build(self):
-        _ensure_binary()
-        if not _BINARY.exists():
-            pytest.skip("Binary not available")
-
-    def test_depletion_width_three_way(self, tmp_path):
-        """All three implementations produce depletion widths from the same distribution."""
-        n_seeds = 15
-
-        py_widths = []
-        cpu_widths = []
-        gpu_widths = []
-
-        for seed in range(n_seeds):
-            _, _, _, cpu_out = _run_c(tmp_path, seed=seed, use_gpu=False, label=f"cpu3w{seed}")
-            _, _, _, gpu_out = _run_c(tmp_path, seed=seed, use_gpu=True, label=f"gpu3w{seed}")
-            cpu_widths.append(cpu_out["depletion_width_nm"])
-            gpu_widths.append(gpu_out["depletion_width_nm"])
-
-            py_h, py_tcr, py_cd45, py_out = _run_python(seed=seed)
-            py_widths.append(py_out["depletion_width_nm"])
-
-        # Pairwise KS tests
-        for name_a, vals_a, name_b, vals_b in [
-            ("Python", py_widths, "C CPU", cpu_widths),
-            ("Python", py_widths, "C GPU", gpu_widths),
-            ("C CPU", cpu_widths, "C GPU", gpu_widths),
-        ]:
-            stat, p = stats.ks_2samp(vals_a, vals_b)
-            assert p > 0.05, (
-                f"{name_a} vs {name_b} KS test failed: p={p:.4f}\n"
-                f"{name_a}: {[f'{x:.1f}' for x in vals_a]}\n"
-                f"{name_b}: {[f'{x:.1f}' for x in vals_b]}"
-            )
-
-    def test_center_height_three_way(self, tmp_path):
-        """Center height (tight contact) should be similar across all three."""
-        n_seeds = 10
-
-        py_centers = []
-        cpu_centers = []
-        gpu_centers = []
-
-        for seed in range(n_seeds):
-            cpu_h, _, _, _ = _run_c(tmp_path, seed=seed, use_gpu=False, label=f"cpuc{seed}")
-            gpu_h, _, _, _ = _run_c(tmp_path, seed=seed, use_gpu=True, label=f"gpuc{seed}")
-            py_h, _, _, _ = _run_python(seed=seed)
-
-            cpu_centers.append(_center_edge_means(cpu_h)[0])
-            gpu_centers.append(_center_edge_means(gpu_h)[0])
-            py_centers.append(_center_edge_means(py_h)[0])
-
-        for name_a, vals_a, name_b, vals_b in [
-            ("Python", py_centers, "C CPU", cpu_centers),
-            ("Python", py_centers, "C GPU", gpu_centers),
-            ("C CPU", cpu_centers, "C GPU", gpu_centers),
-        ]:
-            stat, p = stats.ks_2samp(vals_a, vals_b)
-            assert p > 0.05, (
-                f"Center height: {name_a} vs {name_b} KS p={p:.4f}\n"
-                f"{name_a}: {[f'{x:.1f}' for x in vals_a]}\n"
-                f"{name_b}: {[f'{x:.1f}' for x in vals_b]}"
-            )

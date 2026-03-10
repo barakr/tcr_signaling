@@ -1,14 +1,26 @@
-"""CLI entrypoint for the kinetic segregation model."""
-
+"""CLI wrapper: delegates to the compiled C binary via subprocess."""
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import struct
+import subprocess
+import sys
 from pathlib import Path
 
-from .model import simulate_ks
+
+def _find_binary() -> Path:
+    """Locate the ks_gpu binary relative to this package."""
+    pkg_dir = Path(__file__).resolve().parent
+    candidates = [
+        pkg_dir / "ks_gpu",
+        pkg_dir / "build" / "ks_gpu",
+    ]
+    for c in candidates:
+        if c.exists() and c.is_file():
+            return c
+    raise FileNotFoundError(
+        f"ks_gpu binary not found. Build it first: cd {pkg_dir} && make"
+    )
 
 
 def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:
@@ -19,33 +31,35 @@ def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Kinetic segregation Monte Carlo model")
+    parser = argparse.ArgumentParser(description="Kinetic segregation model (CPU/GPU)")
     parser.add_argument("--params", type=str, default=None, help="JSON parameter file")
-    parser.add_argument("--time_sec", type=float, default=None, help="Simulation time (sec)")
-    parser.add_argument(
-        "--rigidity_kT_nm2", type=float, default=None, help="Membrane bending rigidity (kT)"
-    )
-    parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument("--time_sec", type=float, default=None)
+    parser.add_argument("--rigidity_kT_nm2", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--run-dir", type=str, required=True)
-    parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=None, help="Number of TCR molecules")
-    parser.add_argument("--n_cd45", type=lambda x: int(float(x)), default=None, help="Number of CD45 molecules")
-    parser.add_argument("--n_steps", type=lambda x: int(float(x)), default=None, help="MC steps (default: auto)")
-    parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=None, help="Membrane grid resolution")
-    parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s, default 1e5)")
-    parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s, default 5e4)")
-    parser.add_argument("--dt", type=float, default=None, help="Override time step (seconds, auto if omitted)")
-    parser.add_argument("--cd45_height", type=float, default=None, help="CD45 ectodomain height (nm, default 35)")
-    parser.add_argument("--cd45_k_rep", type=float, default=None, help="CD45 repulsive spring constant (kT/nm², default 1.0)")
-    parser.add_argument("--mol_repulsion_eps", type=float, default=None, help="Soft molecular repulsion strength (kT, default 0=off)")
-    parser.add_argument("--mol_repulsion_rcut", type=float, default=None, help="Soft molecular repulsion cutoff (nm, default 10)")
-    parser.add_argument("--n_pmhc", type=lambda x: int(float(x)), default=None, help="Number of static pMHC molecules (0=all cells have pMHC)")
-    parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC random positions")
+    parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--n_cd45", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--n_steps", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--no-gpu", action="store_true", help="Disable Metal GPU")
+    parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s)")
+    parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s)")
+    parser.add_argument("--dt", type=float, default=None, help="Override time step (seconds)")
+    parser.add_argument("--cd45_height", type=float, default=None, help="CD45 ectodomain height (nm)")
+    parser.add_argument("--cd45_k_rep", type=float, default=None, help="CD45 repulsive spring constant (kT/nm²)")
+    parser.add_argument("--mol_repulsion_eps", type=float, default=None, help="Soft molecular repulsion strength (kT)")
+    parser.add_argument("--mol_repulsion_rcut", type=float, default=None, help="Soft molecular repulsion cutoff (nm)")
+    parser.add_argument("--n_pmhc", type=lambda x: int(float(x)), default=None, help="Number of static pMHC molecules")
+    parser.add_argument("--pmhc_seed", type=int, default=None, help="Seed for pMHC positions")
     parser.add_argument("--pmhc_mode", type=str, default=None, help="pMHC placement: 'uniform' or 'inner_circle'")
     parser.add_argument("--pmhc_radius", type=float, default=None, help="pMHC placement radius (nm)")
-    parser.add_argument("--h0_tcr", type=float, default=None, help="TCR-pMHC bond length (nm, default 13)")
-    parser.add_argument("--init_height", type=float, default=None, help="Initial membrane height (nm, default 70)")
     parser.add_argument("--binding_mode", type=str, default=None, help="'forced' or 'gaussian'")
     parser.add_argument("--step_mode", type=str, default=None, help="'paper' or 'brownian'")
+    parser.add_argument("--h0_tcr", type=float, default=None, help="TCR-pMHC bond length (nm)")
+    parser.add_argument("--init_height", type=float, default=None, help="Initial membrane height (nm)")
+    parser.add_argument("--dump-frames", action="store_true", help="Dump binary frame files for movie rendering")
+    parser.add_argument("--dump-interval", type=int, default=None, help="Dump every N steps (default: 1)")
+    parser.add_argument("--grid-substeps", type=int, default=None, help="Grid Phase 2 substeps per molecular move (default: 1)")
     args = parser.parse_args()
 
     # Load param file and merge (CLI > param file > built-in defaults)
@@ -53,7 +67,7 @@ def main() -> int:
         with open(args.params) as f:
             _merge_params(args, json.load(f))
 
-    # Apply built-in defaults for required/defaulted params
+    # Apply built-in defaults
     if args.seed is None:
         args.seed = 42
     if args.n_tcr is None:
@@ -69,79 +83,73 @@ def main() -> int:
     if args.rigidity_kT_nm2 is None:
         parser.error("--rigidity_kT_nm2 is required (via CLI or param file)")
 
-    run_dir = Path(args.run_dir)
-    out_dir = run_dir / "out"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Derive a unique reproducible seed per DOE point so each (time, rigidity)
-    # combination gets independent MC noise while remaining deterministic.
-    raw = struct.pack("dd", args.time_sec, args.rigidity_kT_nm2)
-    input_hash = int(hashlib.md5(raw).hexdigest()[:8], 16)
-    point_seed = args.seed + input_hash
-
-    extra_kwargs = {}
+    binary = _find_binary()
+    cmd = [
+        str(binary),
+        "--time_sec", str(args.time_sec),
+        "--rigidity_kT_nm2", str(args.rigidity_kT_nm2),
+        "--seed", str(args.seed),
+        "--run-dir", args.run_dir,
+        "--n_tcr", str(args.n_tcr),
+        "--n_cd45", str(args.n_cd45),
+        "--grid_size", str(args.grid_size),
+    ]
+    if args.n_steps is not None:
+        cmd.extend(["--n_steps", str(args.n_steps)])
+    if args.no_gpu:
+        cmd.append("--no-gpu")
     if args.D_mol is not None:
-        extra_kwargs["D_mol"] = args.D_mol
+        cmd.extend(["--D_mol", str(args.D_mol)])
     if args.D_h is not None:
-        extra_kwargs["D_h"] = args.D_h
+        cmd.extend(["--D_h", str(args.D_h)])
     if args.dt is not None:
-        extra_kwargs["dt_override"] = args.dt
+        cmd.extend(["--dt", str(args.dt)])
     if args.cd45_height is not None:
-        extra_kwargs["cd45_height"] = args.cd45_height
+        cmd.extend(["--cd45_height", str(args.cd45_height)])
     if args.cd45_k_rep is not None:
-        extra_kwargs["cd45_k_rep"] = args.cd45_k_rep
+        cmd.extend(["--cd45_k_rep", str(args.cd45_k_rep)])
     if args.mol_repulsion_eps is not None:
-        extra_kwargs["mol_repulsion_eps"] = args.mol_repulsion_eps
+        cmd.extend(["--mol_repulsion_eps", str(args.mol_repulsion_eps)])
     if args.mol_repulsion_rcut is not None:
-        extra_kwargs["mol_repulsion_rcut"] = args.mol_repulsion_rcut
+        cmd.extend(["--mol_repulsion_rcut", str(args.mol_repulsion_rcut)])
     if args.n_pmhc is not None:
-        extra_kwargs["n_pmhc"] = args.n_pmhc
+        cmd.extend(["--n_pmhc", str(args.n_pmhc)])
     if args.pmhc_seed is not None:
-        extra_kwargs["pmhc_seed"] = args.pmhc_seed
+        cmd.extend(["--pmhc_seed", str(args.pmhc_seed)])
     if args.pmhc_mode is not None:
-        extra_kwargs["pmhc_mode"] = args.pmhc_mode
+        cmd.extend(["--pmhc_mode", str(args.pmhc_mode)])
     if args.pmhc_radius is not None:
-        extra_kwargs["pmhc_radius"] = args.pmhc_radius
-    if args.h0_tcr is not None:
-        extra_kwargs["h0_tcr"] = args.h0_tcr
-    if args.init_height is not None:
-        extra_kwargs["init_height"] = args.init_height
+        cmd.extend(["--pmhc_radius", str(args.pmhc_radius)])
     if args.binding_mode is not None:
-        extra_kwargs["binding_mode"] = args.binding_mode
+        cmd.extend(["--binding_mode", str(args.binding_mode)])
     if args.step_mode is not None:
-        extra_kwargs["step_mode"] = args.step_mode
+        cmd.extend(["--step_mode", str(args.step_mode)])
+    if args.h0_tcr is not None:
+        cmd.extend(["--h0_tcr", str(args.h0_tcr)])
+    if args.init_height is not None:
+        cmd.extend(["--init_height", str(args.init_height)])
+    if args.dump_frames:
+        cmd.append("--dump-frames")
+    if args.dump_interval is not None:
+        cmd.extend(["--dump-interval", str(args.dump_interval)])
+    if args.grid_substeps is not None:
+        cmd.extend(["--grid-substeps", str(args.grid_substeps)])
+    if args.params is not None:
+        cmd.extend(["--params", args.params])
 
-    result = simulate_ks(
-        time_sec=args.time_sec,
-        rigidity_kT_nm2=args.rigidity_kT_nm2,
-        seed=point_seed,
-        n_tcr=args.n_tcr,
-        n_cd45=args.n_cd45,
-        n_steps=args.n_steps,
-        grid_size=args.grid_size,
-        **extra_kwargs,
-    )
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        return result.returncode
 
-    payload = {
-        "depletion_width_nm": result["depletion_width_nm"],
-        "diagnostics": {
-            "final_tcr_mean_r_nm": result["final_tcr_mean_r_nm"],
-            "final_cd45_mean_r_nm": result["final_cd45_mean_r_nm"],
-            "accept_rate": result["accept_rate"],
-            "n_steps_actual": result["n_steps_actual"],
-            "dt_seconds": result["dt_seconds"],
-            "step_size_h_nm": result["step_size_h_nm"],
-            "step_size_mol_nm": result["step_size_mol_nm"],
-            "D_mol_nm2_per_s": result["D_mol_nm2_per_s"],
-            "D_h_nm2_per_s": result["D_h_nm2_per_s"],
-        },
-        "inputs": {
-            "time_sec": args.time_sec,
-            "rigidity_kT_nm2": args.rigidity_kT_nm2,
-        },
-    }
-    (out_dir / "segregation.json").write_text(json.dumps(payload, indent=2, sort_keys=True))
-    print(json.dumps(payload, sort_keys=True))
+    # Validate and forward JSON output
+    try:
+        data = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        print(f"Invalid JSON output from binary: {result.stdout[:200]}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(data, sort_keys=True))
     return 0
 
 

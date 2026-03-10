@@ -6,6 +6,20 @@
 
 ## Decision Log
 
+### 2026-03-10: Consolidate kinetic_segregation modules
+- **Change**: Merged `kinetic_segregation_gpu/` (C + Metal) into `kinetic_segregation/`,
+  removing the Python implementation entirely. The C binary is now the single source of
+  truth, with CPU (`--no-gpu`) and GPU modes.
+- **Motivation**: The C binary supports all features the Python model had (binding modes,
+  step modes, pMHC gating, brownian dynamics, frame dumps). Python was redundant.
+- **Tests**: 93 total tests pass. Migrated key physics tests from the Python suite into
+  `test_physics_regression.py` (28 tests). Existing GPU tests updated to remove Python
+  references. `test_equivalence.py` (Python-vs-C) deleted since Python is gone.
+- **Methods**: Updated LaTeX documentation with checkerboard algorithm, GPU acceleration
+  pipeline, and performance table.
+- **CLAUDE.md**: Added test change policy (rule 7) and updated project structure.
+- **Branch**: `feature/consolidate-ks`
+
 ### 2026-03-09: Align with paper physics — forced binding + paper step mode
 - **Motivation**: Detailed comparison with Supplementary DataSheet1.pdf revealed
   7 discrepancies between implementation and paper. Implemented Tier 1 (defaults)
@@ -259,7 +273,7 @@
   Statistical equivalence test may need rerun due to float h change.
 
 ### 2026-03-07: GPU-accelerated KS model (C + Metal on Apple Silicon)
-- **New model**: `models/kinetic_segregation_gpu/` — C + Objective-C implementation
+- **New model**: `models/kinetic_segregation_gpu/` (now consolidated into `models/kinetic_segregation/`) — C + Objective-C implementation
   with Metal GPU acceleration for the grid update phase.
 - **Architecture**: Phase 1 (molecular moves, ~150 molecules) runs on CPU in C.
   Phase 2 (grid updates, 64x64 = 4096 cells) uses Metal GPU with checkerboard

@@ -80,7 +80,7 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
         NSArray *metallib_candidates = @[
             @"src/shaders.metallib",
             @"shaders.metallib",
-            @"models/kinetic_segregation_gpu/src/shaders.metallib",
+            @"models/kinetic_segregation/src/shaders.metallib",
         ];
         NSString *execPath = [[NSBundle mainBundle] executablePath];
         if (execPath) {
@@ -111,7 +111,7 @@ void *metal_engine_create(int grid_size, uint64_t gpu_rng_key) {
                 NSArray *candidates = @[
                     @"src/shaders.metal",
                     @"shaders.metal",
-                    @"models/kinetic_segregation_gpu/src/shaders.metal",
+                    @"models/kinetic_segregation/src/shaders.metal",
                 ];
                 for (NSString *c in candidates) {
                     if ([[NSFileManager defaultManager] fileExistsAtPath:c]) {

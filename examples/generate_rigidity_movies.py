@@ -27,7 +27,7 @@ OUTPUT_DIR = Path.home() / "Downloads"
 # Paths relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _SUBMODULE_ROOT = _SCRIPT_DIR.parent
-_GPU_DIR = _SUBMODULE_ROOT / "models" / "kinetic_segregation_gpu"
+_GPU_DIR = _SUBMODULE_ROOT / "models" / "kinetic_segregation"
 _BINARY = _GPU_DIR / "ks_gpu"
 _RENDER_SCRIPT = _GPU_DIR / "render_movie.py"
 _RENDER_PYTHON = Path.home() / "miniconda3" / "envs" / "py314_bayesmm" / "bin" / "python"

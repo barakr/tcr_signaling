@@ -21,7 +21,14 @@ its own development lifecycle, status tracking, and conventions.
 
 ```
 models/                  # Partial model implementations
-  kinetic_segregation/   #   KS model + tests
+  kinetic_segregation/   #   KS model (C + Metal GPU), CPU and GPU modes
+    src/                 #     C/Objective-C source code
+    tests/               #     pytest test suite
+    benchmark/           #     Performance benchmarks
+    Methods/             #     LaTeX methods documentation
+    Makefile             #     Build system (produces ks_gpu binary)
+    __main__.py          #     Python wrapper for framework compatibility
+    render_movie.py      #     Animation renderer from binary frame dumps
   lck_activity/          #   Lck radial decay model
   membrane_topography/   #   IRM-based tight-contact geometry
   tcr_phosphorylation/   #   ITAM phosphorylation model
@@ -39,8 +46,11 @@ pytest.ini               # Pytest configuration
 
 ```bash
 # Run from projects/tcr_signaling/
-pytest -q                              # Run all model tests
-pytest -q models/kinetic_segregation/  # Run KS tests only
+pytest -q                                      # Run all model tests
+pytest -q models/kinetic_segregation/tests/    # Run KS tests only
+
+# Build KS binary (requires macOS Command Line Tools)
+cd models/kinetic_segregation && make
 
 # Use the framework CLI on project specs
 bayesmm validate specs/model.kinetic_segregation.json
@@ -59,7 +69,8 @@ bayesmm surrogate fit specs/surrogate.kinetic_segregation.pymc_gp.json
 ## Partial Models
 
 1. **Membrane Topography** — IRM-derived tight-contact geometry
-2. **Kinetic Segregation (KS)** — Spatial exclusion of CD45 from tight contacts
+2. **Kinetic Segregation (KS)** — C implementation with CPU and Metal GPU modes;
+   spatial exclusion of CD45 from tight contacts
 3. **Lck Activity** — Radially-symmetric exponential decay of active Lck
 4. **TCR Phosphorylation** — Lck* phosphorylates TCR ITAMs
 
@@ -75,6 +86,13 @@ bayesmm surrogate fit specs/surrogate.kinetic_segregation.pymc_gp.json
    in specs and decision log
 6. **Commit regularly** — make git commits at logical milestones (fix verified, feature
    complete, refactor done). Do not accumulate large uncommitted changesets
+7. **Test change policy** — Existing tests should not be modified to accommodate
+   code changes unless there is a well-defined logical reason (e.g., the feature
+   being tested was intentionally redesigned, or the test's reference
+   implementation was removed). Any such change must be:
+   - Documented in the plan with explicit rationale
+   - Approved by the user before implementation
+   - Prefer to ask for user input before modifying existing test assertions
 
 ## Relationship to Parent Repo
 

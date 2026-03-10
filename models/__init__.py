@@ -1,12 +1,10 @@
 """Partial models for TCR signaling metamodel (Neve-Oz, Sherman & Raveh 2024).
 
-Each model lives in its own subpackage with a ``__main__.py`` CLI entrypoint
-and a ``model.py`` containing the core science logic.
+Each model lives in its own subpackage with a ``__main__.py`` CLI entrypoint.
 """
 
 from __future__ import annotations
 
-from .kinetic_segregation import simulate_ks
 from .lck_activity import mean_lck_activity
 from .membrane_topography import contact_fraction, contact_perimeter
 from .tcr_phosphorylation import ptcr_density, ptcr_fraction
@@ -17,5 +15,4 @@ __all__ = [
     "mean_lck_activity",
     "ptcr_density",
     "ptcr_fraction",
-    "simulate_ks",
 ]

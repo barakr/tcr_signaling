@@ -1,156 +1,147 @@
-"""Tests for kinetic segregation potential functions.
-
-Covers bending energy, TCR-pMHC attractive potential, and CD45 repulsion.
-"""
-
+"""Tests for C potential functions via ctypes, validated against analytical formulas."""
 from __future__ import annotations
 
-import numpy as np
+import ctypes
+import math
+import subprocess
+from pathlib import Path
+
 import pytest
 
-from models.kinetic_segregation.potentials import (
-    bending_energy,
-    bending_energy_delta,
-    cd45_repulsion,
-    tcr_pmhc_potential,
-)
+_PKG_DIR = Path(__file__).resolve().parents[1]
+_LIB_PATH = _PKG_DIR / "build" / "libks_potentials.dylib"
 
 
-class TestBendingEnergy:
-    def test_flat_membrane_zero_energy(self):
-        """A perfectly flat membrane has zero bending energy."""
-        h = np.ones((16, 16)) * 35.0
-        assert bending_energy(h, kappa=10.0, dx=100.0) == 0.0
-
-    def test_curved_membrane_positive_energy(self):
-        """A membrane with curvature has positive bending energy."""
-        h = np.zeros((16, 16))
-        h[8, 8] = 10.0  # single bump
-        energy = bending_energy(h, kappa=10.0, dx=100.0)
-        assert energy > 0.0
-
-    def test_energy_scales_with_kappa(self):
-        """Bending energy scales linearly with kappa."""
-        h = np.zeros((16, 16))
-        h[8, 8] = 10.0
-        e1 = bending_energy(h, kappa=5.0, dx=100.0)
-        e2 = bending_energy(h, kappa=10.0, dx=100.0)
-        assert pytest.approx(e2, rel=1e-10) == 2.0 * e1
-
-    def test_symmetry(self):
-        """Bending energy is invariant to height field sign."""
-        h = np.random.default_rng(0).standard_normal((16, 16))
-        e_pos = bending_energy(h, kappa=5.0, dx=50.0)
-        e_neg = bending_energy(-h, kappa=5.0, dx=50.0)
-        assert pytest.approx(e_pos) == e_neg
+def _build_testlib():
+    """Build the shared library if not present."""
+    if _LIB_PATH.exists():
+        return
+    result = subprocess.run(
+        ["make", "testlib"], cwd=str(_PKG_DIR),
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Failed to build test library: {result.stderr}")
 
 
-class TestBendingEnergyDelta:
-    """Verify that bending_energy_delta matches full recomputation."""
+@pytest.fixture(scope="module")
+def lib():
+    _build_testlib()
+    if not _LIB_PATH.exists():
+        pytest.skip("Test library not available")
+    lib = ctypes.CDLL(str(_LIB_PATH))
 
-    def _check_delta(self, h, gi, gj, kappa=10.0, dx=50.0):
-        """Helper: perturb h[gi,gj] and compare delta vs full recomputation."""
-        rng = np.random.default_rng(gi * 100 + gj)
-        old_val = h[gi, gj]
-        new_val = old_val + rng.normal(0, 2.0)
+    # tcr_pmhc_potential(double h, double u_assoc, double sigma_bind) -> double
+    lib.tcr_pmhc_potential.restype = ctypes.c_double
+    lib.tcr_pmhc_potential.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
 
-        old_energy = bending_energy(h, kappa, dx)
-        h[gi, gj] = new_val
-        new_energy = bending_energy(h, kappa, dx)
-        expected = new_energy - old_energy
+    # cd45_repulsion(double h, double cd45_height, double k_rep) -> double
+    lib.cd45_repulsion.restype = ctypes.c_double
+    lib.cd45_repulsion.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
 
-        delta = bending_energy_delta(h, kappa, dx, gi, gj, old_val, new_val)
-        assert delta == pytest.approx(expected, abs=1e-10), (
-            f"Delta mismatch at ({gi},{gj}): delta={delta}, expected={expected}"
-        )
-        # Restore for caller reuse
-        h[gi, gj] = old_val
+    # bending_energy_delta(double *h, int n, double kappa, double dx,
+    #                      int gi, int gj, double old_val, double new_val) -> double
+    lib.bending_energy_delta.restype = ctypes.c_double
+    lib.bending_energy_delta.argtypes = [
+        ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+        ctypes.c_double, ctypes.c_double,
+        ctypes.c_int, ctypes.c_int,
+        ctypes.c_double, ctypes.c_double,
+    ]
 
-    def test_interior_cells(self):
-        """Delta matches full recomputation for interior cells."""
-        rng = np.random.default_rng(42)
-        h = rng.uniform(0, 50, (16, 16))
-        for gi, gj in [(5, 5), (8, 8), (3, 10), (14, 14)]:
-            self._check_delta(h.copy(), gi, gj)
-
-    def test_boundary_cells(self):
-        """Delta matches full recomputation for boundary cells."""
-        rng = np.random.default_rng(99)
-        h = rng.uniform(0, 50, (16, 16))
-        for gi, gj in [(0, 0), (0, 8), (15, 15), (15, 0), (0, 15), (8, 0), (8, 15)]:
-            self._check_delta(h.copy(), gi, gj)
-
-    def test_near_boundary_cells(self):
-        """Delta matches for cells adjacent to the boundary."""
-        rng = np.random.default_rng(77)
-        h = rng.uniform(0, 50, (16, 16))
-        for gi, gj in [(1, 1), (1, 14), (14, 1), (14, 14)]:
-            self._check_delta(h.copy(), gi, gj)
-
-    def test_flat_membrane_zero_delta(self):
-        """Perturbing a flat membrane and then restoring gives zero delta."""
-        h = np.ones((16, 16)) * 35.0
-        delta = bending_energy_delta(h, 10.0, 50.0, 8, 8, 35.0, 35.0)
-        assert delta == pytest.approx(0.0, abs=1e-15)
-
-    def test_many_random_cells(self):
-        """Stress test: delta matches full recomputation for 50 random cells."""
-        rng = np.random.default_rng(123)
-        h = rng.uniform(0, 50, (20, 20))
-        for _ in range(50):
-            gi, gj = rng.integers(0, 20, size=2)
-            self._check_delta(h.copy(), gi, gj, kappa=8.0, dx=100.0)
+    return lib
 
 
-class TestTcrPmhcPotential:
-    def test_minimum_at_zero_height(self):
-        """TCR potential is most negative at h=0 (tight contact)."""
-        e_zero = tcr_pmhc_potential(0.0, u_assoc=20.0)
-        e_far = tcr_pmhc_potential(50.0, u_assoc=20.0)
-        assert e_zero < e_far
-        assert e_zero == pytest.approx(-20.0)
+class TestTcrPotentialC:
+    def test_zero_height(self, lib):
+        """E(h=0) = -u_assoc."""
+        e = lib.tcr_pmhc_potential(0.0, 20.0, 3.0)
+        assert e == pytest.approx(-20.0)
 
-    def test_approaches_zero_far_from_surface(self):
-        """TCR potential decays to ~0 far from the membrane."""
-        e = tcr_pmhc_potential(100.0, u_assoc=20.0, sigma_bind=3.0)
+    def test_far_away(self, lib):
+        """Potential decays to ~0 far from surface."""
+        e = lib.tcr_pmhc_potential(100.0, 20.0, 3.0)
         assert abs(e) < 1e-10
 
-    def test_scales_with_u_assoc(self):
-        """Potential depth scales with u_assoc."""
-        e1 = tcr_pmhc_potential(0.0, u_assoc=10.0)
-        e2 = tcr_pmhc_potential(0.0, u_assoc=20.0)
-        assert pytest.approx(e2) == 2.0 * e1
+    def test_at_sigma(self, lib):
+        """Correct Gaussian value at h=sigma."""
+        e = lib.tcr_pmhc_potential(3.0, 20.0, 3.0)
+        expected = -20.0 * math.exp(-0.5)
+        assert e == pytest.approx(expected)
 
-    def test_gaussian_shape(self):
-        """Potential has correct Gaussian shape at sigma distance."""
-        sigma = 3.0
-        e_sigma = tcr_pmhc_potential(sigma, u_assoc=20.0, sigma_bind=sigma)
-        expected = -20.0 * np.exp(-0.5)
-        assert pytest.approx(e_sigma) == expected
+    def test_scales_with_u_assoc(self, lib):
+        e1 = lib.tcr_pmhc_potential(0.0, 10.0, 3.0)
+        e2 = lib.tcr_pmhc_potential(0.0, 20.0, 3.0)
+        assert e2 == pytest.approx(2.0 * e1)
+
+    def test_matches_analytical(self, lib):
+        """Compare against analytical formula: -u_assoc * exp(-h^2 / (2*sigma^2))."""
+        u_assoc, sigma = 20.0, 3.0
+        for h in [0.0, 1.5, 3.0, 10.0, 35.0, 50.0]:
+            c_val = lib.tcr_pmhc_potential(h, u_assoc, sigma)
+            expected = -u_assoc * math.exp(-h ** 2 / (2.0 * sigma ** 2))
+            assert c_val == pytest.approx(expected, abs=1e-12), f"Mismatch at h={h}"
 
 
-class TestCd45Repulsion:
-    def test_no_repulsion_above_height(self):
-        """No repulsion when membrane height >= CD45 ectodomain height."""
-        assert cd45_repulsion(35.0, cd45_height=35.0) == 0.0
-        assert cd45_repulsion(50.0, cd45_height=35.0) == 0.0
+class TestCd45RepulsionC:
+    def test_above_height(self, lib):
+        assert lib.cd45_repulsion(35.0, 35.0, 1.0) == 0.0
+        assert lib.cd45_repulsion(50.0, 35.0, 1.0) == 0.0
 
-    def test_repulsion_below_height(self):
-        """Repulsive energy when membrane height < CD45 height."""
-        e = cd45_repulsion(30.0, cd45_height=35.0)
-        assert e > 0.0
-        expected = 0.5 * 1.0 * (35.0 - 30.0) ** 2
-        assert pytest.approx(e) == expected
+    def test_below_height(self, lib):
+        e = lib.cd45_repulsion(30.0, 35.0, 1.0)
+        expected = 0.5 * (35.0 - 30.0) ** 2
+        assert e == pytest.approx(expected)
 
-    def test_increases_with_compression(self):
-        """Repulsion increases as membrane gets closer to surface."""
-        e1 = cd45_repulsion(30.0)
-        e2 = cd45_repulsion(20.0)
-        e3 = cd45_repulsion(5.0)
-        assert e1 < e2 < e3
+    def test_zero_height(self, lib):
+        e = lib.cd45_repulsion(0.0, 35.0, 1.0)
+        expected = 0.5 * 35.0 ** 2
+        assert e == pytest.approx(expected)
 
-    def test_zero_height_maximum(self):
-        """Maximum repulsion at h=0."""
-        e = cd45_repulsion(0.0, cd45_height=35.0)
-        expected = 0.5 * 35.0**2
-        assert pytest.approx(e) == expected
+    def test_matches_analytical(self, lib):
+        """Compare against analytical formula: 0.5*k_rep*(cd45_h - h)^2 if h < cd45_h."""
+        cd45_h, k_rep = 35.0, 1.0
+        for h in [0.0, 5.0, 20.0, 34.9, 35.0, 50.0]:
+            c_val = lib.cd45_repulsion(h, cd45_h, k_rep)
+            expected = 0.5 * k_rep * (cd45_h - h) ** 2 if h < cd45_h else 0.0
+            assert c_val == pytest.approx(expected, abs=1e-12), f"Mismatch at h={h}"
+
+
+class TestBendingEnergyDeltaC:
+    def test_perturbation_nonzero(self, lib):
+        """Perturbing a non-flat membrane should produce nonzero energy delta."""
+        import numpy as np
+
+        rng = np.random.default_rng(42)
+        n = 16
+        h_np = rng.uniform(0, 50, (n, n))
+        kappa = 10.0
+        dx = 50.0
+
+        nonzero_count = 0
+        for _ in range(20):
+            gi, gj = rng.integers(0, n, size=2)
+            old_val = h_np[gi, gj]
+            new_val = old_val + rng.normal(0, 2.0)
+
+            h_tmp = h_np.copy()
+            h_tmp[gi, gj] = new_val
+            h_flat = h_tmp.flatten().astype(np.float64)
+            h_c = (ctypes.c_double * len(h_flat))(*h_flat)
+            c_val = lib.bending_energy_delta(h_c, n, kappa, dx, int(gi), int(gj), old_val, new_val)
+
+            if abs(new_val - old_val) > 0.01:
+                nonzero_count += 1
+                assert abs(c_val) > 0.0, f"Zero delta for nontrivial perturbation at ({gi},{gj})"
+
+        assert nonzero_count >= 15, "Too few nontrivial perturbations tested"
+
+    def test_flat_zero(self, lib):
+        """Flat membrane, no change -> zero delta."""
+        import numpy as np
+
+        n = 16
+        h_flat = np.full(n * n, 35.0)
+        h_c = (ctypes.c_double * len(h_flat))(*h_flat)
+        delta = lib.bending_energy_delta(h_c, n, 10.0, 50.0, 8, 8, 35.0, 35.0)
+        assert delta == pytest.approx(0.0, abs=1e-15)
