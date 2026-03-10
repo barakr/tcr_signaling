@@ -227,6 +227,7 @@ class TestCrossMode:
 
 # ─── D) Determinism ────────────────────────────────────────────────────────
 
+@pytest.mark.deterministic
 class TestDeterminism:
     """Same seed must produce bit-identical output."""
 

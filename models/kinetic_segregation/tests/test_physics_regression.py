@@ -91,6 +91,7 @@ class TestBasicPhysics:
             assert 0 < h_mean < 100
 
 
+@pytest.mark.deterministic
 class TestDeterminism:
     @pytest.fixture(autouse=True)
     def _build(self):
@@ -263,3 +264,172 @@ class TestBoundaryConditions:
             patch_size = 2000.0  # default patch size
             assert mol.min() >= 0.0, f"Molecule position below 0: {mol.min()}"
             assert mol.max() <= patch_size, f"Molecule position above patch: {mol.max()}"
+
+
+# ─── Multi-seed statistical regression tests (Rule 3b / Rule 4) ──────────
+#
+# These tests run multiple seeds and verify that key observables (depletion
+# width, acceptance rate) remain within expected physical margins.  They are
+# robust to platform changes (different compiler, GPU, OS) because they
+# check distributions, not exact values.
+
+N_STAT_SEEDS = 5
+STAT_N_STEPS = 100
+STAT_GRID = 32
+
+
+class TestStatisticalBasicPhysics:
+    """Multi-seed checks for default Brownian mode (CPU)."""
+
+    @pytest.fixture(autouse=True)
+    def _build(self):
+        _ensure_binary()
+        if not _BINARY.exists():
+            pytest.skip("Binary not available")
+
+    def test_depletion_width_distribution(self, tmp_path):
+        """Depletion width should be positive and stable across seeds."""
+        widths = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_dw_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID)
+            widths.append(data["depletion_width_nm"])
+        widths = np.array(widths)
+        assert np.all(widths > 0), f"Non-positive depletion widths: {widths}"
+        assert np.mean(widths) > 50, f"Mean depletion too small: {np.mean(widths):.1f}"
+        cv = np.std(widths) / np.mean(widths)
+        assert cv < 0.5, f"Depletion CV too high ({cv:.2f}), physics unstable"
+
+    def test_accept_rate_distribution(self, tmp_path):
+        """Accept rate should stay in [0.5, 0.95] across seeds."""
+        rates = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_ar_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID)
+            rates.append(data["diagnostics"]["accept_rate"])
+        rates = np.array(rates)
+        assert np.all(rates > 0.3), f"Accept rate too low: {rates}"
+        assert np.all(rates < 0.98), f"Accept rate too high: {rates}"
+        cv = np.std(rates) / np.mean(rates)
+        assert cv < 0.1, f"Accept rate CV too high ({cv:.2f}), should be stable"
+
+    def test_segregation_consistent(self, tmp_path):
+        """TCR should be closer to center than CD45 across all seeds."""
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_seg_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        rigidity_kT_nm2=30.0)
+            diag = data["diagnostics"]
+            assert diag["final_tcr_mean_r_nm"] < diag["final_cd45_mean_r_nm"], (
+                f"seed={seed}: TCR ({diag['final_tcr_mean_r_nm']:.1f}) "
+                f"not inside CD45 ({diag['final_cd45_mean_r_nm']:.1f})"
+            )
+
+
+class TestStatisticalPmhcModes:
+    """Multi-seed checks for pMHC gating modes."""
+
+    @pytest.fixture(autouse=True)
+    def _build(self):
+        _ensure_binary()
+        if not _BINARY.exists():
+            pytest.skip("Binary not available")
+
+    def test_inner_circle_pmhc_segregation(self, tmp_path):
+        """Inner-circle pMHC should produce positive depletion across seeds."""
+        widths = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_pmhc_ic_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        n_pmhc=50, pmhc_mode="inner_circle", pmhc_seed=seed)
+            widths.append(data["depletion_width_nm"])
+        widths = np.array(widths)
+        assert np.all(widths >= 0), f"Negative depletion with pMHC: {widths}"
+        assert np.mean(widths) > 0, f"No segregation with inner_circle pMHC"
+
+    def test_uniform_pmhc_runs_consistently(self, tmp_path):
+        """Uniform pMHC should run without error across seeds."""
+        rates = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_pmhc_uni_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        n_pmhc=50, pmhc_mode="uniform", pmhc_seed=seed)
+            rates.append(data["diagnostics"]["accept_rate"])
+        rates = np.array(rates)
+        assert np.all(rates > 0.3), f"Accept rate too low with uniform pMHC: {rates}"
+
+
+class TestStatisticalBindingModes:
+    """Multi-seed checks for forced vs gaussian binding."""
+
+    @pytest.fixture(autouse=True)
+    def _build(self):
+        _ensure_binary()
+        if not _BINARY.exists():
+            pytest.skip("Binary not available")
+
+    def test_forced_binding_stable(self, tmp_path):
+        """Forced binding should produce stable accept rates across seeds."""
+        rates = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_forced_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        binding_mode="forced")
+            rates.append(data["diagnostics"]["accept_rate"])
+        rates = np.array(rates)
+        assert np.all(rates > 0.3), f"Forced binding accept rate too low: {rates}"
+        assert np.all(rates < 0.98), f"Forced binding accept rate too high: {rates}"
+
+    def test_gaussian_binding_stable(self, tmp_path):
+        """Gaussian binding should produce stable depletion across seeds."""
+        widths = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_gauss_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        binding_mode="gaussian")
+            widths.append(data["depletion_width_nm"])
+        widths = np.array(widths)
+        assert np.all(widths >= 0), f"Negative depletion with gaussian: {widths}"
+
+
+class TestStatisticalStepModes:
+    """Multi-seed checks for paper vs brownian step modes."""
+
+    @pytest.fixture(autouse=True)
+    def _build(self):
+        _ensure_binary()
+        if not _BINARY.exists():
+            pytest.skip("Binary not available")
+
+    def test_paper_mode_stable(self, tmp_path):
+        """Paper step mode should produce consistent physics across seeds."""
+        widths = []
+        rates = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_paper_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        step_mode="paper")
+            widths.append(data["depletion_width_nm"])
+            rates.append(data["diagnostics"]["accept_rate"])
+        widths = np.array(widths)
+        rates = np.array(rates)
+        assert np.all(widths >= 0), f"Negative depletion in paper mode: {widths}"
+        assert np.all(rates > 0.1), f"Accept rate too low in paper mode: {rates}"
+        assert np.all(rates < 0.99), f"Accept rate too high in paper mode: {rates}"
+
+    def test_brownian_mode_stable(self, tmp_path):
+        """Brownian step mode should produce consistent physics across seeds."""
+        widths = []
+        rates = []
+        for seed in range(N_STAT_SEEDS):
+            data = _run(tmp_path, label=f"stat_brown_{seed}", seed=seed,
+                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
+                        step_mode="brownian")
+            widths.append(data["depletion_width_nm"])
+            rates.append(data["diagnostics"]["accept_rate"])
+        widths = np.array(widths)
+        rates = np.array(rates)
+        assert np.all(widths >= 0), f"Negative depletion in brownian mode: {widths}"
+        assert np.all(rates > 0.3), f"Accept rate too low in brownian mode: {rates}"
+        cv = np.std(widths) / max(np.mean(widths), 1.0)
+        assert cv < 0.5, f"Brownian depletion CV too high ({cv:.2f})"

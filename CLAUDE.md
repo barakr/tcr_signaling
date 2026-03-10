@@ -58,6 +58,7 @@ pytest.ini                     # Pytest configuration
 # Run from projects/tcr_signaling/
 pytest -q                                      # Run all model tests
 pytest -q models/kinetic_segregation/tests/    # Run KS tests only
+pytest -q -m "not deterministic"               # Skip bit-level tests (new platform)
 
 # Build KS binary (CMake, cross-platform)
 cd models/kinetic_segregation
@@ -127,13 +128,16 @@ These rules apply specifically to the kinetic segregation model
    **do not silently re-record**. Report the failure and diff to the user for
    approval. Re-recording is only allowed after explicit sign-off that the
    output change is intentional (e.g., physics formula update, seed derivation
-   change).
+   change). Bit-level determinism tests are marked `@pytest.mark.deterministic`
+   and can be skipped on a new platform with `-m "not deterministic"` while
+   regression + statistical tests validate the physics.
 
 4. **Statistical regression tests** — In addition to exact-value baselines,
-   the test suite should include statistical regression tests that run multiple
+   the test suite includes statistical regression tests that run multiple
    seeds and verify key observables (depletion width, acceptance rate) remain
    within expected margins. These catch subtle bugs that shift distributions
-   without breaking a single reference seed.
+   without breaking a single reference seed. Coverage includes default
+   Brownian mode, pMHC gating modes, binding modes, and step modes.
 
 5. **Methods documentation** — Keep `Methods/methods.tex` in sync with the
    code. Don't update mid-refactor — update once changes stabilize, before
@@ -142,8 +146,16 @@ These rules apply specifically to the kinetic segregation model
 6. **Build with CMake** via the `make` wrapper. The `CMakeLists.txt` handles
    Apple (Metal) vs Linux (stub → CPU fallback) automatically.
 
-7. **Conda environment**: `py314_bayesmm` for building and testing. Tectonic
-   (TeX compiler) is installed in this env.
+7. **Conda environments** — use the same environments as the parent framework:
+
+   | Environment | Purpose |
+   |-------------|---------|
+   | `py314_bayesmm` | Main dev: building, testing, rendering (Python 3.14, tectonic) |
+   | `py312_bayesmm_pymc` | PyMC surrogate fitting (PyMC 5.27.1 + ArviZ) |
+   | `py312_bayesmm_sbi` | SBI surrogate fitting (SBI 0.23.3 + Torch 2.10.0) |
+
+   Always activate the appropriate env before running commands. Default for
+   KS model work is `py314_bayesmm`.
 
 8. **Frame dump format** — Binary frame dumps follow a fixed contract:
    `h_XXXXX.bin` (float32 height field), `mol_XXXXX.bin` (float64 molecule

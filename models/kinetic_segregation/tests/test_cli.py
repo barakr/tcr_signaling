@@ -77,6 +77,7 @@ class TestBinaryCli:
         )
         assert result.returncode != 0
 
+    @pytest.mark.deterministic
     def test_deterministic(self, tmp_path):
         """Same seed produces identical output."""
         runs = []
@@ -97,6 +98,7 @@ class TestBinaryCli:
             runs.append(json.loads(result.stdout.strip()))
         assert runs[0] == runs[1]
 
+    @pytest.mark.deterministic
     def test_gpu_deterministic(self, tmp_path):
         """Same seed produces identical GPU output across runs."""
         runs = []
