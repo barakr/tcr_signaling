@@ -147,3 +147,157 @@ class TestBendingEnergyDeltaC:
         h_c = (ctypes.c_double * len(h_flat))(*h_flat)
         delta = lib.bending_energy_delta(h_c, n, 10.0, 50.0, 8, 8, 35.0, 35.0)
         assert delta == pytest.approx(0.0, abs=1e-15)
+
+
+# ── Cell-list accelerated repulsion tests ──────────────────────────────
+
+class _CellListCtypes:
+    """Wrapper for CellList ctypes bindings."""
+
+    def __init__(self, lib):
+        import numpy as np
+        self.lib = lib
+        self.np = np
+
+        # CellList struct layout (matches cell_list.h).
+        class CellListStruct(ctypes.Structure):
+            _fields_ = [
+                ("head", ctypes.POINTER(ctypes.c_int)),
+                ("next", ctypes.POINTER(ctypes.c_int)),
+                ("nc", ctypes.c_int),
+                ("capacity", ctypes.c_int),
+                ("cell_size", ctypes.c_double),
+                ("inv_cell_size", ctypes.c_double),
+                ("patch_size", ctypes.c_double),
+            ]
+
+        self.CellListStruct = CellListStruct
+
+        lib.cell_list_init.restype = None
+        lib.cell_list_init.argtypes = [
+            ctypes.POINTER(CellListStruct), ctypes.c_int,
+            ctypes.c_double, ctypes.c_double,
+        ]
+        lib.cell_list_build.restype = None
+        lib.cell_list_build.argtypes = [
+            ctypes.POINTER(CellListStruct),
+            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+        ]
+        lib.cell_list_free.restype = None
+        lib.cell_list_free.argtypes = [ctypes.POINTER(CellListStruct)]
+
+        lib.mol_repulsion.restype = ctypes.c_double
+        lib.mol_repulsion.argtypes = [
+            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+            ctypes.c_double, ctypes.c_double, ctypes.c_double,
+        ]
+        lib.mol_repulsion_cell.restype = ctypes.c_double
+        lib.mol_repulsion_cell.argtypes = [
+            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+            ctypes.POINTER(CellListStruct),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_double, ctypes.c_double, ctypes.c_double,
+        ]
+        lib.mol_repulsion_delta.restype = ctypes.c_double
+        lib.mol_repulsion_delta.argtypes = [
+            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+            ctypes.c_int,
+            ctypes.POINTER(CellListStruct),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_double, ctypes.c_double, ctypes.c_double,
+        ]
+
+    def make_positions(self, n_mol, patch_size, rng):
+        pos = rng.uniform(0, patch_size, (n_mol, 2))
+        flat = pos.flatten().astype(self.np.float64)
+        c_pos = (ctypes.c_double * len(flat))(*flat)
+        return pos, c_pos
+
+    def build_cell_list(self, c_pos, n_mol, r_cut, patch_size):
+        cl = self.CellListStruct()
+        self.lib.cell_list_init(ctypes.byref(cl), n_mol, r_cut, patch_size)
+        self.lib.cell_list_build(ctypes.byref(cl), c_pos, n_mol)
+        return cl
+
+
+class TestMolRepulsionCell:
+    """Verify cell-list mol_repulsion matches brute-force."""
+
+    def test_matches_brute_force(self, lib):
+        import numpy as np
+        rng = np.random.default_rng(123)
+        w = _CellListCtypes(lib)
+        patch = 2000.0
+        r_cut = 50.0
+        eps = 2.0
+        n_mol = 150
+
+        pos, c_pos = w.make_positions(n_mol, patch, rng)
+        cl = w.build_cell_list(c_pos, n_mol, r_cut, patch)
+
+        for idx in range(0, n_mol, 10):
+            p = (ctypes.c_double * 2)(pos[idx, 0], pos[idx, 1])
+            brute = lib.mol_repulsion(p, idx, c_pos, n_mol, eps, r_cut, patch)
+            cell = lib.mol_repulsion_cell(p, idx, ctypes.byref(cl), c_pos,
+                                          eps, r_cut, patch)
+            assert cell == pytest.approx(brute, abs=1e-12), (
+                f"Mismatch at idx={idx}: brute={brute}, cell={cell}"
+            )
+
+        lib.cell_list_free(ctypes.byref(cl))
+
+    def test_periodic_boundary(self, lib):
+        """Molecules near patch edges should interact across boundary."""
+        import numpy as np
+        w = _CellListCtypes(lib)
+        patch = 2000.0
+        r_cut = 50.0
+        eps = 2.0
+
+        # Place two molecules near opposite edges (30nm apart across boundary).
+        pos = np.array([[10.0, 1000.0], [1980.0, 1000.0]], dtype=np.float64)
+        c_pos = (ctypes.c_double * 4)(*pos.flatten())
+        cl = w.build_cell_list(c_pos, 2, r_cut, patch)
+
+        p0 = (ctypes.c_double * 2)(pos[0, 0], pos[0, 1])
+        brute = lib.mol_repulsion(p0, 0, c_pos, 2, eps, r_cut, patch)
+        cell = lib.mol_repulsion_cell(p0, 0, ctypes.byref(cl), c_pos,
+                                      eps, r_cut, patch)
+        assert brute > 0.0, "Brute force should detect periodic interaction"
+        assert cell == pytest.approx(brute, abs=1e-12)
+
+        lib.cell_list_free(ctypes.byref(cl))
+
+    def test_delta_matches_two_calls(self, lib):
+        """mol_repulsion_delta should equal new_e - old_e."""
+        import numpy as np
+        rng = np.random.default_rng(456)
+        w = _CellListCtypes(lib)
+        patch = 2000.0
+        r_cut = 50.0
+        eps = 2.0
+        n_mol = 100
+
+        pos, c_pos = w.make_positions(n_mol, patch, rng)
+        cl = w.build_cell_list(c_pos, n_mol, r_cut, patch)
+
+        for _ in range(20):
+            idx = rng.integers(0, n_mol)
+            old_p = (ctypes.c_double * 2)(pos[idx, 0], pos[idx, 1])
+            new_xy = rng.uniform(0, patch, 2)
+            new_p = (ctypes.c_double * 2)(new_xy[0], new_xy[1])
+
+            old_e = lib.mol_repulsion_cell(old_p, idx, ctypes.byref(cl),
+                                           c_pos, eps, r_cut, patch)
+            new_e = lib.mol_repulsion_cell(new_p, idx, ctypes.byref(cl),
+                                           c_pos, eps, r_cut, patch)
+            delta = lib.mol_repulsion_delta(old_p, new_p, idx,
+                                            ctypes.byref(cl), c_pos,
+                                            eps, r_cut, patch)
+            expected = new_e - old_e
+            assert delta == pytest.approx(expected, abs=1e-10), (
+                f"Delta mismatch at idx={idx}: delta={delta}, expected={expected}"
+            )
+
+        lib.cell_list_free(ctypes.byref(cl))

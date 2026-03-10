@@ -1,5 +1,6 @@
 #include "simulation.h"
 #include "potentials.h"
+#include "cell_list.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -250,6 +251,16 @@ static void phase1_molecules(SimState *s) {
     double patch = PATCH_SIZE_NM;
     int n = s->grid_size;
     double dx = s->dx;
+    int use_cell = (s->mol_repulsion_eps > 0.0 && s->mol_repulsion_rcut > 0.0);
+
+    /* Build cell lists for O(N) repulsion queries. */
+    CellList tcr_cl, cd45_cl;
+    if (use_cell) {
+        cell_list_init(&tcr_cl, s->n_tcr, s->mol_repulsion_rcut, patch);
+        cell_list_build(&tcr_cl, s->tcr_pos, s->n_tcr);
+        cell_list_init(&cd45_cl, s->n_cd45, s->mol_repulsion_rcut, patch);
+        cell_list_build(&cd45_cl, s->cd45_pos, s->n_cd45);
+    }
 
     /* TCR molecules. */
     for (int idx = 0; idx < s->n_tcr; idx++) {
@@ -265,11 +276,6 @@ static void phase1_molecules(SimState *s) {
         int old_iy = (int)(oy / dx); if (old_iy >= n) old_iy = n - 1;
         int has_pmhc_old = (s->pmhc_count == NULL) || (s->pmhc_count[old_ix * n + old_iy] > 0);
         double old_e = has_pmhc_old ? tcr_pmhc_potential(old_h, s->u_assoc, SIGMA_BIND_NM) : 0.0;
-        if (s->mol_repulsion_eps > 0.0) {
-            double old_pos2[2] = {ox, oy};
-            old_e += mol_repulsion(old_pos2, idx, s->tcr_pos, s->n_tcr,
-                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
-        }
 
         double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
         double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
@@ -282,20 +288,27 @@ static void phase1_molecules(SimState *s) {
         int has_pmhc_new = (s->pmhc_count == NULL) || (s->pmhc_count[new_ix * n + new_iy] > 0);
         double new_e = has_pmhc_new ? tcr_pmhc_potential(new_h, s->u_assoc, SIGMA_BIND_NM) : 0.0;
 
-        /* Temporarily update position for repulsion calculation. */
-        s->tcr_pos[2 * idx] = nx_;
-        s->tcr_pos[2 * idx + 1] = ny_;
-        if (s->mol_repulsion_eps > 0.0) {
+        double dE = new_e - old_e;
+        if (use_cell) {
+            double old_pos2[2] = {ox, oy};
             double new_pos2[2] = {nx_, ny_};
-            new_e += mol_repulsion(new_pos2, idx, s->tcr_pos, s->n_tcr,
-                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
+            dE += mol_repulsion_delta(old_pos2, new_pos2, idx, &tcr_cl,
+                                      s->tcr_pos, s->mol_repulsion_eps,
+                                      s->mol_repulsion_rcut, patch);
         }
 
-        double dE = new_e - old_e;
         s->total_proposals++;
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
             s->accepted++;
+            /* Update position. */
+            int old_cell = cell_list_cell(&tcr_cl, ox, oy);
+            s->tcr_pos[2 * idx] = nx_;
+            s->tcr_pos[2 * idx + 1] = ny_;
+            if (use_cell) {
+                int new_cell = cell_list_cell(&tcr_cl, nx_, ny_);
+                cell_list_move(&tcr_cl, idx, old_cell, new_cell);
+            }
             /* Update binding state after accepted move. */
             if (s->binding_mode == 1 && s->tcr_bound && s->pmhc_count) {
                 s->tcr_bound[idx] = (s->pmhc_count[new_ix * n + new_iy] > 0) ? 1 : 0;
@@ -303,9 +316,6 @@ static void phase1_molecules(SimState *s) {
                     s->h[new_ix * n + new_iy] = (float)s->h0_tcr;
                 }
             }
-        } else {
-            s->tcr_pos[2 * idx] = ox;
-            s->tcr_pos[2 * idx + 1] = oy;
         }
     }
 
@@ -315,11 +325,6 @@ static void phase1_molecules(SimState *s) {
         double oy = s->cd45_pos[2 * idx + 1];
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
         double old_e = cd45_repulsion(old_h, s->cd45_height, s->k_rep);
-        if (s->mol_repulsion_eps > 0.0) {
-            double old_pos2[2] = {ox, oy};
-            old_e += mol_repulsion(old_pos2, idx, s->cd45_pos, s->n_cd45,
-                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
-        }
 
         double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
         double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
@@ -329,24 +334,32 @@ static void phase1_molecules(SimState *s) {
         double new_h = (double)height_at_pos_f(s->h, n, dx, nx_, ny_);
         double new_e = cd45_repulsion(new_h, s->cd45_height, s->k_rep);
 
-        /* Temporarily update position for repulsion calculation. */
-        s->cd45_pos[2 * idx] = nx_;
-        s->cd45_pos[2 * idx + 1] = ny_;
-        if (s->mol_repulsion_eps > 0.0) {
+        double dE = new_e - old_e;
+        if (use_cell) {
+            double old_pos2[2] = {ox, oy};
             double new_pos2[2] = {nx_, ny_};
-            new_e += mol_repulsion(new_pos2, idx, s->cd45_pos, s->n_cd45,
-                                   s->mol_repulsion_eps, s->mol_repulsion_rcut, patch);
+            dE += mol_repulsion_delta(old_pos2, new_pos2, idx, &cd45_cl,
+                                      s->cd45_pos, s->mol_repulsion_eps,
+                                      s->mol_repulsion_rcut, patch);
         }
 
-        double dE = new_e - old_e;
         s->total_proposals++;
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
             s->accepted++;
-        } else {
-            s->cd45_pos[2 * idx] = ox;
-            s->cd45_pos[2 * idx + 1] = oy;
+            int old_cell = cell_list_cell(&cd45_cl, ox, oy);
+            s->cd45_pos[2 * idx] = nx_;
+            s->cd45_pos[2 * idx + 1] = ny_;
+            if (use_cell) {
+                int new_cell = cell_list_cell(&cd45_cl, nx_, ny_);
+                cell_list_move(&cd45_cl, idx, old_cell, new_cell);
+            }
         }
+    }
+
+    if (use_cell) {
+        cell_list_free(&tcr_cl);
+        cell_list_free(&cd45_cl);
     }
 }
 

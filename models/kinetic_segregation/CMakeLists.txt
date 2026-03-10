@@ -12,6 +12,11 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Default to Release build (-O3) if not specified.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 # Put the binary in the project root (where tests expect it).
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
 
@@ -19,6 +24,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_library(ks_core STATIC
     src/simulation.c
     src/potentials.c
+    src/cell_list.c
     src/rng.c
 )
 target_include_directories(ks_core PUBLIC src)
@@ -90,7 +96,7 @@ endif()
 # ── Test shared library (Python ctypes) ─────────────────────────────
 option(BUILD_TESTLIB "Build shared library for ctypes tests" ON)
 if(BUILD_TESTLIB)
-    add_library(ks_potentials SHARED src/potentials.c src/rng.c)
+    add_library(ks_potentials SHARED src/potentials.c src/cell_list.c src/rng.c)
     target_include_directories(ks_potentials PRIVATE src)
     if(UNIX AND NOT APPLE)
         target_link_libraries(ks_potentials PRIVATE m)
