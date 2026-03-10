@@ -20,26 +20,36 @@ its own development lifecycle, status tracking, and conventions.
 ## Project Structure
 
 ```
-models/                  # Partial model implementations
-  kinetic_segregation/   #   KS model (C + Metal GPU), CPU and GPU modes
-    src/                 #     C/Objective-C source code
-    tests/               #     pytest test suite
-    benchmark/           #     Performance benchmarks
-    Methods/             #     LaTeX methods documentation
-    Makefile             #     Build system (produces ks_gpu binary)
-    __main__.py          #     Python wrapper for framework compatibility
-    render_movie.py      #     Animation renderer from binary frame dumps
-  lck_activity/          #   Lck radial decay model
-  membrane_topography/   #   IRM-based tight-contact geometry
-  tcr_phosphorylation/   #   ITAM phosphorylation model
-specs/                   # JSON specs (ModelSpec, SurrogateSpec, MetaModelSpec)
-data/                    # Experimental reference data
-notebooks/               # Jupyter analysis and figure reproduction
-artifacts/               # Pre-trained surrogate artifacts
-store/                   # Run artifacts (gitignored)
-examples/                # Example scripts and specs
-conftest.py              # Root conftest for pytest
-pytest.ini               # Pytest configuration
+models/
+  kinetic_segregation/         # KS model — C99 core + C++20 CLI + Metal GPU
+    src/
+      simulation.c/h           #   C99 core: Phase 1 (molecules) + Phase 2 (grid MC)
+      potentials.c/h           #   Energy functions (double precision, CPU)
+      rng.c/h                  #   PCG64 pseudo-random number generator
+      ks_physics.h             #   Shared float physics (CPU + GPU single source of truth)
+      gpu_engine.h             #   Backend-neutral GPU C API (4 functions, opaque handle)
+      metal_engine.m           #   Metal backend (macOS / Apple Silicon)
+      gpu_stub.c               #   Stub backend (non-Apple → CPU fallback)
+      shaders.metal            #   GPU compute kernels (Philox RNG, checkerboard)
+      main.cpp                 #   C++20 CLI (nlohmann/json, FNV-1a seeds)
+    tests/                     #   72 pytest tests (regression + physics + equivalence)
+    benchmark/                 #   Performance benchmarks (CPU vs GPU)
+    Methods/                   #   LaTeX methods documentation → methods.pdf
+    CMakeLists.txt             #   Cross-platform build (CMake >= 3.20)
+    Makefile                   #   Thin CMake wrapper (make / make pdf / make clean)
+    __main__.py                #   Python wrapper for framework compatibility
+    render_movie.py            #   Animation renderer (binary frame dumps → MP4)
+  lck_activity/                # Lck radial decay model
+  membrane_topography/         # IRM-based tight-contact geometry
+  tcr_phosphorylation/         # ITAM phosphorylation model
+specs/                         # JSON specs (ModelSpec, SurrogateSpec, MetaModelSpec)
+data/                          # Experimental reference data
+notebooks/                     # Jupyter analysis and figure reproduction
+artifacts/                     # Pre-trained surrogate artifacts
+store/                         # Run artifacts (gitignored)
+examples/                      # Example scripts and specs
+conftest.py                    # Root conftest for pytest
+pytest.ini                     # Pytest configuration
 ```
 
 ## Quick Commands
@@ -49,8 +59,12 @@ pytest.ini               # Pytest configuration
 pytest -q                                      # Run all model tests
 pytest -q models/kinetic_segregation/tests/    # Run KS tests only
 
-# Build KS binary (requires macOS Command Line Tools)
-cd models/kinetic_segregation && make
+# Build KS binary (CMake, cross-platform)
+cd models/kinetic_segregation
+make                   # Build ks_gpu binary + shared testlib
+make clean && make     # Full rebuild
+make pdf               # Compile Methods/methods.pdf (needs tectonic in PATH)
+make testlib           # Build shared lib for ctypes tests only
 
 # Use the framework CLI on project specs
 bayesmm validate specs/model.kinetic_segregation.json
@@ -93,6 +107,50 @@ bayesmm surrogate fit specs/surrogate.kinetic_segregation.pymc_gp.json
    - Documented in the plan with explicit rationale
    - Approved by the user before implementation
    - Prefer to ask for user input before modifying existing test assertions
+
+## KS Model Rules
+
+These rules apply specifically to the kinetic segregation model
+(`models/kinetic_segregation/`):
+
+1. **`ks_physics.h` is the single source of truth** for float-precision energy
+   functions (TCR binding, CD45 repulsion, Laplacian, bending delta). Both
+   `simulation.c` (CPU) and `shaders.metal` (GPU) include it. Never duplicate
+   energy logic — update the header.
+
+2. **GPU backends must implement `gpu_engine.h`** — the 4-function C API
+   (`gpu_engine_create`, `gpu_engine_destroy`, `gpu_engine_h_ptr`,
+   `gpu_engine_grid_update`) with an opaque `void*` handle.
+
+3. **Reference value protection** — `tests/reference_values.json` holds exact
+   numerical baselines for GPU and CPU. If tests fail after a code change,
+   **do not silently re-record**. Report the failure and diff to the user for
+   approval. Re-recording is only allowed after explicit sign-off that the
+   output change is intentional (e.g., physics formula update, seed derivation
+   change).
+
+4. **Statistical regression tests** — In addition to exact-value baselines,
+   the test suite should include statistical regression tests that run multiple
+   seeds and verify key observables (depletion width, acceptance rate) remain
+   within expected margins. These catch subtle bugs that shift distributions
+   without breaking a single reference seed.
+
+5. **Methods documentation** — Keep `Methods/methods.tex` in sync with the
+   code. Don't update mid-refactor — update once changes stabilize, before
+   major commits or pushes. Recompile with `make pdf`.
+
+6. **Build with CMake** via the `make` wrapper. The `CMakeLists.txt` handles
+   Apple (Metal) vs Linux (stub → CPU fallback) automatically.
+
+7. **Conda environment**: `py314_bayesmm` for building and testing. Tectonic
+   (TeX compiler) is installed in this env.
+
+8. **Frame dump format** — Binary frame dumps follow a fixed contract:
+   `h_XXXXX.bin` (float32 height field), `mol_XXXXX.bin` (float64 molecule
+   positions), `pmhc.bin` (float64, static pMHC positions). Don't change the
+   format without updating `render_movie.py`.
+
+9. **All KS tests must pass** before committing changes to the model.
 
 ## Relationship to Parent Repo
 

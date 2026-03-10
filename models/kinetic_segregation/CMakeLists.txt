@@ -101,17 +101,25 @@ if(BUILD_TESTLIB)
 endif()
 
 # ── Optional PDF documentation ──────────────────────────────────────
+# Prefer tectonic (single-pass, auto-downloads packages); fall back to pdflatex.
+find_program(TECTONIC tectonic)
 find_program(PDFLATEX pdflatex)
-if(PDFLATEX)
+if(TECTONIC)
+    add_custom_target(pdf
+        COMMAND ${TECTONIC} methods.tex
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/Methods
+        COMMENT "Compiling methods.tex → methods.pdf (tectonic)"
+    )
+elseif(PDFLATEX)
     add_custom_target(pdf
         COMMAND ${PDFLATEX} -interaction=nonstopmode methods.tex
         COMMAND ${PDFLATEX} -interaction=nonstopmode methods.tex
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/Methods
-        COMMENT "Compiling methods.tex → methods.pdf"
+        COMMENT "Compiling methods.tex → methods.pdf (pdflatex)"
     )
 else()
     add_custom_target(pdf
         COMMAND ${CMAKE_COMMAND} -E echo
-            "pdflatex not found -- install a TeX distribution to build PDF"
+            "No TeX compiler found -- install tectonic or pdflatex to build PDF"
     )
 endif()

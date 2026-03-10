@@ -29,12 +29,15 @@ of T-cell receptor (TCR) and CD45 molecules on a
 $2\;\mu\text{m}\times2\;\mu\text{m}$ membrane patch.  A 2D membrane
 height field $h(x,y)$ is discretised on a regular grid of spacing
 $\Delta x = L / N_\text{grid}$, where $L=2000$~nm and
-$N_\text{grid}$ is typically 64.  TCR molecules ($N_\text{TCR}$,
-default 50) diffuse on this surface and are attracted to
-tight-contact regions (low $h$), while CD45 molecules
-($N_\text{CD45}$, default 100) are sterically excluded from regions
-where $h$ is smaller than the CD45 ectodomain height
-$h_\text{CD45}\approx35$~nm.
+$N_\text{grid}$ is typically 64.  Static pMHC ligands
+($N_\text{pMHC}$, default 200) are placed on the opposing
+antigen-presenting cell (APC) surface and gate TCR--pMHC binding:
+TCR molecules ($N_\text{TCR}$, default 50) are attracted to
+tight-contact regions (low $h$) \emph{only in grid cells that
+contain at least one pMHC}.  CD45 molecules ($N_\text{CD45}$,
+default 100) are sterically excluded from regions where $h$ is
+smaller than the CD45 ectodomain height
+$h_\text{CD45}=50$~nm.
 
 The system is evolved with a Metropolis--Hastings Monte~Carlo (MC)
 algorithm at thermal energy $k_BT=1$ (all energies are expressed in
@@ -52,16 +55,20 @@ The total energy of the system is the sum of three contributions:
   \;=\;
   E_\text{bend}\!\bigl[h\bigr]
   \;+\;
-  \sum_{i=1}^{N_\text{TCR}} E_\text{TCR}\!\bigl(h(\mathbf{r}_i)\bigr)
+  \sum_{i=1}^{N_\text{TCR}}
+    \mathbb{1}_\text{pMHC}(\mathbf{r}_i)\;
+    E_\text{TCR}\!\bigl(h(\mathbf{r}_i)\bigr)
   \;+\;
   \sum_{j=1}^{N_\text{CD45}} E_\text{CD45}\!\bigl(h(\mathbf{r}_j)\bigr)
 \end{equation}
 
 \noindent
 where $\mathbf{r}_i$ and $\mathbf{r}_j$ are the lateral positions of
-individual TCR and CD45 molecules, respectively, and
+individual TCR and CD45 molecules, respectively,
 $h(\mathbf{r})$ is the membrane height at that position (obtained by
-nearest-grid-point interpolation).
+nearest-grid-point interpolation), and
+$\mathbb{1}_\text{pMHC}(\mathbf{r})$ is unity when the grid cell at
+$\mathbf{r}$ contains at least one pMHC and zero otherwise.
 
 
 %% ----------------------------------------------------------------
@@ -104,7 +111,7 @@ functional forms, and default parameter values.
             0 & h \ge h_\text{CD45}
           \end{cases}$ &
       $k_\text{rep}=1.0\;k_BT/\text{nm}^2$; \newline
-      $h_\text{CD45}=35$~nm &
+      $h_\text{CD45}=50$~nm &
       Harmonic repulsive wall; excludes CD45 from tight contact \\
     \bottomrule
   \end{tabular}
@@ -177,7 +184,7 @@ harmonic potential:
 
 \noindent
 with $k_\text{rep} = 1.0\;k_BT/\text{nm}^2$ and
-$h_\text{CD45} = 35$~nm.
+$h_\text{CD45} = 50$~nm.
 
 
 %% ----------------------------------------------------------------
@@ -211,11 +218,11 @@ Algorithm~\ref{alg:mc} gives the complete pseudocode.
     \State $\mathbf{r}_k \gets \mathbf{r}_k
       + \mathcal{N}(0,\,\sigma_\text{step}^2)\;\hat{\mathbf{e}}$
       \Comment{Gaussian displacement in $x,y$}
-    \State Clip $\mathbf{r}_k$ to $[0, L]^2$
+    \State Wrap $\mathbf{r}_k$ with periodic boundaries (mod~$L$)
     \State $E_\text{new} \gets E_\text{mol}(\mathbf{r}_k, h)$
     \State $\Delta E \gets E_\text{new} - E_\text{old}$
-    \If{$\Delta E < 0$ \textbf{or}
-        $\mathcal{U}(0,1) < \exp(-\Delta E)$}
+    \If{$\Delta E \le 0$ \textbf{or}
+        $\log\mathcal{U}(0,1) < -\Delta E$}
       \State Accept move
     \Else
       \State $\mathbf{r}_k \gets \mathbf{r}_\text{old}$
@@ -228,9 +235,10 @@ Algorithm~\ref{alg:mc} gives the complete pseudocode.
     \State $h_\text{old} \gets h_{ij}$
     \State $E_\text{mol,old} \gets$ sum of $E_\text{mol}$ for all
       molecules in cell $(i,j)$
-    \State $h_{ij} \gets \max\bigl(0,\;
-      h_\text{old} + \mathcal{N}(0,\,\sigma_h^2)\bigr)$
-      \Comment{Propose new height $\ge 0$}
+    \State $h_{ij} \gets h_\text{old}
+      + \mathcal{N}(0,\,\sigma_h^2)$;~~
+      \textbf{if} $h_{ij}<0$ \textbf{then} $h_{ij}\gets -h_{ij}$
+      \Comment{Reflect to keep $h\ge 0$}
     \State $\Delta E_\text{bend} \gets$
       local bending energy change (5-point stencil)
       \Comment{$O(1)$ via Eq.~\ref{eq:laplacian}}
@@ -238,8 +246,8 @@ Algorithm~\ref{alg:mc} gives the complete pseudocode.
       molecules in cell $(i,j)$ at new $h_{ij}$
     \State $\Delta E \gets \Delta E_\text{bend}
       + (E_\text{mol,new} - E_\text{mol,old})$
-    \If{$\Delta E < 0$ \textbf{or}
-        $\mathcal{U}(0,1) < \exp\bigl(-\min(\Delta E,\,500)\bigr)$}
+    \If{$\Delta E \le 0$ \textbf{or}
+        $\log\mathcal{U}(0,1) < -\Delta E$}
       \State Accept move
     \Else
       \State $h_{ij} \gets h_\text{old}$ \Comment{Reject}
@@ -253,21 +261,24 @@ Algorithm~\ref{alg:mc} gives the complete pseudocode.
 \end{algorithm}
 
 
-\subsection{Step sizes and adaptive scaling}
+\subsection{Step sizes}
 
-The molecular step size is set to
-$\sigma_\text{step} = \max(2\sigma_\text{bind},\; 0.15\,\Delta x)$,
-ensuring that moves resolve the TCR binding well while still allowing
-exploration.  The membrane height step size adapts to the bending
-rigidity:
-
+Step sizes are derived from Brownian dynamics.  A stability-limited
+time step $\Delta t$ is computed as
 \begin{equation}
-  \sigma_h = \min\!\left(5,\;\frac{\Delta x}{4\,\max(1,\sqrt{\kappa})}\right)
+  \Delta t = \frac{\Delta x^2}{2\,D_h\,\kappa}\;\alpha_\text{safety}
 \end{equation}
-
-\noindent
-so that stiffer membranes receive smaller perturbations, maintaining a
-reasonable acceptance rate.
+with safety factor $\alpha_\text{safety}=0.5$.  The molecular and
+membrane height step sizes are then
+\begin{equation}
+  \sigma_\text{step} = \sqrt{2\,D_\text{mol}\,\Delta t},
+  \qquad
+  \sigma_h = \sqrt{2\,D_h\,\Delta t}
+\end{equation}
+where $D_\text{mol}=10^4$~nm$^2$/s and $D_h=5\times10^4$~nm$^2$/s
+are the molecular and membrane height diffusion coefficients.
+An alternative ``paper'' mode uses fixed $\Delta t = 0.01$~s and
+$\sigma_h = 1$~nm.
 
 
 \subsection{Efficient bending energy update}
@@ -310,11 +321,18 @@ given colour are dispatched in parallel.
 
 \begin{itemize}
   \item The membrane height field is initialised uniformly at
-    $h = h_\text{CD45} = 35$~nm, with a central disc
-    (radius $\sim N_\text{grid}/8$ cells) depressed to $h=5$~nm to
-    seed a tight-contact zone.
-  \item TCR molecules are placed with a Gaussian bias towards the
-    patch centre (spread $L/6$), mimicking the initial TCR cluster.
+    $h = h_\text{init} = 70$~nm, with a central disc
+    (radius $\sim N_\text{grid}/8$ cells) depressed to
+    $h_0^\text{TCR}=13$~nm to seed a tight-contact zone.
+  \item pMHC ligands are placed on the APC surface---either uniformly
+    across the patch, or within a centred disc of radius $L/3$
+    (``inner-circle'' mode, default).  They remain static throughout
+    the simulation.
+  \item TCR molecules are co-located with randomly chosen pMHC
+    positions, with a small Gaussian jitter ($\sigma_\text{bind}$),
+    so that each TCR starts near a cognate pMHC.  When no pMHC are
+    present, TCRs are placed with a Gaussian bias towards the patch
+    centre (spread $L/6$).
   \item CD45 molecules are placed uniformly at random across the
     patch.
 \end{itemize}
@@ -358,13 +376,19 @@ values from Supplementary Table~S1 of the reference.
     Grid spacing        & $\Delta x$            & $L / N_\text{grid} \approx 31.25$~nm \\
     Number of TCR       & $N_\text{TCR}$        & 50 \\
     Number of CD45      & $N_\text{CD45}$       & 100 \\
+    Number of pMHC      & $N_\text{pMHC}$       & 200 \\
     Association energy  & $U_\text{assoc}$      & $20\;k_BT$ \\
     Binding well width  & $\sigma_\text{bind}$  & 3~nm \\
-    CD45 ectodomain     & $h_\text{CD45}$       & 35~nm \\
+    CD45 ectodomain     & $h_\text{CD45}$       & 50~nm \\
     Repulsive constant  & $k_\text{rep}$        & $1.0\;k_BT/\text{nm}^2$ \\
+    Initial height      & $h_\text{init}$       & 70~nm \\
+    TCR contact height  & $h_0^\text{TCR}$      & 13~nm \\
+    Mol.\ diffusion     & $D_\text{mol}$        & $10^4$~nm$^2$/s \\
+    Height diffusion    & $D_h$                 & $5\times10^4$~nm$^2$/s \\
+    Safety factor       & $\alpha_\text{safety}$ & 0.5 \\
     Bending rigidity    & $\kappa$              & Swept (input parameter) \\
     Simulation time     & $t$                   & Swept (input parameter) \\
-    Random seed         & ---                   & 42 (per-point hash derived) \\
+    Random seed         & ---                   & 42 (per-point FNV-1a hash derived) \\
     \bottomrule
   \end{tabular}
 \end{table}
