@@ -6,6 +6,28 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef KS_PROFILE
+#include <time.h>
+static double _profile_phase1_ms = 0.0;
+static double _profile_phase2_ms = 0.0;
+double _profile_bin_ms = 0.0;  /* non-static: shared with metal_engine.m */
+
+static double _clock_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+void sim_profile_report(int n_steps) {
+    fprintf(stderr, "PROFILE: phase1=%.1fms phase2=%.1fms bin=%.1fms total=%.1fms "
+            "(per-step: p1=%.3fms p2=%.3fms bin=%.3fms)\n",
+            _profile_phase1_ms, _profile_phase2_ms, _profile_bin_ms,
+            _profile_phase1_ms + _profile_phase2_ms + _profile_bin_ms,
+            _profile_phase1_ms / n_steps, _profile_phase2_ms / n_steps,
+            _profile_bin_ms / n_steps);
+}
+#endif
+
 /* GPU backend (Metal on macOS, CUDA on Linux — see gpu_engine.h). */
 #include "gpu_engine.h"
 
@@ -201,6 +223,18 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->accepted = 0;
     s->total_proposals = 0;
 
+    /* Allocate persistent cell lists if repulsion is enabled. */
+    s->tcr_cell_list = NULL;
+    s->cd45_cell_list = NULL;
+    if (mol_repulsion_eps > 0.0 && mol_repulsion_rcut > 0.0) {
+        CellList *tcl = (CellList *)malloc(sizeof(CellList));
+        cell_list_init(tcl, n_tcr, mol_repulsion_rcut, PATCH_SIZE_NM);
+        s->tcr_cell_list = tcl;
+        CellList *ccl = (CellList *)malloc(sizeof(CellList));
+        cell_list_init(ccl, n_cd45, mol_repulsion_rcut, PATCH_SIZE_NM);
+        s->cd45_cell_list = ccl;
+    }
+
     /* Try to init Metal GPU engine. Derive GPU RNG key from CPU seed. */
     s->use_gpu = 0;
     s->metal_ctx = NULL;
@@ -234,6 +268,14 @@ void sim_destroy(SimState *s) {
     free(s->pmhc_pos);
     free(s->pmhc_count);
     free(s->tcr_bound);
+    if (s->tcr_cell_list) {
+        cell_list_free((CellList *)s->tcr_cell_list);
+        free(s->tcr_cell_list);
+    }
+    if (s->cd45_cell_list) {
+        cell_list_free((CellList *)s->cd45_cell_list);
+        free(s->cd45_cell_list);
+    }
     free(s);
 }
 
@@ -253,13 +295,12 @@ static void phase1_molecules(SimState *s) {
     double dx = s->dx;
     int use_cell = (s->mol_repulsion_eps > 0.0 && s->mol_repulsion_rcut > 0.0);
 
-    /* Build cell lists for O(N) repulsion queries. */
-    CellList tcr_cl, cd45_cl;
+    /* Use persistent cell lists (allocated in sim_create, rebuilt here). */
+    CellList *tcr_cl = (CellList *)s->tcr_cell_list;
+    CellList *cd45_cl = (CellList *)s->cd45_cell_list;
     if (use_cell) {
-        cell_list_init(&tcr_cl, s->n_tcr, s->mol_repulsion_rcut, patch);
-        cell_list_build(&tcr_cl, s->tcr_pos, s->n_tcr);
-        cell_list_init(&cd45_cl, s->n_cd45, s->mol_repulsion_rcut, patch);
-        cell_list_build(&cd45_cl, s->cd45_pos, s->n_cd45);
+        cell_list_build(tcr_cl, s->tcr_pos, s->n_tcr);
+        cell_list_build(cd45_cl, s->cd45_pos, s->n_cd45);
     }
 
     /* TCR molecules. */
@@ -292,7 +333,7 @@ static void phase1_molecules(SimState *s) {
         if (use_cell) {
             double old_pos2[2] = {ox, oy};
             double new_pos2[2] = {nx_, ny_};
-            dE += mol_repulsion_delta(old_pos2, new_pos2, idx, &tcr_cl,
+            dE += mol_repulsion_delta(old_pos2, new_pos2, idx, tcr_cl,
                                       s->tcr_pos, s->mol_repulsion_eps,
                                       s->mol_repulsion_rcut, patch);
         }
@@ -301,13 +342,12 @@ static void phase1_molecules(SimState *s) {
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
             s->accepted++;
-            /* Update position. */
-            int old_cell = cell_list_cell(&tcr_cl, ox, oy);
+            int old_cell = use_cell ? cell_list_cell(tcr_cl, ox, oy) : 0;
             s->tcr_pos[2 * idx] = nx_;
             s->tcr_pos[2 * idx + 1] = ny_;
             if (use_cell) {
-                int new_cell = cell_list_cell(&tcr_cl, nx_, ny_);
-                cell_list_move(&tcr_cl, idx, old_cell, new_cell);
+                int new_cell = cell_list_cell(tcr_cl, nx_, ny_);
+                cell_list_move(tcr_cl, idx, old_cell, new_cell);
             }
             /* Update binding state after accepted move. */
             if (s->binding_mode == 1 && s->tcr_bound && s->pmhc_count) {
@@ -338,7 +378,7 @@ static void phase1_molecules(SimState *s) {
         if (use_cell) {
             double old_pos2[2] = {ox, oy};
             double new_pos2[2] = {nx_, ny_};
-            dE += mol_repulsion_delta(old_pos2, new_pos2, idx, &cd45_cl,
+            dE += mol_repulsion_delta(old_pos2, new_pos2, idx, cd45_cl,
                                       s->cd45_pos, s->mol_repulsion_eps,
                                       s->mol_repulsion_rcut, patch);
         }
@@ -347,19 +387,14 @@ static void phase1_molecules(SimState *s) {
         double u = pcg64_uniform(&s->rng);
         if (dE <= 0.0 || (u > 0.0 && log(u) < -dE)) {
             s->accepted++;
-            int old_cell = cell_list_cell(&cd45_cl, ox, oy);
+            int old_cell = use_cell ? cell_list_cell(cd45_cl, ox, oy) : 0;
             s->cd45_pos[2 * idx] = nx_;
             s->cd45_pos[2 * idx + 1] = ny_;
             if (use_cell) {
-                int new_cell = cell_list_cell(&cd45_cl, nx_, ny_);
-                cell_list_move(&cd45_cl, idx, old_cell, new_cell);
+                int new_cell = cell_list_cell(cd45_cl, nx_, ny_);
+                cell_list_move(cd45_cl, idx, old_cell, new_cell);
             }
         }
-    }
-
-    if (use_cell) {
-        cell_list_free(&tcr_cl);
-        cell_list_free(&cd45_cl);
     }
 }
 
@@ -410,15 +445,12 @@ static void phase2_grid_cpu(SimState *s) {
     int *frozen = (int *)calloc(n2, sizeof(int));
     build_frozen_mask(s, frozen);
 
-    /* Per-cell buffers for the three-pass approach matching GPU. */
+    /* Per-cell buffers for the two-pass approach (no snapshot needed —
+       checkerboard ensures same-color cells are never Laplacian neighbors). */
     float *old_vals = (float *)malloc(half * sizeof(float));
     float *u_accepts = (float *)malloc(half * sizeof(float));
     int *cell_gi = (int *)malloc(half * sizeof(int));
     int *cell_gj = (int *)malloc(half * sizeof(int));
-    int *accepted_flags = (int *)malloc(half * sizeof(int));
-
-    /* Read-only snapshot for bending_delta evaluation. */
-    float *h_snapshot = (float *)malloc(n2 * sizeof(float));
 
     for (int color = 0; color < 2; color++) {
         int cidx = 0;
@@ -434,13 +466,16 @@ static void phase2_grid_cpu(SimState *s) {
                     /* Frozen cell: consume RNG to stay in sync. */
                     pcg64_uniform_f(&s->rng);
                     pcg64_uniform_f(&s->rng);
-                    float u_f = pcg64_uniform_f(&s->rng);
+                    pcg64_uniform_f(&s->rng);
 
                     old_vals[cidx] = old_h_val;
-                    u_accepts[cidx] = u_f;
+                    u_accepts[cidx] = 0.0f;
                     cell_gi[cidx] = gi;
                     cell_gj[cidx] = gj;
                     cidx++;
+
+                    s->total_proposals++;
+                    s->accepted++;
                     continue;
                 }
 
@@ -466,24 +501,19 @@ static void phase2_grid_cpu(SimState *s) {
             }
         }
 
-        /* Snapshot: freeze h[] so all evaluations read the same state. */
-        memcpy(h_snapshot, s->h, n2 * sizeof(float));
-
-        /* Pass 2 (evaluate): bending deltas read from frozen snapshot. */
+        /* Pass 2 (evaluate + apply): read directly from h[] — no snapshot.
+           Same-color cells are never neighbors in the 5-point Laplacian stencil,
+           so each cell reads only opposite-color neighbors (unchanged). */
         for (int k = 0; k < cidx; k++) {
             int gi = cell_gi[k];
             int gj = cell_gj[k];
 
             if (frozen[gi * n + gj]) {
-                /* Frozen: always accepted. */
-                accepted_flags[k] = 1;
-                s->total_proposals++;
-                s->accepted++;
-                continue;
+                continue;  /* already counted above */
             }
 
             float old_h_val = old_vals[k];
-            float new_h_val = h_snapshot[gi * n + gj];
+            float new_h_val = s->h[gi * n + gj];
 
             int n_tcr_cell = tcr_count[gi * n + gj];
             int n_cd45_cell = cd45_count[gi * n + gj];
@@ -493,7 +523,7 @@ static void phase2_grid_cpu(SimState *s) {
             float old_mol_e = tcr_e_old
                             + n_cd45_cell * ks_cd45_repulsion(old_h_val, (float)s->cd45_height, (float)s->k_rep);
 
-            float dE_bend = ks_bending_delta(h_snapshot, n, kappa, dx,
+            float dE_bend = ks_bending_delta(s->h, n, kappa, dx,
                                                    gi, gj, old_h_val, new_h_val);
             float tcr_e_new = cell_has_pmhc ? n_tcr_cell * ks_tcr_potential(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
             float new_mol_e = tcr_e_new
@@ -502,16 +532,10 @@ static void phase2_grid_cpu(SimState *s) {
             float dE = dE_bend + (new_mol_e - old_mol_e);
             s->total_proposals++;
             float u_f = u_accepts[k];
-            accepted_flags[k] = (dE <= 0.0f || (u_f > 0.0f && logf(u_f) < -dE));
-            if (accepted_flags[k]) s->accepted++;
-        }
-
-        /* Pass 3 (apply): restore rejected cells. */
-        for (int k = 0; k < cidx; k++) {
-            if (!accepted_flags[k]) {
-                int gi = cell_gi[k];
-                int gj = cell_gj[k];
-                s->h[gi * n + gj] = old_vals[k];
+            if (dE <= 0.0f || (u_f > 0.0f && logf(u_f) < -dE)) {
+                s->accepted++;
+            } else {
+                s->h[gi * n + gj] = old_h_val;
             }
         }
     } /* end color loop */
@@ -520,8 +544,6 @@ static void phase2_grid_cpu(SimState *s) {
     free(u_accepts);
     free(cell_gi);
     free(cell_gj);
-    free(accepted_flags);
-    free(h_snapshot);
     free(tcr_count);
     free(cd45_count);
     free(frozen);
@@ -529,7 +551,14 @@ static void phase2_grid_cpu(SimState *s) {
 
 void sim_step(SimState *s) {
     int K = s->grid_substeps > 1 ? s->grid_substeps : 1;
+#ifdef KS_PROFILE
+    double t0 = _clock_ms();
+#endif
     phase1_molecules(s);
+#ifdef KS_PROFILE
+    double t1 = _clock_ms();
+    _profile_phase1_ms += t1 - t0;
+#endif
     if (s->use_gpu && s->metal_ctx) {
         /* GPU: all K substeps batched in one command buffer commit. */
         gpu_engine_grid_update(s->metal_ctx, s->h, s->grid_size,
@@ -547,6 +576,10 @@ void sim_step(SimState *s) {
             phase2_grid_cpu(s);
         }
     }
+#ifdef KS_PROFILE
+    double t2 = _clock_ms();
+    _profile_phase2_ms += t2 - t1;
+#endif
 }
 
 void sim_run(SimState *s, int n_steps) {

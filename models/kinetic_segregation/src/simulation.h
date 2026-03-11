@@ -72,6 +72,10 @@ typedef struct {
     void *metal_ctx;          /* opaque pointer to MetalEngine */
     int h_is_shared;          /* 1 if h points to Metal shared buffer (don't free) */
     int grid_substeps;        /* Grid Phase 2 substeps per molecular move (default 1) */
+
+    /* Persistent cell lists for Phase 1 repulsion (avoids rebuild every step). */
+    void *tcr_cell_list;      /* CellList* or NULL */
+    void *cd45_cell_list;     /* CellList* or NULL */
 } SimState;
 
 /* Allocate and initialize simulation state. */
@@ -103,5 +107,10 @@ double sim_mean_r(const double *pos, int n);
 
 /* Count bound TCRs. */
 int sim_count_bound_tcr(const SimState *s);
+
+#ifdef KS_PROFILE
+/* Print phase timing breakdown to stderr. */
+void sim_profile_report(int n_steps);
+#endif
 
 #endif /* SIMULATION_H */

@@ -4,6 +4,16 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+#ifdef KS_PROFILE
+extern double _profile_bin_ms;
+static double _metal_clock_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+#endif
 
 /* Parameters struct matching the shader's GridParams. */
 typedef struct {
@@ -25,27 +35,40 @@ typedef struct {
 typedef struct {
     float old_h;
     float u_accept;
-    int accepted;
 } CellProposal;
+
+/* Parameters for GPU binning kernel. */
+typedef struct {
+    int grid_size;
+    float inv_dx;
+    int n_mol;
+} BinParams;
 
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
     id<MTLComputePipelineState> propose_pipeline;
-    id<MTLComputePipelineState> snapshot_pipeline;
-    id<MTLComputePipelineState> evaluate_pipeline;
-    id<MTLComputePipelineState> apply_pipeline;
+    id<MTLComputePipelineState> evaluate_apply_pipeline;
+    id<MTLComputePipelineState> bin_pipeline;
 
     /* Buffers (sized for max grid_size). */
     id<MTLBuffer> h_buf;              /* float[n^2] — authoritative height field */
-    id<MTLBuffer> h_snap_buf;         /* float[n^2] — frozen snapshot for evaluate */
     id<MTLBuffer> tcr_count_buf;      /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> cd45_count_buf;     /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> pmhc_count_buf;     /* int[n^2]   — pMHC count per cell */
-    id<MTLBuffer> params_buf;         /* GridParams — color 0 */
-    id<MTLBuffer> params_buf2;        /* GridParams — color 1 */
+    id<MTLBuffer> params_buf;         /* GridParams */
     id<MTLBuffer> accept_buf;         /* atomic_int[1] */
     id<MTLBuffer> proposals_buf;      /* CellProposal[n^2/2] */
+
+    /* GPU binning: molecule positions as float (converted from double on CPU). */
+    id<MTLBuffer> tcr_pos_buf;        /* float[n_tcr*2] */
+    id<MTLBuffer> cd45_pos_buf;       /* float[n_cd45*2] */
+    id<MTLBuffer> bin_params_buf;     /* BinParams */
+    int max_tcr;
+    int max_cd45;
+
+    /* Async dispatch: previous command buffer (NULL if none pending). */
+    id<MTLCommandBuffer> pending_cmd;
 
     int grid_size;
     uint32_t rng_key0;   /* Philox key derived from CPU seed */
@@ -71,12 +94,10 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
         eng->rng_key1 = (uint32_t)(gpu_rng_key >> 32);
         eng->rng_counter = 0;
 
-        /* Try to load pre-compiled .metallib first (< 1ms), fall back to
-           source compilation (~30-50ms) if not found. */
+        /* Try to load pre-compiled .metallib first, fall back to source. */
         NSError *error = nil;
         id<MTLLibrary> library = nil;
 
-        /* Search for pre-compiled .metallib */
         NSArray *metallib_candidates = @[
             @"src/shaders.metallib",
             @"shaders.metallib",
@@ -100,7 +121,6 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
             }
         }
 
-        /* Fall back to source compilation if .metallib not found/loaded. */
         if (!library) {
             NSString *shaderPath = nil;
             if (execPath) {
@@ -137,8 +157,6 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
                 return NULL;
             }
 
-            /* Metal runtime compilation doesn't support #include paths.
-               Manually resolve #include "ks_physics.h" by inlining the header. */
             NSString *shaderDir = [shaderPath stringByDeletingLastPathComponent];
             NSString *physicsPath = [shaderDir stringByAppendingPathComponent:@"ks_physics.h"];
             NSString *physicsSource = [NSString stringWithContentsOfFile:physicsPath
@@ -164,26 +182,21 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
                     [shaderPath UTF8String]);
         }
 
-        /* Load all four kernel functions. */
-        NSArray *names = @[@"grid_propose_kernel", @"grid_snapshot_kernel",
-                           @"grid_evaluate_kernel", @"grid_apply_kernel"];
-        id<MTLFunction> funcs[4];
-        for (int i = 0; i < 4; i++) {
-            funcs[i] = [library newFunctionWithName:names[i]];
-            if (!funcs[i]) {
-                fprintf(stderr, "Metal: kernel '%s' not found.\n",
-                        [names[i] UTF8String]);
-                free(eng);
-                return NULL;
-            }
+        /* Load kernel functions. */
+        id<MTLFunction> propose_fn = [library newFunctionWithName:@"grid_propose_kernel"];
+        id<MTLFunction> eval_apply_fn = [library newFunctionWithName:@"grid_evaluate_apply_kernel"];
+        id<MTLFunction> bin_fn = [library newFunctionWithName:@"bin_molecules_kernel"];
+
+        if (!propose_fn || !eval_apply_fn || !bin_fn) {
+            fprintf(stderr, "Metal: kernel function not found.\n");
+            free(eng);
+            return NULL;
         }
 
-        eng->propose_pipeline = [device newComputePipelineStateWithFunction:funcs[0] error:&error];
-        eng->snapshot_pipeline = [device newComputePipelineStateWithFunction:funcs[1] error:&error];
-        eng->evaluate_pipeline = [device newComputePipelineStateWithFunction:funcs[2] error:&error];
-        eng->apply_pipeline = [device newComputePipelineStateWithFunction:funcs[3] error:&error];
-        if (!eng->propose_pipeline || !eng->snapshot_pipeline ||
-            !eng->evaluate_pipeline || !eng->apply_pipeline) {
+        eng->propose_pipeline = [device newComputePipelineStateWithFunction:propose_fn error:&error];
+        eng->evaluate_apply_pipeline = [device newComputePipelineStateWithFunction:eval_apply_fn error:&error];
+        eng->bin_pipeline = [device newComputePipelineStateWithFunction:bin_fn error:&error];
+        if (!eng->propose_pipeline || !eng->evaluate_apply_pipeline || !eng->bin_pipeline) {
             fprintf(stderr, "Metal: pipeline creation failed: %s\n",
                     [[error localizedDescription] UTF8String]);
             free(eng);
@@ -195,8 +208,6 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
         int half = n2 / 2;
         eng->h_buf = [device newBufferWithLength:n2 * sizeof(float)
                                          options:MTLResourceStorageModeShared];
-        eng->h_snap_buf = [device newBufferWithLength:n2 * sizeof(float)
-                                              options:MTLResourceStorageModeShared];
         eng->tcr_count_buf = [device newBufferWithLength:n2 * sizeof(int)
                                                  options:MTLResourceStorageModeShared];
         eng->cd45_count_buf = [device newBufferWithLength:n2 * sizeof(int)
@@ -205,14 +216,24 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
                                                   options:MTLResourceStorageModeShared];
         eng->params_buf = [device newBufferWithLength:sizeof(GridParams)
                                               options:MTLResourceStorageModeShared];
-        eng->params_buf2 = [device newBufferWithLength:sizeof(GridParams)
-                                               options:MTLResourceStorageModeShared];
         eng->accept_buf = [device newBufferWithLength:sizeof(int)
                                               options:MTLResourceStorageModeShared];
         eng->proposals_buf = [device newBufferWithLength:half * sizeof(CellProposal)
                                                  options:MTLResourceStorageModeShared];
+        eng->bin_params_buf = [device newBufferWithLength:sizeof(BinParams)
+                                                  options:MTLResourceStorageModeShared];
 
-        fprintf(stderr, "Metal: GPU engine initialized on %s (grid=%d).\n",
+        /* Pre-allocate molecule position buffers (will grow if needed). */
+        eng->max_tcr = 256;
+        eng->max_cd45 = 512;
+        eng->tcr_pos_buf = [device newBufferWithLength:eng->max_tcr * 2 * sizeof(float)
+                                               options:MTLResourceStorageModeShared];
+        eng->cd45_pos_buf = [device newBufferWithLength:eng->max_cd45 * 2 * sizeof(float)
+                                                options:MTLResourceStorageModeShared];
+
+        eng->pending_cmd = nil;
+
+        fprintf(stderr, "Metal: GPU engine initialized on %s (grid=%d, 2-kernel pipeline).\n",
                 [[device name] UTF8String], grid_size);
         return eng;
     }
@@ -221,7 +242,11 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
 void gpu_engine_destroy(void *ctx) {
     if (!ctx) return;
     MetalEngine *eng = (MetalEngine *)ctx;
-    /* ARC handles ObjC objects. */
+    /* Wait for any pending GPU work before cleanup. */
+    if (eng->pending_cmd) {
+        [eng->pending_cmd waitUntilCompleted];
+        eng->pending_cmd = nil;
+    }
     free(eng);
 }
 
@@ -231,16 +256,27 @@ float *gpu_engine_h_ptr(void *ctx) {
     return (float *)[eng->h_buf contents];
 }
 
-/* Bin molecule positions into a per-cell count grid on CPU. */
-static void bin_molecules_f(const double *pos, int n_mol, int grid_size,
-                            double dx, int *count_grid) {
-    memset(count_grid, 0, grid_size * grid_size * sizeof(int));
-    for (int m = 0; m < n_mol; m++) {
-        int ix = (int)(pos[2 * m] / dx);
-        int iy = (int)(pos[2 * m + 1] / dx);
-        if (ix < 0) ix = 0; if (ix >= grid_size) ix = grid_size - 1;
-        if (iy < 0) iy = 0; if (iy >= grid_size) iy = grid_size - 1;
-        count_grid[ix * grid_size + iy]++;
+/* Ensure molecule position buffer is large enough. */
+static void ensure_tcr_pos_buf(MetalEngine *eng, int n_mol) {
+    if (n_mol > eng->max_tcr) {
+        eng->max_tcr = n_mol * 2;
+        eng->tcr_pos_buf = [eng->device newBufferWithLength:eng->max_tcr * 2 * sizeof(float)
+                                                    options:MTLResourceStorageModeShared];
+    }
+}
+static void ensure_cd45_pos_buf(MetalEngine *eng, int n_mol) {
+    if (n_mol > eng->max_cd45) {
+        eng->max_cd45 = n_mol * 2;
+        eng->cd45_pos_buf = [eng->device newBufferWithLength:eng->max_cd45 * 2 * sizeof(float)
+                                                     options:MTLResourceStorageModeShared];
+    }
+}
+
+/* Convert double positions to float and copy to GPU buffer. */
+static void upload_positions(const double *pos, int n_mol, id<MTLBuffer> buf) {
+    float *dst = (float *)[buf contents];
+    for (int i = 0; i < n_mol * 2; i++) {
+        dst[i] = (float)pos[i];
     }
 }
 
@@ -259,14 +295,22 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
         int half = n2 / 2;
         if (n_substeps < 1) n_substeps = 1;
 
-        /* h is the shared buffer directly (set up by sim_create). */
-        (void)h;
+        /* Wait for previous async GPU work before touching shared buffers. */
+        if (eng->pending_cmd) {
+            [eng->pending_cmd waitUntilCompleted];
+            eng->pending_cmd = nil;
+        }
 
-        /* Bin molecules on CPU (once for all substeps). */
-        bin_molecules_f(tcr_pos, n_tcr, grid_size, dx,
-                        (int *)[eng->tcr_count_buf contents]);
-        bin_molecules_f(cd45_pos, n_cd45, grid_size, dx,
-                        (int *)[eng->cd45_count_buf contents]);
+        (void)h;  /* h is the shared buffer directly */
+
+#ifdef KS_PROFILE
+        double _bt0 = _metal_clock_ms();
+#endif
+        /* Upload molecule positions to GPU (double→float conversion). */
+        ensure_tcr_pos_buf(eng, n_tcr);
+        ensure_cd45_pos_buf(eng, n_cd45);
+        upload_positions(tcr_pos, n_tcr, eng->tcr_pos_buf);
+        upload_positions(cd45_pos, n_cd45, eng->cd45_pos_buf);
 
         /* Copy pMHC counts (or fill with 1s if NULL = all cells have pMHC). */
         int *pmhc_gpu = (int *)[eng->pmhc_count_buf contents];
@@ -275,6 +319,9 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
         } else {
             for (int i = 0; i < n2; i++) pmhc_gpu[i] = 1;
         }
+#ifdef KS_PROFILE
+        _profile_bin_ms += _metal_clock_ms() - _bt0;
+#endif
 
         /* Build base params template. */
         GridParams base_params;
@@ -289,34 +336,76 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
         base_params.rng_key0 = eng->rng_key0;
         base_params.rng_key1 = eng->rng_key1;
 
-        /* Reset accept counter. */
-        int *acc = (int *)[eng->accept_buf contents];
-        *acc = 0;
-
         /* Thread group sizes. */
         MTLSize halfGrid = MTLSizeMake(half, 1, 1);
-        MTLSize fullGrid = MTLSizeMake(n2, 1, 1);
-
         NSUInteger pw = eng->propose_pipeline.maxTotalThreadsPerThreadgroup;
         if (pw > (NSUInteger)half) pw = (NSUInteger)half;
-        NSUInteger sw = eng->snapshot_pipeline.maxTotalThreadsPerThreadgroup;
-        if (sw > (NSUInteger)n2) sw = (NSUInteger)n2;
-        NSUInteger ew = eng->evaluate_pipeline.maxTotalThreadsPerThreadgroup;
+        NSUInteger ew = eng->evaluate_apply_pipeline.maxTotalThreadsPerThreadgroup;
         if (ew > (NSUInteger)half) ew = (NSUInteger)half;
-        NSUInteger aw = eng->apply_pipeline.maxTotalThreadsPerThreadgroup;
-        if (aw > (NSUInteger)half) aw = (NSUInteger)half;
-
         MTLSize ptg = MTLSizeMake(pw, 1, 1);
-        MTLSize stg = MTLSizeMake(sw, 1, 1);
         MTLSize etg = MTLSizeMake(ew, 1, 1);
-        MTLSize atg = MTLSizeMake(aw, 1, 1);
 
-        /* Encode all substeps × 2 colors × 4 phases into ONE command buffer. */
+        /* Bin kernel thread setup. */
+        NSUInteger bw = eng->bin_pipeline.maxTotalThreadsPerThreadgroup;
+        int max_mol = n_tcr > n_cd45 ? n_tcr : n_cd45;
+        if (bw > (NSUInteger)max_mol) bw = (NSUInteger)max_mol;
+        if (bw < 1) bw = 1;
+        MTLSize btg = MTLSizeMake(bw, 1, 1);
+
+        float inv_dx = 1.0f / (float)dx;
+
+        /* Encode ALL substeps × 2 colors into ONE command buffer.
+           Also prepend GPU binning for each substep. */
         id<MTLCommandBuffer> cmdBuf = [eng->queue commandBuffer];
 
+        /* Zero accept counter via blit to ensure GPU cache coherence. */
+        {
+            id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+            [blit fillBuffer:eng->accept_buf range:NSMakeRange(0, sizeof(int)) value:0];
+            [blit endEncoding];
+        }
+
         for (int sub = 0; sub < n_substeps; sub++) {
+            /* GPU binning: zero counts and bin TCR + CD45 positions. */
+            {
+                /* Zero tcr_count and cd45_count via blit. */
+                id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+                [blit fillBuffer:eng->tcr_count_buf range:NSMakeRange(0, n2 * sizeof(int)) value:0];
+                [blit fillBuffer:eng->cd45_count_buf range:NSMakeRange(0, n2 * sizeof(int)) value:0];
+                [blit endEncoding];
+            }
+
+            /* Bin TCR positions. */
+            if (n_tcr > 0) {
+                BinParams bp;
+                bp.grid_size = grid_size;
+                bp.inv_dx = inv_dx;
+                bp.n_mol = n_tcr;
+                id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
+                [enc setComputePipelineState:eng->bin_pipeline];
+                [enc setBuffer:eng->tcr_pos_buf offset:0 atIndex:0];
+                [enc setBuffer:eng->tcr_count_buf offset:0 atIndex:1];
+                [enc setBytes:&bp length:sizeof(BinParams) atIndex:2];
+                [enc dispatchThreads:MTLSizeMake(n_tcr, 1, 1) threadsPerThreadgroup:btg];
+                [enc endEncoding];
+            }
+
+            /* Bin CD45 positions. */
+            if (n_cd45 > 0) {
+                BinParams bp;
+                bp.grid_size = grid_size;
+                bp.inv_dx = inv_dx;
+                bp.n_mol = n_cd45;
+                id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
+                [enc setComputePipelineState:eng->bin_pipeline];
+                [enc setBuffer:eng->cd45_pos_buf offset:0 atIndex:0];
+                [enc setBuffer:eng->cd45_count_buf offset:0 atIndex:1];
+                [enc setBytes:&bp length:sizeof(BinParams) atIndex:2];
+                [enc dispatchThreads:MTLSizeMake(n_cd45, 1, 1) threadsPerThreadgroup:btg];
+                [enc endEncoding];
+            }
+
             for (int c = 0; c < 2; c++) {
-                /* Build per-color params with unique rng_offset. */
                 GridParams p = base_params;
                 p.color = c;
                 p.rng_offset = eng->rng_counter++;
@@ -332,21 +421,11 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                     [enc endEncoding];
                 }
 
-                /* 2. Snapshot */
+                /* 2. Evaluate + Apply (fused — no snapshot needed) */
                 {
                     id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
-                    [enc setComputePipelineState:eng->snapshot_pipeline];
+                    [enc setComputePipelineState:eng->evaluate_apply_pipeline];
                     [enc setBuffer:eng->h_buf offset:0 atIndex:0];
-                    [enc setBuffer:eng->h_snap_buf offset:0 atIndex:1];
-                    [enc dispatchThreads:fullGrid threadsPerThreadgroup:stg];
-                    [enc endEncoding];
-                }
-
-                /* 3. Evaluate */
-                {
-                    id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
-                    [enc setComputePipelineState:eng->evaluate_pipeline];
-                    [enc setBuffer:eng->h_snap_buf offset:0 atIndex:0];
                     [enc setBuffer:eng->tcr_count_buf offset:0 atIndex:1];
                     [enc setBuffer:eng->cd45_count_buf offset:0 atIndex:2];
                     [enc setBytes:&p length:sizeof(GridParams) atIndex:3];
@@ -356,26 +435,22 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                     [enc dispatchThreads:halfGrid threadsPerThreadgroup:etg];
                     [enc endEncoding];
                 }
-
-                /* 4. Apply */
-                {
-                    id<MTLComputeCommandEncoder> enc = [cmdBuf computeCommandEncoder];
-                    [enc setComputePipelineState:eng->apply_pipeline];
-                    [enc setBuffer:eng->h_buf offset:0 atIndex:0];
-                    [enc setBytes:&p length:sizeof(GridParams) atIndex:1];
-                    [enc setBuffer:eng->proposals_buf offset:0 atIndex:2];
-                    [enc dispatchThreads:halfGrid threadsPerThreadgroup:atg];
-                    [enc endEncoding];
-                }
             }
         }
 
         [cmdBuf commit];
-        [cmdBuf waitUntilCompleted];
 
+        /* Async: store pending command buffer. Caller must wait before
+           reading h[] or shared buffers (done at top of next call). */
+        eng->pending_cmd = cmdBuf;
+
+        /* For accept counting, we still need to wait (acceptances are read
+           by the caller immediately). Do a synchronous wait here. */
+        [cmdBuf waitUntilCompleted];
+        eng->pending_cmd = nil;
+
+        int *acc = (int *)[eng->accept_buf contents];
         *accepted += *acc;
         *total_proposals += (long)n2 * n_substeps;
-
-        /* No copy-back needed: h IS the shared buffer. */
     }
 }

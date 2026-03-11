@@ -333,6 +333,9 @@ int main(int argc, const char *argv[]) {
         sim_run(sim, n_steps);
     }
 
+#ifdef KS_PROFILE
+    sim_profile_report(n_steps);
+#endif
     double depletion = sim_depletion_width(sim);
     double tcr_mean_r = sim_mean_r(sim->tcr_pos, sim->n_tcr);
     double cd45_mean_r = sim_mean_r(sim->cd45_pos, sim->n_cd45);
