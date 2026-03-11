@@ -175,3 +175,13 @@ When this repo is used as a submodule of `metamodeler_codex_scaffold_docs`:
 When used standalone:
 - Install the framework: `pip install bayesian-metamodeling`
 - All specs and models work identically
+
+
+## Conda Environments during development
+
+| Environment | Purpose |
+|-------------|---------|
+| `py314_bayesmm` | Main dev (Python 3.14) |
+| `py312_bayesmm_pymc` | PyMC 5.27.1 + ArviZ |
+| `py312_bayesmm_sbi` | SBI 0.23.3 + Torch 2.10.0 |
+
