@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -13,12 +12,6 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.patches import Annulus
 import numpy as np
-
-# Auto-detect ffmpeg from the conda env bin directory (may not be on PATH).
-if shutil.which("ffmpeg") is None:
-    _env_ffmpeg = Path(sys.executable).parent / "ffmpeg"
-    if _env_ffmpeg.exists():
-        matplotlib.rcParams["animation.ffmpeg_path"] = str(_env_ffmpeg)
 
 # ── Physical constants (fallbacks when not in meta.json) ─────────────
 PATCH_SIZE_NM = 2000.0
