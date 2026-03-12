@@ -337,6 +337,7 @@ int main(int argc, const char *argv[]) {
     sim_profile_report(n_steps);
 #endif
     double depletion = sim_depletion_width(sim);
+    DepletionMetrics dm = sim_depletion_metrics(sim);
     double tcr_mean_r = sim_mean_r(sim->tcr_pos, sim->n_tcr);
     double cd45_mean_r = sim_mean_r(sim->cd45_pos, sim->n_cd45);
     double accept_rate = (sim->total_proposals > 0)
@@ -349,6 +350,11 @@ int main(int argc, const char *argv[]) {
             {"D_h_nm2_per_s", sim->D_h},
             {"D_mol_nm2_per_s", sim->D_mol},
             {"accept_rate", accept_rate},
+            {"depletion_cross_nn_median_nm", dm.cross_nn_median},
+            {"depletion_frontier_nn_gap_nm", dm.frontier_nn_gap},
+            {"depletion_ks_statistic", dm.ks_statistic},
+            {"depletion_overlap_coeff", dm.overlap_coeff},
+            {"depletion_percentile_gap_nm", dm.percentile_gap},
             {"dt_seconds", sim->dt},
             {"final_cd45_mean_r_nm", cd45_mean_r},
             {"final_tcr_mean_r_nm", tcr_mean_r},

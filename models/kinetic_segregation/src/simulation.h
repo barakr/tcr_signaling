@@ -99,8 +99,20 @@ void sim_run(SimState *s, int n_steps);
 /* Run a single MC sweep (Phase 1 + Phase 2). */
 void sim_step(SimState *s);
 
-/* Compute depletion width from current state. */
+/* Compute depletion width from current state (backward compat: median diff). */
 double sim_depletion_width(const SimState *s);
+
+/* Extended depletion metrics: statistical + geometric. */
+typedef struct {
+    double median_diff;       /* max(0, median(r_CD45) - median(r_TCR))           */
+    double percentile_gap;    /* P25(r_CD45) - P75(r_TCR), can be negative        */
+    double overlap_coeff;     /* radial histogram overlap, [0,1]                  */
+    double ks_statistic;      /* KS D-statistic on radial CDFs, [0,1]             */
+    double frontier_nn_gap;   /* trimmed median NN dist between frontier molecules */
+    double cross_nn_median;   /* median TCR→nearest-CD45 distance                 */
+} DepletionMetrics;
+
+DepletionMetrics sim_depletion_metrics(const SimState *s);
 
 /* Compute mean radial distance for TCR and CD45. */
 double sim_mean_r(const double *pos, int n);

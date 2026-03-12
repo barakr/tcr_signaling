@@ -21,7 +21,9 @@ INIT_HEIGHT_NM = 70.0
 COLOR_TCR = "#EE6677"       # rose — warm, prominent
 COLOR_CD45 = "#4477AA"      # blue — cool, easily separated from rose
 COLOR_PMHC = "#228833"      # green — distinct from rose TCR and blue CD45
-COLOR_DEPLETION = "#CCBB44"  # muted gold — annotation
+COLOR_DEPLETION = "#CCBB44"  # muted gold — annotation (partial separation)
+COLOR_DEPL_GOOD = "#228833"  # green — well separated (overlap < 0.1)
+COLOR_DEPL_POOR = "#CC3311"  # red — poor separation / overlap (overlap >= 0.4)
 
 
 def _even_figsize(w_in, h_in, dpi):
@@ -46,11 +48,55 @@ def load_frame(frames_dir: Path, step: int, grid_size: int, n_tcr: int, n_cd45: 
     return h, tcr_pos, cd45_pos
 
 
-def _compute_depletion_width(tcr_pos, cd45_pos, patch_size):
+def _compute_depletion_metrics(tcr_pos, cd45_pos, patch_size):
+    """Compute multiple depletion metrics from molecule positions (nm)."""
     center = patch_size / 2.0
     tcr_r = np.sqrt(np.sum((tcr_pos - center) ** 2, axis=1))
     cd45_r = np.sqrt(np.sum((cd45_pos - center) ** 2, axis=1))
-    return max(0.0, float(np.median(cd45_r) - np.median(tcr_r)))
+
+    median_diff = max(0.0, float(np.median(cd45_r) - np.median(tcr_r)))
+    tcr_p75 = float(np.percentile(tcr_r, 75))
+    cd45_p25 = float(np.percentile(cd45_r, 25))
+    pct_gap = cd45_p25 - tcr_p75
+
+    # Overlap coefficient via histogram.
+    r_max = patch_size * 0.7072
+    bins = np.linspace(0, r_max, 101)
+    h_tcr, _ = np.histogram(tcr_r, bins=bins, density=True)
+    h_cd45, _ = np.histogram(cd45_r, bins=bins, density=True)
+    bin_w = bins[1] - bins[0]
+    overlap = float(np.sum(np.minimum(h_tcr, h_cd45)) * bin_w)
+
+    # Frontier nearest-neighbor gap.
+    ft_mask = tcr_r > tcr_p75
+    fc_mask = cd45_r < cd45_p25
+    frontier_nn = 0.0
+    if np.any(ft_mask) and np.any(fc_mask):
+        ft_pos = tcr_pos[ft_mask]
+        fc_pos = cd45_pos[fc_mask]
+        half = patch_size / 2.0
+        nn_dists = []
+        for t in ft_pos:
+            dx = t[0] - fc_pos[:, 0]
+            dy = t[1] - fc_pos[:, 1]
+            dx = np.where(dx > half, dx - patch_size, np.where(dx < -half, dx + patch_size, dx))
+            dy = np.where(dy > half, dy - patch_size, np.where(dy < -half, dy + patch_size, dy))
+            nn_dists.append(np.min(np.sqrt(dx * dx + dy * dy)))
+        nn_arr = np.array(nn_dists)
+        lo = len(nn_arr) // 10
+        hi = len(nn_arr) - 1 - len(nn_arr) // 10
+        if lo > hi:
+            lo, hi = 0, len(nn_arr) - 1
+        frontier_nn = float(np.median(np.sort(nn_arr)[lo:hi + 1]))
+
+    return {
+        "median_diff_nm": median_diff,
+        "pct_gap_nm": pct_gap,
+        "overlap": overlap,
+        "frontier_nn_nm": frontier_nn,
+        "tcr_p75_um": tcr_p75 / 1000.0,
+        "cd45_p25_um": cd45_p25 / 1000.0,
+    }
 
 
 def main():
@@ -196,25 +242,52 @@ def main():
         tcr_scat.set_offsets(tcr_um)
         cd45_scat.set_offsets(cd45_um)
 
-        # Depletion annulus
-        tcr_r = np.sqrt(np.sum((tcr_um - c_um) ** 2, axis=1))
-        cd45_r = np.sqrt(np.sum((cd45_um - c_um) ** 2, axis=1))
-        inner_r = np.percentile(tcr_r, 75)
-        outer_r = np.percentile(cd45_r, 25)
-        band = max(0.001, outer_r - inner_r)
+        # Depletion metrics and annulus
+        metrics = _compute_depletion_metrics(tcr, cd45, patch_nm)
+        inner_r = metrics["tcr_p75_um"]
+        outer_r = metrics["cd45_p25_um"]
+        ovl = metrics["overlap"]
+
         depl_annulus.set_center((c_um, c_um))
-        depl_annulus.set_radii(outer_r)
-        depl_annulus.set_width(band)
+        if outer_r > inner_r:
+            # Clear gap: show depletion zone
+            depl_annulus.set_radii(outer_r)
+            depl_annulus.set_width(outer_r - inner_r)
+            depl_annulus.set_alpha(0.12)
+            depl_annulus.set_linestyle("-")
+            if ovl < 0.1:
+                depl_annulus.set_facecolor(COLOR_DEPL_GOOD)
+                depl_annulus.set_edgecolor(COLOR_DEPL_GOOD)
+            elif ovl < 0.4:
+                depl_annulus.set_facecolor(COLOR_DEPLETION)
+                depl_annulus.set_edgecolor(COLOR_DEPLETION)
+            else:
+                depl_annulus.set_facecolor(COLOR_DEPL_POOR)
+                depl_annulus.set_edgecolor(COLOR_DEPL_POOR)
+        else:
+            # Overlap regime: show overlap zone (red, dashed)
+            depl_annulus.set_radii(inner_r)
+            depl_annulus.set_width(max(0.001, inner_r - outer_r))
+            depl_annulus.set_facecolor(COLOR_DEPL_POOR)
+            depl_annulus.set_edgecolor(COLOR_DEPL_POOR)
+            depl_annulus.set_alpha(0.08)
+            depl_annulus.set_linestyle("--")
 
         # Height
         im.set_data(h.T)
 
-        # Title with physical time and depletion
+        # Title: frontier NN gap + overlap
         sim_step = fidx * dump_interval
         t_phys = sim_step * dt if dt > 0 else 0
-        depl_w = _compute_depletion_width(tcr, cd45, patch_nm)
         t_str = f"t = {t_phys:.3f} s" if t_phys < 1 else f"t = {t_phys:.2f} s"
-        title_text.set_text(f"{t_str}   |   depletion = {depl_w:.0f} nm")
+        fnn = metrics["frontier_nn_nm"]
+        gap = metrics["pct_gap_nm"]
+        if gap > 0:
+            title_text.set_text(
+                f"{t_str}   |   front gap {fnn:.0f} nm  (overlap {ovl:.2f})")
+        else:
+            title_text.set_text(
+                f"{t_str}   |   mixed (overlap {ovl:.2f}, gap {gap:.0f} nm)")
 
         # Progress
         frac = frame_idx / max(1, len(steps) - 1)

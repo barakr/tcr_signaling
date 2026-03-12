@@ -627,6 +627,193 @@ double sim_depletion_width(const SimState *s) {
     return w > 0.0 ? w : 0.0;
 }
 
+/* Minimum-image distance helper (same as potentials.c _mic). */
+static inline double _mic_sim(double d, double half_patch, double patch_size) {
+    if (d > half_patch) return d - patch_size;
+    if (d < -half_patch) return d + patch_size;
+    return d;
+}
+
+/* Bubble sort (small N, deterministic across platforms). */
+static void _bsort(double *a, int n) {
+    for (int i = 0; i < n - 1; i++)
+        for (int j = i + 1; j < n; j++)
+            if (a[j] < a[i]) {
+                double tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+            }
+}
+
+/* Linearly interpolated percentile on sorted array of length n. */
+static double _percentile(const double *sorted, int n, double p) {
+    double idx = p * (n - 1) / 100.0;
+    int lo = (int)idx;
+    if (lo >= n - 1) return sorted[n - 1];
+    double frac = idx - lo;
+    return sorted[lo] * (1.0 - frac) + sorted[lo + 1] * frac;
+}
+
+DepletionMetrics sim_depletion_metrics(const SimState *s) {
+    DepletionMetrics dm = {0};
+    double center = PATCH_SIZE_NM / 2.0;
+    double half_patch = PATCH_SIZE_NM / 2.0;
+    int nt = s->n_tcr, nc = s->n_cd45;
+
+    /* Compute radial distances from patch center. */
+    double *tcr_r = (double *)malloc(nt * sizeof(double));
+    double *cd45_r = (double *)malloc(nc * sizeof(double));
+    for (int i = 0; i < nt; i++) {
+        double dx_ = s->tcr_pos[2 * i] - center;
+        double dy_ = s->tcr_pos[2 * i + 1] - center;
+        tcr_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
+    }
+    for (int i = 0; i < nc; i++) {
+        double dx_ = s->cd45_pos[2 * i] - center;
+        double dy_ = s->cd45_pos[2 * i + 1] - center;
+        cd45_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
+    }
+
+    _bsort(tcr_r, nt);
+    _bsort(cd45_r, nc);
+
+    /* Metric 1: median_diff (same as sim_depletion_width). */
+    double tcr_med = tcr_r[nt / 2];
+    double cd45_med = cd45_r[nc / 2];
+    dm.median_diff = (cd45_med > tcr_med) ? cd45_med - tcr_med : 0.0;
+
+    /* Metric 2: percentile_gap = P25(cd45) - P75(tcr). */
+    double tcr_p75 = _percentile(tcr_r, nt, 75.0);
+    double cd45_p25 = _percentile(cd45_r, nc, 25.0);
+    dm.percentile_gap = cd45_p25 - tcr_p75;
+
+    /* Metric 3: overlap_coeff via histogram. */
+    {
+        double r_max = PATCH_SIZE_NM * 0.7072; /* sqrt(2)/2 ≈ diagonal half */
+        int nbins = 100;
+        double bin_w = r_max / nbins;
+        double *h_tcr = (double *)calloc(nbins, sizeof(double));
+        double *h_cd45 = (double *)calloc(nbins, sizeof(double));
+
+        for (int i = 0; i < nt; i++) {
+            int b = (int)(tcr_r[i] / bin_w);
+            if (b >= nbins) b = nbins - 1;
+            h_tcr[b] += 1.0;
+        }
+        for (int i = 0; i < nc; i++) {
+            int b = (int)(cd45_r[i] / bin_w);
+            if (b >= nbins) b = nbins - 1;
+            h_cd45[b] += 1.0;
+        }
+        /* Normalize to density. */
+        for (int i = 0; i < nbins; i++) {
+            h_tcr[i] /= (nt * bin_w);
+            h_cd45[i] /= (nc * bin_w);
+        }
+        double overlap = 0.0;
+        for (int i = 0; i < nbins; i++) {
+            double m = (h_tcr[i] < h_cd45[i]) ? h_tcr[i] : h_cd45[i];
+            overlap += m * bin_w;
+        }
+        dm.overlap_coeff = overlap;
+        free(h_tcr);
+        free(h_cd45);
+    }
+
+    /* Metric 4: KS statistic via merge-walk of sorted arrays. */
+    {
+        int it = 0, ic = 0;
+        double max_d = 0.0;
+        while (it < nt || ic < nc) {
+            double ft = (double)it / nt;
+            double fc = (double)ic / nc;
+            double d = ft - fc;
+            if (d < 0) d = -d;
+            if (d > max_d) max_d = d;
+
+            /* Advance the pointer with the smaller current value. */
+            if (it < nt && (ic >= nc || tcr_r[it] <= cd45_r[ic]))
+                it++;
+            else
+                ic++;
+        }
+        dm.ks_statistic = max_d;
+    }
+
+    /* Metric 5: frontier nearest-neighbor gap.
+     * Frontier TCRs: r > P75 (outermost 25%).
+     * Frontier CD45s: r < P25 (innermost 25%). */
+    {
+        int n_ft = 0, n_fc = 0;
+        for (int i = 0; i < nt; i++)
+            if (tcr_r[i] > tcr_p75) n_ft++;
+        for (int i = 0; i < nc; i++)
+            if (cd45_r[i] < cd45_p25) n_fc++;
+
+        if (n_ft > 0 && n_fc > 0) {
+            /* Collect frontier molecule indices. */
+            int *ft_idx = (int *)malloc(n_ft * sizeof(int));
+            int *fc_idx = (int *)malloc(n_fc * sizeof(int));
+            int fi = 0, ci = 0;
+            for (int i = 0; i < nt; i++)
+                if (tcr_r[i] > tcr_p75) ft_idx[fi++] = i;
+            for (int i = 0; i < nc; i++)
+                if (cd45_r[i] < cd45_p25) fc_idx[ci++] = i;
+
+            /* For each frontier TCR, find nearest frontier CD45. */
+            double *nn_dist = (double *)malloc(n_ft * sizeof(double));
+            for (int i = 0; i < n_ft; i++) {
+                int ti = ft_idx[i];
+                double tx = s->tcr_pos[2 * ti];
+                double ty = s->tcr_pos[2 * ti + 1];
+                double best = 1e18;
+                for (int j = 0; j < n_fc; j++) {
+                    int cj = fc_idx[j];
+                    double dx_ = _mic_sim(tx - s->cd45_pos[2 * cj], half_patch, PATCH_SIZE_NM);
+                    double dy_ = _mic_sim(ty - s->cd45_pos[2 * cj + 1], half_patch, PATCH_SIZE_NM);
+                    double d2 = dx_ * dx_ + dy_ * dy_;
+                    if (d2 < best) best = d2;
+                }
+                nn_dist[i] = sqrt(best);
+            }
+            _bsort(nn_dist, n_ft);
+
+            /* Trimmed median: exclude bottom/top 10%. */
+            int lo = n_ft / 10;
+            int hi = n_ft - 1 - n_ft / 10;
+            if (lo > hi) { lo = 0; hi = n_ft - 1; }
+            dm.frontier_nn_gap = nn_dist[(lo + hi) / 2];
+
+            free(nn_dist);
+            free(ft_idx);
+            free(fc_idx);
+        }
+    }
+
+    /* Metric 6: cross-type nearest-neighbor median.
+     * For each TCR, distance to nearest CD45. */
+    {
+        double *nn_dist = (double *)malloc(nt * sizeof(double));
+        for (int i = 0; i < nt; i++) {
+            double tx = s->tcr_pos[2 * i];
+            double ty = s->tcr_pos[2 * i + 1];
+            double best = 1e18;
+            for (int j = 0; j < nc; j++) {
+                double dx_ = _mic_sim(tx - s->cd45_pos[2 * j], half_patch, PATCH_SIZE_NM);
+                double dy_ = _mic_sim(ty - s->cd45_pos[2 * j + 1], half_patch, PATCH_SIZE_NM);
+                double d2 = dx_ * dx_ + dy_ * dy_;
+                if (d2 < best) best = d2;
+            }
+            nn_dist[i] = sqrt(best);
+        }
+        _bsort(nn_dist, nt);
+        dm.cross_nn_median = nn_dist[nt / 2];
+        free(nn_dist);
+    }
+
+    free(tcr_r);
+    free(cd45_r);
+    return dm;
+}
+
 double sim_mean_r(const double *pos, int n) {
     double center = PATCH_SIZE_NM / 2.0;
     double sum = 0.0;
