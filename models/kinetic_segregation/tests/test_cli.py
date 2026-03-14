@@ -139,6 +139,44 @@ class TestBinaryCli:
         assert "final_cd45_mean_r_nm" in diag
         assert "n_steps_actual" in diag
         assert 0.0 <= diag["accept_rate"] <= 1.0
+        # Auto-cal diagnostics
+        assert "dt_auto_seconds" in diag
+        assert diag["dt_auto_seconds"] > 0
+
+    def test_dt_factor_flag(self, tmp_path):
+        """--dt_factor is accepted and scales dt."""
+        result = subprocess.run(
+            [str(_BINARY),
+             "--time_sec", "10",
+             "--rigidity_kT", "10",
+             "--n_steps", "3",
+             "--grid_size", "16",
+             "--no-gpu",
+             "--dt_factor", "0.5",
+             "--run-dir", str(tmp_path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        data = json.loads(result.stdout.strip())
+        diag = data["diagnostics"]
+        assert diag["dt_factor"] == pytest.approx(0.5)
+        assert diag["dt_seconds"] == pytest.approx(diag["dt_auto_seconds"] * 0.5, rel=1e-6)
+
+    def test_dt_and_dt_factor_mutually_exclusive(self, tmp_path):
+        """--dt and --dt_factor together should error."""
+        result = subprocess.run(
+            [str(_BINARY),
+             "--time_sec", "10",
+             "--rigidity_kT", "10",
+             "--n_steps", "3",
+             "--grid_size", "16",
+             "--no-gpu",
+             "--dt", "0.001",
+             "--dt_factor", "0.5",
+             "--run-dir", str(tmp_path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode != 0
 
 
 class TestPythonWrapper:

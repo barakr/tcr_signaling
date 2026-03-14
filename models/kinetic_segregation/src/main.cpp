@@ -47,7 +47,8 @@ static void print_usage(std::string_view prog) {
               << " --time_sec FLOAT --rigidity_kT FLOAT --run-dir PATH\n"
               << "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
               << "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
-              << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n"
+              << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT]\n"
+              << "       [--dt FLOAT] [--dt_factor FLOAT]\n"
               << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n"
               << "       [--u_assoc FLOAT] [--sigma_bind FLOAT] [--sigma_r FLOAT]\n"
               << "       [--patch_size FLOAT]\n";
@@ -89,6 +90,7 @@ static void load_params_file(const std::string &path,
                              int &seed, int &n_tcr, int &n_cd45,
                              int &n_steps_arg, int &grid_size,
                              double &D_mol_arg, double &D_h_arg, double &dt_arg,
+                             double &dt_factor_arg,
                              double &cd45_height_arg, double &cd45_k_rep_arg,
                              double &mol_repulsion_eps_arg, double &mol_repulsion_rcut_arg,
                              int &n_pmhc_arg, int &pmhc_seed_arg,
@@ -130,6 +132,7 @@ static void load_params_file(const std::string &path,
     get_d("D_mol", 0.0, D_mol_arg);
     get_d("D_h", 0.0, D_h_arg);
     get_d("dt", -1.0, dt_arg);
+    get_d("dt_factor", 0.0, dt_factor_arg);
     get_d("cd45_height", 0.0, cd45_height_arg);
     get_d("cd45_k_rep", 0.0, cd45_k_rep_arg);
     get_d("mol_repulsion_eps", 0.0, mol_repulsion_eps_arg);
@@ -168,7 +171,7 @@ int main(int argc, const char *argv[]) {
     bool dump_frames_flag = false;
     int dump_interval = 1;
     int grid_substeps = 1;
-    double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0;
+    double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0, dt_factor_arg = 0.0;
     double cd45_height_arg = 0.0, cd45_k_rep_arg = 0.0;
     double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
     int n_pmhc_arg = 0;
@@ -217,6 +220,8 @@ int main(int argc, const char *argv[]) {
             D_h_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--dt") && i + 1 < argc)
             dt_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--dt_factor") && i + 1 < argc)
+            dt_factor_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--cd45_height") && i + 1 < argc)
             cd45_height_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--cd45_k_rep") && i + 1 < argc)
@@ -270,7 +275,7 @@ int main(int argc, const char *argv[]) {
         load_params_file(params_file,
                          time_sec, rigidity, seed, n_tcr, n_cd45,
                          n_steps_arg, grid_size, D_mol_arg, D_h_arg, dt_arg,
-                         cd45_height_arg, cd45_k_rep_arg,
+                         dt_factor_arg, cd45_height_arg, cd45_k_rep_arg,
                          mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
                          n_pmhc_arg, pmhc_seed_arg,
                          pmhc_mode_arg, pmhc_radius_arg,
@@ -282,6 +287,12 @@ int main(int argc, const char *argv[]) {
 
     if (time_sec < 0 || rigidity < 0 || run_dir.empty()) {
         print_usage(argv[0]);
+        return 1;
+    }
+
+    /* --dt and --dt_factor are mutually exclusive. */
+    if (dt_arg > 0.0 && dt_factor_arg > 0.0) {
+        std::cerr << "Error: --dt and --dt_factor are mutually exclusive\n";
         return 1;
     }
 
@@ -299,7 +310,7 @@ int main(int argc, const char *argv[]) {
     auto *sim = sim_create(grid_size, n_tcr, n_cd45,
                            rigidity, u_assoc_val, point_seed,
                            use_gpu, D_mol_arg, D_h_arg, dt_arg,
-                           cd45_height_arg, cd45_k_rep_arg,
+                           dt_factor_arg, cd45_height_arg, cd45_k_rep_arg,
                            mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
                            n_pmhc_arg, pmhc_sd,
                            pmhc_mode_arg, pmhc_radius_arg,
@@ -382,6 +393,8 @@ int main(int argc, const char *argv[]) {
             {"depletion_overlap_coeff", dm.overlap_coeff},
             {"depletion_percentile_gap_nm", dm.percentile_gap},
             {"dt_seconds", sim->dt},
+            {"dt_auto_seconds", sim->dt_auto},
+            {"dt_factor", sim->dt_factor},
             {"final_cd45_mean_r_nm", cd45_mean_r},
             {"final_tcr_mean_r_nm", tcr_mean_r},
             {"n_steps_actual", n_steps},

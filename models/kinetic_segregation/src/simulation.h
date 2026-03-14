@@ -38,6 +38,8 @@ typedef struct {
     double step_size_mol;
     double step_size_h;
     double dt;                /* physical time step (seconds) */
+    double dt_auto;           /* physics-derived auto-calibrated dt (before override) */
+    double dt_factor;         /* user-provided multiplier (0 = not used) */
     double D_mol;             /* molecular diffusion coefficient (nm²/s) */
     double D_h;               /* membrane height diffusion coefficient (nm²/s) */
     double cd45_height;       /* CD45 ectodomain height (nm) */
@@ -89,6 +91,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
                      double D_mol, double D_h, double dt_override,
+                     double dt_factor,
                      double cd45_height, double k_rep,
                      double mol_repulsion_eps, double mol_repulsion_rcut,
                      int n_pmhc, uint64_t pmhc_seed,

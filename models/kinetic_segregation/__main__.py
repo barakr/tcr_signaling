@@ -48,6 +48,8 @@ def main() -> int:
     parser.add_argument("--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s)")
     parser.add_argument("--D_h", type=float, default=None, help="Membrane height diffusion coeff (nm²/s)")
     parser.add_argument("--dt", type=float, default=None, help="Override time step (seconds)")
+    parser.add_argument("--dt_factor", type=float, default=None,
+                        help="Multiply auto-calibrated dt by this factor")
     parser.add_argument("--cd45_height", type=float, default=None, help="CD45 ectodomain height (nm)")
     parser.add_argument("--cd45_k_rep", type=float, default=None, help="CD45 repulsive spring constant (kT/nm²)")
     parser.add_argument("--mol_repulsion_eps", type=float, default=None, help="Soft molecular repulsion strength (kT)")
@@ -80,6 +82,10 @@ def main() -> int:
     if args.grid_size is None:
         args.grid_size = 64
 
+    # Mutually exclusive: --dt and --dt_factor
+    if args.dt is not None and args.dt_factor is not None:
+        parser.error("--dt and --dt_factor are mutually exclusive")
+
     # Validate required params
     if args.time_sec is None:
         parser.error("--time_sec is required (via CLI or param file)")
@@ -110,6 +116,8 @@ def main() -> int:
         cmd.extend(["--D_h", str(args.D_h)])
     if args.dt is not None:
         cmd.extend(["--dt", str(args.dt)])
+    if args.dt_factor is not None:
+        cmd.extend(["--dt_factor", str(args.dt_factor)])
     if args.cd45_height is not None:
         cmd.extend(["--cd45_height", str(args.cd45_height)])
     if args.cd45_k_rep is not None:

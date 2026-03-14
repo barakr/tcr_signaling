@@ -94,6 +94,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      double kappa, double u_assoc, uint64_t seed,
                      int use_gpu,
                      double D_mol, double D_h, double dt_override,
+                     double dt_factor,
                      double cd45_height, double k_rep,
                      double mol_repulsion_eps, double mol_repulsion_rcut,
                      int n_pmhc, uint64_t pmhc_seed,
@@ -142,29 +143,50 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         s->k_rep = 1.0;
     }
 
-    /* Time step and step sizes. */
+    /* --- Universal auto-calibrated dt ---
+     * Always compute dt_auto from physics (stability + force-field),
+     * then apply user override (--dt absolute or --dt_factor multiplier). */
+
+    /* Phase 1: stability-constrained dt (membrane height dynamics). */
+    double dt_stable = (s->dx * s->dx) / (2.0 * D_h * kappa);
+    s->dt = dt_stable * DT_SAFETY;
+    s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
+    s->step_size_h = sqrt(2.0 * D_h * s->dt);
+
+    /* Phase 2: force-field calibration may reduce dt further. */
+    calibrate_dt(s, D_mol, D_h);
+
+    /* Preserve paper-mode fixed height step (independent of dt). */
+    if (step_mode == 1) {
+        s->step_size_h = STEP_H_PAPER;
+    }
+
+    /* Store the physics-derived dt before any user override. */
+    s->dt_auto = s->dt;
+    s->dt_factor = dt_factor;
+
+    /* Phase 3: apply user override (mutually exclusive). */
     if (dt_override > 0.0) {
         s->dt = dt_override;
         s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        s->step_size_h = sqrt(2.0 * D_h * s->dt);
-    } else if (step_mode == 1) {
-        /* Paper mode: fixed dt and height step. */
-        s->dt = DT_PAPER;
+        if (step_mode != 1)
+            s->step_size_h = sqrt(2.0 * D_h * s->dt);
+    } else if (dt_factor > 0.0) {
+        s->dt = s->dt_auto * dt_factor;
         s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        s->step_size_h = STEP_H_PAPER;
-    } else {
-        /* Brownian dynamics time step from stability constraint. */
-        double dt_stable = (s->dx * s->dx) / (2.0 * D_h * kappa);
-        s->dt = dt_stable * DT_SAFETY;
-        s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        s->step_size_h = sqrt(2.0 * D_h * s->dt);
+        if (step_mode != 1)
+            s->step_size_h = sqrt(2.0 * D_h * s->dt);
     }
 
-    /* Force-field aware step-size calibration.
-     * Skip if user set explicit --dt, or if paper mode (intentional fixed dt). */
-    if (dt_override <= 0.0 && step_mode != 1) {
-        calibrate_dt(s, D_mol, D_h);
-    }
+    /* Diagnostic: always report auto-cal result. */
+    fprintf(stderr, "AUTO-DT: dt_auto=%.4g s (step=%.2f nm)",
+            s->dt_auto, sqrt(2.0 * D_mol * s->dt_auto));
+    if (dt_override > 0.0)
+        fprintf(stderr, " → overridden to dt=%.4g s (--dt)", s->dt);
+    else if (dt_factor > 0.0)
+        fprintf(stderr, " → scaled to dt=%.4g s (--dt_factor %.3g)",
+                s->dt, dt_factor);
+    fprintf(stderr, "\n");
 
     s->h = (float *)malloc(grid_size * grid_size * sizeof(float));
     s->tcr_pos = (double *)malloc(n_tcr * 2 * sizeof(double));
@@ -454,7 +476,7 @@ static void bin_molecules(const double *pos, int n_mol, int n, double dx,
 }
 
 /* Auto-calibrate dt so step_size_mol resolves the smallest force-field scale.
- * Only called when dt is NOT explicitly overridden (dt_override <= 0).
+ * Always called during initialization to compute dt_auto.
  * Considers: sigma_r (gaussian binding), mol_repulsion_rcut (excluded vol). */
 static void calibrate_dt(SimState *s, double D_mol, double D_h) {
     double min_scale = s->dx;  /* grid cell size as upper bound */

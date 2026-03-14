@@ -1,5 +1,5 @@
 {
-  "description": "Baseline reference values recorded after shared-physics-header refactor (FNV-1a seed derivation). Used for regression testing.",
+  "description": "Baseline reference values recorded with universal auto-calibrated dt (stability + force-field). FNV-1a seed derivation, pMHC influence, h0_tcr centering.",
   "params": {
     "time_sec": 5.0,
     "rigidity_kT": 20.0,
@@ -10,15 +10,15 @@
     "n_cd45": 500
   },
   "gpu": {
-    "depletion_width_nm": 465.359736,
-    "accept_rate": 0.820688,
-    "final_tcr_mean_r_nm": 433.695217,
-    "final_cd45_mean_r_nm": 763.021990
+    "depletion_width_nm": 445.705139,
+    "accept_rate": 0.825643,
+    "final_tcr_mean_r_nm": 386.285217,
+    "final_cd45_mean_r_nm": 756.038078
   },
   "cpu": {
-    "depletion_width_nm": 443.444856,
-    "accept_rate": 0.821167,
-    "final_tcr_mean_r_nm": 427.062672,
-    "final_cd45_mean_r_nm": 770.830732
+    "depletion_width_nm": 423.155501,
+    "accept_rate": 0.826015,
+    "final_tcr_mean_r_nm": 383.443501,
+    "final_cd45_mean_r_nm": 756.301483
   }
 }

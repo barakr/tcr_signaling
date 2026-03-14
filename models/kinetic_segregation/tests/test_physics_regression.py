@@ -182,18 +182,48 @@ class TestStepModes:
     def test_paper_mode(self, tmp_path):
         data = _run(tmp_path, label="paper", step_mode="paper", n_steps=50)
         diag = data["diagnostics"]
-        assert diag["dt_seconds"] == pytest.approx(0.01, abs=1e-6)
+        # dt is auto-calibrated (no longer fixed at DT_PAPER=0.01)
+        assert "dt_auto_seconds" in diag
+        assert diag["dt_auto_seconds"] > 0
+        assert diag["dt_seconds"] == pytest.approx(diag["dt_auto_seconds"])
+        # Paper mode preserves fixed height step = 1.0 nm
+        assert diag["step_size_h_nm"] == pytest.approx(1.0, abs=1e-6)
 
     def test_brownian_mode(self, tmp_path):
         data = _run(tmp_path, label="brown", step_mode="brownian", n_steps=50)
         diag = data["diagnostics"]
-        # Brownian dt should be different from paper's fixed 0.01
-        assert diag["dt_seconds"] != pytest.approx(0.01, abs=1e-6)
+        assert "dt_auto_seconds" in diag
+        assert diag["dt_seconds"] == pytest.approx(diag["dt_auto_seconds"])
+        # Brownian mode derives step_size_h from dt (not fixed)
+        assert diag["step_size_h_nm"] != pytest.approx(1.0, abs=0.01)
 
-    def test_paper_vs_brownian_different_dt(self, tmp_path):
+    def test_paper_vs_brownian_same_dt_different_step_h(self, tmp_path):
         d_paper = _run(tmp_path, label="pmode", step_mode="paper", n_steps=20)
         d_brown = _run(tmp_path, label="bmode", step_mode="brownian", n_steps=20)
-        assert d_paper["diagnostics"]["dt_seconds"] != d_brown["diagnostics"]["dt_seconds"]
+        # Same physics → same auto-calibrated dt
+        assert (d_paper["diagnostics"]["dt_seconds"]
+                == pytest.approx(d_brown["diagnostics"]["dt_seconds"]))
+        # But different step_size_h: paper=1.0 nm fixed, brownian=derived
+        assert d_paper["diagnostics"]["step_size_h_nm"] == pytest.approx(1.0)
+        assert d_paper["diagnostics"]["step_size_h_nm"] != pytest.approx(
+            d_brown["diagnostics"]["step_size_h_nm"], abs=0.01)
+
+    def test_dt_factor(self, tmp_path):
+        """--dt_factor scales auto-calibrated dt."""
+        d_auto = _run(tmp_path, label="auto", n_steps=20)
+        d_half = _run(tmp_path, label="half", dt_factor=0.5, n_steps=20)
+        dt_auto = d_auto["diagnostics"]["dt_auto_seconds"]
+        assert d_half["diagnostics"]["dt_seconds"] == pytest.approx(dt_auto * 0.5, rel=1e-6)
+        # dt_auto should be the same regardless of factor
+        assert d_half["diagnostics"]["dt_auto_seconds"] == pytest.approx(dt_auto, rel=1e-6)
+
+    def test_dt_override_reports_auto(self, tmp_path):
+        """--dt still reports dt_auto_seconds even when overridden."""
+        data = _run(tmp_path, label="override", dt=0.001, n_steps=20)
+        diag = data["diagnostics"]
+        assert diag["dt_seconds"] == pytest.approx(0.001)
+        assert diag["dt_auto_seconds"] > 0
+        assert diag["dt_auto_seconds"] != pytest.approx(0.001)
 
 
 class TestMolRepulsion:
