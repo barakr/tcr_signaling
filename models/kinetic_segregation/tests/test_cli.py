@@ -36,7 +36,7 @@ class TestBinaryCli:
         result = subprocess.run(
             [str(_BINARY),
              "--time_sec", "10",
-             "--rigidity_kT_nm2", "10",
+             "--rigidity_kT", "10",
              "--seed", "42",
              "--n_steps", "5",
              "--grid_size", "16",
@@ -52,13 +52,13 @@ class TestBinaryCli:
         assert "depletion_width_nm" in data
         assert "inputs" in data
         assert data["inputs"]["time_sec"] == 10.0
-        assert data["inputs"]["rigidity_kT_nm2"] == 10.0
+        assert data["inputs"]["rigidity_kT"] == 10.0
 
     def test_stdout_is_valid_json(self, tmp_path):
         result = subprocess.run(
             [str(_BINARY),
              "--time_sec", "5",
-             "--rigidity_kT_nm2", "5",
+             "--rigidity_kT", "5",
              "--seed", "1",
              "--n_steps", "3",
              "--grid_size", "16",
@@ -86,7 +86,7 @@ class TestBinaryCli:
             result = subprocess.run(
                 [str(_BINARY),
                  "--time_sec", "10",
-                 "--rigidity_kT_nm2", "20",
+                 "--rigidity_kT", "20",
                  "--seed", "123",
                  "--n_steps", "5",
                  "--grid_size", "16",
@@ -107,7 +107,7 @@ class TestBinaryCli:
             result = subprocess.run(
                 [str(_BINARY),
                  "--time_sec", "10",
-                 "--rigidity_kT_nm2", "20",
+                 "--rigidity_kT", "20",
                  "--seed", "123",
                  "--n_steps", "5",
                  "--grid_size", "16",
@@ -124,7 +124,7 @@ class TestBinaryCli:
         result = subprocess.run(
             [str(_BINARY),
              "--time_sec", "10",
-             "--rigidity_kT_nm2", "10",
+             "--rigidity_kT", "10",
              "--n_steps", "3",
              "--grid_size", "16",
              "--no-gpu",
@@ -152,7 +152,7 @@ class TestPythonWrapper:
         result = subprocess.run(
             [sys.executable, "-m", "models.kinetic_segregation",
              "--time_sec", "5",
-             "--rigidity_kT_nm2", "10",
+             "--rigidity_kT", "10",
              "--n_steps", "3",
              "--grid_size", "16",
              "--no-gpu",

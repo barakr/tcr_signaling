@@ -37,7 +37,7 @@ def _run_c(tmp_path, seed, use_gpu=False, label="c"):
     cmd = [
         str(_BINARY),
         "--time_sec", str(TIME_SEC),
-        "--rigidity_kT_nm2", str(RIGIDITY),
+        "--rigidity_kT", str(RIGIDITY),
         "--seed", str(seed),
         "--n_steps", str(N_STEPS),
         "--grid_size", str(GRID_SIZE),
@@ -196,7 +196,7 @@ class TestAcceptRateGap:
         cmd = [
             str(binary),
             "--time_sec", "10.0",
-            "--rigidity_kT_nm2", "20.0",
+            "--rigidity_kT", "20.0",
             "--seed", str(seed),
             "--n_steps", str(n_steps),
             "--grid_size", str(grid_size),
@@ -263,7 +263,7 @@ class TestGridConvergence:
                 cmd = [
                     str(_BINARY),
                     "--time_sec", "10.0",
-                    "--rigidity_kT_nm2", "30.0",
+                    "--rigidity_kT", "30.0",
                     "--seed", str(seed),
                     "--grid_size", str(grid),
                     "--run-dir", str(rd),

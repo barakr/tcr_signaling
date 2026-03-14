@@ -33,9 +33,9 @@ def lib():
         pytest.skip("Test library not available")
     lib = ctypes.CDLL(str(_LIB_PATH))
 
-    # tcr_pmhc_potential(double h, double u_assoc, double sigma_bind) -> double
+    # tcr_pmhc_potential(double h, double h0_tcr, double u_assoc, double sigma_bind) -> double
     lib.tcr_pmhc_potential.restype = ctypes.c_double
-    lib.tcr_pmhc_potential.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
+    lib.tcr_pmhc_potential.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
 
     # cd45_repulsion(double h, double cd45_height, double k_rep) -> double
     lib.cd45_repulsion.restype = ctypes.c_double
@@ -63,34 +63,58 @@ def lib():
 
 
 class TestTcrPotentialC:
-    def test_zero_height(self, lib):
-        """E(h=0) = -u_assoc."""
-        e = lib.tcr_pmhc_potential(0.0, 20.0, 3.0)
+    """Tests for TCR-pMHC Gaussian well centered at h0_tcr:
+    E = -u_assoc * exp(-(h - h0_tcr)^2 / (2*sigma^2))."""
+
+    def test_at_h0_tcr(self, lib):
+        """E(h=h0_tcr) = -u_assoc (maximum binding at equilibrium bond length)."""
+        h0_tcr = 13.0
+        e = lib.tcr_pmhc_potential(h0_tcr, h0_tcr, 20.0, 3.0)
         assert e == pytest.approx(-20.0)
 
     def test_far_away(self, lib):
-        """Potential decays to ~0 far from surface."""
-        e = lib.tcr_pmhc_potential(100.0, 20.0, 3.0)
+        """Potential decays to ~0 far from h0_tcr."""
+        h0_tcr = 13.0
+        e = lib.tcr_pmhc_potential(100.0, h0_tcr, 20.0, 3.0)
         assert abs(e) < 1e-10
 
-    def test_at_sigma(self, lib):
-        """Correct Gaussian value at h=sigma."""
-        e = lib.tcr_pmhc_potential(3.0, 20.0, 3.0)
+    def test_at_sigma_offset(self, lib):
+        """Correct Gaussian value at h = h0_tcr + sigma."""
+        h0_tcr = 13.0
+        e = lib.tcr_pmhc_potential(h0_tcr + 3.0, h0_tcr, 20.0, 3.0)
         expected = -20.0 * math.exp(-0.5)
         assert e == pytest.approx(expected)
 
     def test_scales_with_u_assoc(self, lib):
-        e1 = lib.tcr_pmhc_potential(0.0, 10.0, 3.0)
-        e2 = lib.tcr_pmhc_potential(0.0, 20.0, 3.0)
+        h0_tcr = 13.0
+        e1 = lib.tcr_pmhc_potential(h0_tcr, h0_tcr, 10.0, 3.0)
+        e2 = lib.tcr_pmhc_potential(h0_tcr, h0_tcr, 20.0, 3.0)
         assert e2 == pytest.approx(2.0 * e1)
 
+    def test_zero_height_weak(self, lib):
+        """At h=0 with h0_tcr=13, binding should be very weak."""
+        h0_tcr = 13.0
+        e = lib.tcr_pmhc_potential(0.0, h0_tcr, 20.0, 3.0)
+        expected = -20.0 * math.exp(-h0_tcr ** 2 / (2.0 * 3.0 ** 2))
+        assert e == pytest.approx(expected, abs=1e-12)
+        assert abs(e) < 0.01  # negligible binding at h=0
+
     def test_matches_analytical(self, lib):
-        """Compare against analytical formula: -u_assoc * exp(-h^2 / (2*sigma^2))."""
-        u_assoc, sigma = 20.0, 3.0
-        for h in [0.0, 1.5, 3.0, 10.0, 35.0, 50.0]:
-            c_val = lib.tcr_pmhc_potential(h, u_assoc, sigma)
-            expected = -u_assoc * math.exp(-h ** 2 / (2.0 * sigma ** 2))
+        """Compare against analytical formula: -u_assoc * exp(-(h-h0_tcr)^2 / (2*sigma^2))."""
+        u_assoc, sigma, h0_tcr = 20.0, 3.0, 13.0
+        for h in [0.0, 10.0, 13.0, 16.0, 35.0, 70.0]:
+            c_val = lib.tcr_pmhc_potential(h, h0_tcr, u_assoc, sigma)
+            dh = h - h0_tcr
+            expected = -u_assoc * math.exp(-dh ** 2 / (2.0 * sigma ** 2))
             assert c_val == pytest.approx(expected, abs=1e-12), f"Mismatch at h={h}"
+
+    def test_h0_tcr_zero_recovers_old(self, lib):
+        """With h0_tcr=0, formula reduces to -u_assoc * exp(-h^2/(2*sigma^2))."""
+        u_assoc, sigma = 20.0, 3.0
+        for h in [0.0, 3.0, 10.0]:
+            c_val = lib.tcr_pmhc_potential(h, 0.0, u_assoc, sigma)
+            expected = -u_assoc * math.exp(-h ** 2 / (2.0 * sigma ** 2))
+            assert c_val == pytest.approx(expected, abs=1e-12)
 
 
 class TestCd45RepulsionC:

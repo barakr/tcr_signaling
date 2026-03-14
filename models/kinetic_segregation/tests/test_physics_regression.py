@@ -36,7 +36,7 @@ def _run(tmp_path, label="run", **kwargs):
     cmd = [str(_BINARY), "--run-dir", str(rd), "--no-gpu"]
     defaults = {
         "time_sec": 10.0,
-        "rigidity_kT_nm2": 20.0,
+        "rigidity_kT": 20.0,
         "seed": 42,
         "n_steps": 50,
         "grid_size": 32,
@@ -63,7 +63,7 @@ class TestBasicPhysics:
         assert data["depletion_width_nm"] > 0
 
     def test_tcr_closer_to_center_than_cd45(self, tmp_path):
-        data = _run(tmp_path, label="seg", n_steps=200, rigidity_kT_nm2=30.0)
+        data = _run(tmp_path, label="seg", n_steps=200, rigidity_kT=30.0)
         diag = data["diagnostics"]
         assert diag["final_tcr_mean_r_nm"] < diag["final_cd45_mean_r_nm"]
 
@@ -246,7 +246,7 @@ class TestBoundaryConditions:
         rd = tmp_path / "bounds"
         cmd = [
             str(_BINARY), "--run-dir", str(rd), "--no-gpu",
-            "--time_sec", "10", "--rigidity_kT_nm2", "20",
+            "--time_sec", "10", "--rigidity_kT", "20",
             "--seed", "42", "--n_steps", "50", "--grid_size", "32",
             "--n_tcr", str(n_tcr), "--n_cd45", str(n_cd45),
             "--dump-frames",
@@ -318,7 +318,7 @@ class TestStatisticalBasicPhysics:
         for seed in range(N_STAT_SEEDS):
             data = _run(tmp_path, label=f"stat_seg_{seed}", seed=seed,
                         n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        rigidity_kT_nm2=30.0)
+                        rigidity_kT=30.0)
             diag = data["diagnostics"]
             assert diag["final_tcr_mean_r_nm"] < diag["final_cd45_mean_r_nm"], (
                 f"seed={seed}: TCR ({diag['final_tcr_mean_r_nm']:.1f}) "

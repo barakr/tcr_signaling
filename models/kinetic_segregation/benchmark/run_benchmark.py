@@ -34,7 +34,7 @@ def run(tmp_path, *, grid_size, n_steps, config_name, use_gpu):
     cmd = [
         str(_BINARY),
         "--time_sec", "200",
-        "--rigidity_kT_nm2", "20",
+        "--rigidity_kT", "20",
         "--seed", "42",
         "--n_steps", str(n_steps),
         "--grid_size", str(grid_size),

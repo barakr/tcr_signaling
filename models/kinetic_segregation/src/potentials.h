@@ -1,8 +1,9 @@
 #ifndef POTENTIALS_H
 #define POTENTIALS_H
 
-/* TCR-pMHC attractive Gaussian well: E = -u_assoc * exp(-h^2 / (2*sigma^2)). */
-double tcr_pmhc_potential(double h, double u_assoc, double sigma_bind);
+/* TCR-pMHC attractive Gaussian well centered at h0_tcr:
+   E = -u_assoc * exp(-(h - h0_tcr)^2 / (2*sigma^2)). */
+double tcr_pmhc_potential(double h, double h0_tcr, double u_assoc, double sigma_bind);
 
 /* CD45 soft repulsive barrier: harmonic wall when h < cd45_height. */
 double cd45_repulsion(double h, double cd45_height, double k_rep);

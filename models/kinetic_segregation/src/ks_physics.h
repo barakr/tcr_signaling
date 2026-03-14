@@ -25,9 +25,11 @@
   #define KS_EXPF(x) expf(x)
 #endif
 
-/* TCR-pMHC attractive Gaussian well: E = -U_assoc * exp(-h^2 / (2*sigma^2)). */
-static inline float ks_tcr_potential(float h, float u_assoc, float sigma_bind) {
-    return -u_assoc * KS_EXPF(-(h * h) / (2.0f * sigma_bind * sigma_bind));
+/* TCR-pMHC attractive Gaussian well centered at h0_tcr:
+   E = -U_assoc * exp(-(h - h0_tcr)^2 / (2*sigma^2)). */
+static inline float ks_tcr_potential(float h, float h0_tcr, float u_assoc, float sigma_bind) {
+    float dh = h - h0_tcr;
+    return -u_assoc * KS_EXPF(-(dh * dh) / (2.0f * sigma_bind * sigma_bind));
 }
 
 /* CD45 soft repulsive barrier: E = 0.5*k_rep*(h_cd45 - h)^2 if h < h_cd45. */

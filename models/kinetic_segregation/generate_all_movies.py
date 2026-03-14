@@ -54,7 +54,7 @@ def run_sim(run_dir: Path, rigidity: float, config_name: str, use_gpu: bool) -> 
     cmd = [
         str(_BINARY),
         "--time_sec", str(TIME_SEC),
-        "--rigidity_kT_nm2", str(rigidity),
+        "--rigidity_kT", str(rigidity),
         "--seed", str(SEED),
         "--n_steps", str(N_STEPS),
         "--grid_size", str(GRID_SIZE),

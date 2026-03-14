@@ -31,9 +31,12 @@ void sim_profile_report(int n_steps) {
 /* GPU backend (Metal on macOS, CUDA on Linux — see gpu_engine.h). */
 #include "gpu_engine.h"
 
-/* Forward declaration. */
+/* Forward declarations. */
 static void bin_molecules(const double *pos, int n_mol, int n, double dx,
                           int *count_grid);
+static void compute_pmhc_influence(SimState *s);
+static double pmhc_influence_at(const SimState *s, double x, double y);
+static void calibrate_dt(SimState *s, double D_mol, double D_h);
 
 static void init_height_field(SimState *s) {
     int n = s->grid_size;
@@ -96,10 +99,15 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      int n_pmhc, uint64_t pmhc_seed,
                      int pmhc_mode, double pmhc_radius,
                      int binding_mode, int step_mode,
-                     double h0_tcr, double init_height) {
+                     double h0_tcr, double init_height,
+                     double sigma_r, double sigma_bind, double patch_size) {
     SimState *s = (SimState *)calloc(1, sizeof(SimState));
     s->grid_size = grid_size;
-    s->dx = PATCH_SIZE_NM / grid_size;
+    s->sigma_r = (sigma_r > 0.0) ? sigma_r : 2.0;
+    s->sigma_bind = (sigma_bind > 0.0) ? sigma_bind : SIGMA_BIND_NM;
+    s->patch_size = (patch_size > 0.0) ? patch_size : PATCH_SIZE_NM;
+    s->pmhc_influence = NULL;
+    s->dx = s->patch_size / grid_size;
     s->n_tcr = n_tcr;
     s->n_cd45 = n_cd45;
     s->kappa = kappa;
@@ -152,6 +160,12 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         s->step_size_h = sqrt(2.0 * D_h * s->dt);
     }
 
+    /* Force-field aware step-size calibration.
+     * Skip if user set explicit --dt, or if paper mode (intentional fixed dt). */
+    if (dt_override <= 0.0 && step_mode != 1) {
+        calibrate_dt(s, D_mol, D_h);
+    }
+
     s->h = (float *)malloc(grid_size * grid_size * sizeof(float));
     s->tcr_pos = (double *)malloc(n_tcr * 2 * sizeof(double));
     s->cd45_pos = (double *)malloc(n_cd45 * 2 * sizeof(double));
@@ -162,19 +176,18 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     /* --- pMHC initialization (before TCR so TCR can co-locate) --- */
     if (n_pmhc > 0) {
         s->pmhc_pos = (double *)malloc(n_pmhc * 2 * sizeof(double));
-        s->pmhc_count = (int *)calloc(grid_size * grid_size, sizeof(int));
         pcg64_t pmhc_rng;
         pcg64_seed(&pmhc_rng, pmhc_seed);
 
-        double eff_radius = (pmhc_radius > 0.0) ? pmhc_radius : PATCH_SIZE_NM / 3.0;
-        double center_xy = PATCH_SIZE_NM / 2.0;
+        double eff_radius = (pmhc_radius > 0.0) ? pmhc_radius : s->patch_size / 3.0;
+        double center_xy = s->patch_size / 2.0;
 
         if (pmhc_mode == 1) {
             /* inner_circle: rejection sampling within centered disc */
             int placed = 0;
             while (placed < n_pmhc) {
-                double cx = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
-                double cy = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+                double cx = pcg64_uniform(&pmhc_rng) * s->patch_size;
+                double cy = pcg64_uniform(&pmhc_rng) * s->patch_size;
                 double ddx = cx - center_xy;
                 double ddy = cy - center_xy;
                 if (ddx * ddx + ddy * ddy <= eff_radius * eff_radius) {
@@ -186,10 +199,14 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         } else {
             /* uniform: full patch */
             for (int i = 0; i < n_pmhc; i++) {
-                s->pmhc_pos[2 * i] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
-                s->pmhc_pos[2 * i + 1] = pcg64_uniform(&pmhc_rng) * PATCH_SIZE_NM;
+                s->pmhc_pos[2 * i] = pcg64_uniform(&pmhc_rng) * s->patch_size;
+                s->pmhc_pos[2 * i + 1] = pcg64_uniform(&pmhc_rng) * s->patch_size;
             }
         }
+
+        /* Always allocate pmhc_count when pMHC present (needed for rendering
+         * and forced-mode gating). Gaussian mode uses pmhc_influence instead. */
+        s->pmhc_count = (int *)calloc(grid_size * grid_size, sizeof(int));
         bin_molecules(s->pmhc_pos, n_pmhc, grid_size, s->dx, s->pmhc_count);
     }
 
@@ -199,20 +216,32 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         for (int i = 0; i < n_tcr; i++) {
             int pidx = (int)(pcg64_uniform(&s->rng) * n_pmhc);
             if (pidx >= n_pmhc) pidx = n_pmhc - 1;
-            double tx = s->pmhc_pos[2 * pidx] + pcg64_normal(&s->rng, SIGMA_BIND_NM);
-            double ty = s->pmhc_pos[2 * pidx + 1] + pcg64_normal(&s->rng, SIGMA_BIND_NM);
-            tx = fmod(tx, PATCH_SIZE_NM); if (tx < 0.0) tx += PATCH_SIZE_NM;
-            ty = fmod(ty, PATCH_SIZE_NM); if (ty < 0.0) ty += PATCH_SIZE_NM;
+            double tx = s->pmhc_pos[2 * pidx] + pcg64_normal(&s->rng, s->sigma_bind);
+            double ty = s->pmhc_pos[2 * pidx + 1] + pcg64_normal(&s->rng, s->sigma_bind);
+            tx = fmod(tx, s->patch_size); if (tx < 0.0) tx += s->patch_size;
+            ty = fmod(ty, s->patch_size); if (ty < 0.0) ty += s->patch_size;
             s->tcr_pos[2 * i] = tx;
             s->tcr_pos[2 * i + 1] = ty;
         }
     } else {
         /* Backward compat: center-biased Gaussian */
-        init_positions(s->tcr_pos, n_tcr, PATCH_SIZE_NM, &s->rng, 1);
+        init_positions(s->tcr_pos, n_tcr, s->patch_size, &s->rng, 1);
     }
 
     /* CD45: always uniform */
-    init_positions(s->cd45_pos, n_cd45, PATCH_SIZE_NM, &s->rng, 0);
+    init_positions(s->cd45_pos, n_cd45, s->patch_size, &s->rng, 0);
+
+    /* Precompute pMHC influence field for gaussian binding mode. */
+    if (binding_mode == 0) {
+        if (n_pmhc > 0) {
+            compute_pmhc_influence(s);
+        } else {
+            /* No pMHC in gaussian mode: uniform weight = 1.0 everywhere. */
+            s->pmhc_influence = (float *)malloc(grid_size * grid_size * sizeof(float));
+            for (int i = 0; i < grid_size * grid_size; i++)
+                s->pmhc_influence[i] = 1.0f;
+        }
+    }
 
     /* --- TCR binding state (forced mode) --- */
     if (binding_mode == 1 && s->pmhc_count) {
@@ -228,10 +257,10 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->cd45_cell_list = NULL;
     if (mol_repulsion_eps > 0.0 && mol_repulsion_rcut > 0.0) {
         CellList *tcl = (CellList *)malloc(sizeof(CellList));
-        cell_list_init(tcl, n_tcr, mol_repulsion_rcut, PATCH_SIZE_NM);
+        cell_list_init(tcl, n_tcr, mol_repulsion_rcut, s->patch_size);
         s->tcr_cell_list = tcl;
         CellList *ccl = (CellList *)malloc(sizeof(CellList));
-        cell_list_init(ccl, n_cd45, mol_repulsion_rcut, PATCH_SIZE_NM);
+        cell_list_init(ccl, n_cd45, mol_repulsion_rcut, s->patch_size);
         s->cd45_cell_list = ccl;
     }
 
@@ -267,6 +296,7 @@ void sim_destroy(SimState *s) {
     free(s->cd45_pos);
     free(s->pmhc_pos);
     free(s->pmhc_count);
+    free(s->pmhc_influence);
     free(s->tcr_bound);
     if (s->tcr_cell_list) {
         cell_list_free((CellList *)s->tcr_cell_list);
@@ -290,7 +320,7 @@ static float height_at_pos_f(const float *h, int n, double dx, double x, double 
 }
 
 static void phase1_molecules(SimState *s) {
-    double patch = PATCH_SIZE_NM;
+    double patch = s->patch_size;
     int n = s->grid_size;
     double dx = s->dx;
     int use_cell = (s->mol_repulsion_eps > 0.0 && s->mol_repulsion_rcut > 0.0);
@@ -315,8 +345,15 @@ static void phase1_molecules(SimState *s) {
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
         int old_ix = (int)(ox / dx); if (old_ix >= n) old_ix = n - 1;
         int old_iy = (int)(oy / dx); if (old_iy >= n) old_iy = n - 1;
-        int has_pmhc_old = (s->pmhc_count == NULL) || (s->pmhc_count[old_ix * n + old_iy] > 0);
-        double old_e = has_pmhc_old ? tcr_pmhc_potential(old_h, s->u_assoc, SIGMA_BIND_NM) : 0.0;
+        double old_e;
+        if (s->pmhc_influence) {
+            /* Exact-position influence: smooth Gaussian decay from pMHC locations */
+            double w = pmhc_influence_at(s, ox, oy);
+            old_e = w * tcr_pmhc_potential(old_h, s->h0_tcr, s->u_assoc, s->sigma_bind);
+        } else {
+            int has_pmhc_old = (s->pmhc_count == NULL) || (s->pmhc_count[old_ix * n + old_iy] > 0);
+            old_e = has_pmhc_old ? tcr_pmhc_potential(old_h, s->h0_tcr, s->u_assoc, s->sigma_bind) : 0.0;
+        }
 
         double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
         double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
@@ -326,8 +363,14 @@ static void phase1_molecules(SimState *s) {
         double new_h = (double)height_at_pos_f(s->h, n, dx, nx_, ny_);
         int new_ix = (int)(nx_ / dx); if (new_ix >= n) new_ix = n - 1;
         int new_iy = (int)(ny_ / dx); if (new_iy >= n) new_iy = n - 1;
-        int has_pmhc_new = (s->pmhc_count == NULL) || (s->pmhc_count[new_ix * n + new_iy] > 0);
-        double new_e = has_pmhc_new ? tcr_pmhc_potential(new_h, s->u_assoc, SIGMA_BIND_NM) : 0.0;
+        double new_e;
+        if (s->pmhc_influence) {
+            double w = pmhc_influence_at(s, nx_, ny_);
+            new_e = w * tcr_pmhc_potential(new_h, s->h0_tcr, s->u_assoc, s->sigma_bind);
+        } else {
+            int has_pmhc_new = (s->pmhc_count == NULL) || (s->pmhc_count[new_ix * n + new_iy] > 0);
+            new_e = has_pmhc_new ? tcr_pmhc_potential(new_h, s->h0_tcr, s->u_assoc, s->sigma_bind) : 0.0;
+        }
 
         double dE = new_e - old_e;
         if (use_cell) {
@@ -408,6 +451,99 @@ static void bin_molecules(const double *pos, int n_mol, int n, double dx,
         if (iy < 0) iy = 0; if (iy >= n) iy = n - 1;
         count_grid[ix * n + iy]++;
     }
+}
+
+/* Auto-calibrate dt so step_size_mol resolves the smallest force-field scale.
+ * Only called when dt is NOT explicitly overridden (dt_override <= 0).
+ * Considers: sigma_r (gaussian binding), mol_repulsion_rcut (excluded vol). */
+static void calibrate_dt(SimState *s, double D_mol, double D_h) {
+    double min_scale = s->dx;  /* grid cell size as upper bound */
+
+    /* Gaussian binding: molecular step must resolve sigma_r */
+    if (s->n_pmhc > 0 && s->binding_mode == 0 && s->sigma_r > 0.0)
+        if (s->sigma_r < min_scale)
+            min_scale = s->sigma_r;
+
+    /* Excluded volume: step should resolve the repulsion cutoff */
+    if (s->mol_repulsion_eps > 0.0 && s->mol_repulsion_rcut > 0.0)
+        if (s->mol_repulsion_rcut < min_scale)
+            min_scale = s->mol_repulsion_rcut;
+
+    /* Target step = min_scale / 2 */
+    double target_step = min_scale / 2.0;
+    double dt_force = (target_step * target_step) / (2.0 * D_mol);
+
+    if (s->dt > dt_force) {
+        fprintf(stderr, "AUTO-DT: step_size_mol=%.2f nm exceeds force-field "
+                "scale=%.2f nm; reducing dt %.4g -> %.4g s "
+                "(step %.2f -> %.2f nm)\n",
+                s->step_size_mol, min_scale,
+                s->dt, dt_force,
+                s->step_size_mol, target_step);
+        s->dt = dt_force;
+        s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
+        s->step_size_h = sqrt(2.0 * D_h * s->dt);
+    }
+}
+
+/* Precompute pMHC influence field: W(i,j) = clamp(sum_k exp(-r_k^2 / (2*sigma_r^2)), 0, 1). */
+static void compute_pmhc_influence(SimState *s) {
+    int n = s->grid_size;
+    double dx = s->dx;
+    double sigma_r = s->sigma_r;
+    double inv_2sigma2 = 1.0 / (2.0 * sigma_r * sigma_r);
+    double r_cut = 3.0 * sigma_r;
+    double r_cut2 = r_cut * r_cut;
+    double patch = s->patch_size;
+    double half_patch = patch / 2.0;
+
+    s->pmhc_influence = (float *)calloc(n * n, sizeof(float));
+
+    for (int i = 0; i < n; i++) {
+        double cx = (i + 0.5) * dx;
+        for (int j = 0; j < n; j++) {
+            double cy = (j + 0.5) * dx;
+            double sum = 0.0;
+            for (int k = 0; k < s->n_pmhc; k++) {
+                double ddx = cx - s->pmhc_pos[2 * k];
+                double ddy = cy - s->pmhc_pos[2 * k + 1];
+                if (ddx > half_patch) ddx -= patch;
+                else if (ddx < -half_patch) ddx += patch;
+                if (ddy > half_patch) ddy -= patch;
+                else if (ddy < -half_patch) ddy += patch;
+                double r2 = ddx * ddx + ddy * ddy;
+                if (r2 < r_cut2) {
+                    sum += exp(-r2 * inv_2sigma2);
+                }
+            }
+            s->pmhc_influence[i * n + j] = (float)(sum > 1.0 ? 1.0 : sum);
+        }
+    }
+}
+
+/* Compute exact pMHC influence at a continuous (x,y) position.
+ * Used in phase1 molecular moves where TCR positions are continuous,
+ * providing smooth lateral decay even when sigma_r < grid cell size. */
+static double pmhc_influence_at(const SimState *s, double x, double y) {
+    double sigma_r = s->sigma_r;
+    double inv2sig2 = 1.0 / (2.0 * sigma_r * sigma_r);
+    double rcut = 3.0 * sigma_r;
+    double rcut2 = rcut * rcut;
+    double p = s->patch_size;
+    double half = p / 2.0;
+    double sum = 0.0;
+    for (int k = 0; k < s->n_pmhc; k++) {
+        double ddx = x - s->pmhc_pos[2 * k];
+        double ddy = y - s->pmhc_pos[2 * k + 1];
+        if (ddx > half) ddx -= p;
+        else if (ddx < -half) ddx += p;
+        if (ddy > half) ddy -= p;
+        else if (ddy < -half) ddy += p;
+        double r2 = ddx * ddx + ddy * ddy;
+        if (r2 < rcut2)
+            sum += exp(-r2 * inv2sig2);
+    }
+    return sum > 1.0 ? 1.0 : sum;
 }
 
 /* Build frozen cell mask for forced binding. */
@@ -517,15 +653,21 @@ static void phase2_grid_cpu(SimState *s) {
 
             int n_tcr_cell = tcr_count[gi * n + gj];
             int n_cd45_cell = cd45_count[gi * n + gj];
-            int cell_has_pmhc = (s->pmhc_count == NULL) || (s->pmhc_count[gi * n + gj] > 0);
 
-            float tcr_e_old = cell_has_pmhc ? n_tcr_cell * ks_tcr_potential(old_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
+            float w_bind;
+            if (s->pmhc_influence) {
+                w_bind = s->pmhc_influence[gi * n + gj];
+            } else {
+                w_bind = ((s->pmhc_count == NULL) || (s->pmhc_count[gi * n + gj] > 0)) ? 1.0f : 0.0f;
+            }
+
+            float tcr_e_old = w_bind * n_tcr_cell * ks_tcr_potential(old_h_val, (float)s->h0_tcr, (float)s->u_assoc, (float)s->sigma_bind);
             float old_mol_e = tcr_e_old
                             + n_cd45_cell * ks_cd45_repulsion(old_h_val, (float)s->cd45_height, (float)s->k_rep);
 
             float dE_bend = ks_bending_delta(s->h, n, kappa, dx,
                                                    gi, gj, old_h_val, new_h_val);
-            float tcr_e_new = cell_has_pmhc ? n_tcr_cell * ks_tcr_potential(new_h_val, (float)s->u_assoc, (float)SIGMA_BIND_NM) : 0.0f;
+            float tcr_e_new = w_bind * n_tcr_cell * ks_tcr_potential(new_h_val, (float)s->h0_tcr, (float)s->u_assoc, (float)s->sigma_bind);
             float new_mol_e = tcr_e_new
                             + n_cd45_cell * ks_cd45_repulsion(new_h_val, (float)s->cd45_height, (float)s->k_rep);
 
@@ -563,11 +705,12 @@ void sim_step(SimState *s) {
         /* GPU: all K substeps batched in one command buffer commit. */
         gpu_engine_grid_update(s->metal_ctx, s->h, s->grid_size,
                                  s->kappa, s->dx, s->step_size_h,
-                                 s->u_assoc, SIGMA_BIND_NM, s->cd45_height,
-                                 s->k_rep,
+                                 s->u_assoc, s->sigma_bind, s->h0_tcr,
+                                 s->cd45_height, s->k_rep,
                                  s->tcr_pos, s->n_tcr,
                                  s->cd45_pos, s->n_cd45,
                                  s->pmhc_count,
+                                 s->pmhc_influence,
                                  &s->accepted, &s->total_proposals,
                                  K);
     } else {
@@ -590,7 +733,7 @@ void sim_run(SimState *s, int n_steps) {
 }
 
 double sim_depletion_width(const SimState *s) {
-    double center = PATCH_SIZE_NM / 2.0;
+    double center = s->patch_size / 2.0;
 
     double *tcr_r = (double *)malloc(s->n_tcr * sizeof(double));
     double *cd45_r = (double *)malloc(s->n_cd45 * sizeof(double));
@@ -654,8 +797,8 @@ static double _percentile(const double *sorted, int n, double p) {
 
 DepletionMetrics sim_depletion_metrics(const SimState *s) {
     DepletionMetrics dm = {0};
-    double center = PATCH_SIZE_NM / 2.0;
-    double half_patch = PATCH_SIZE_NM / 2.0;
+    double center = s->patch_size / 2.0;
+    double half_patch = s->patch_size / 2.0;
     int nt = s->n_tcr, nc = s->n_cd45;
 
     /* Compute radial distances from patch center. */
@@ -687,7 +830,7 @@ DepletionMetrics sim_depletion_metrics(const SimState *s) {
 
     /* Metric 3: overlap_coeff via histogram. */
     {
-        double r_max = PATCH_SIZE_NM * 0.7072; /* sqrt(2)/2 ≈ diagonal half */
+        double r_max = s->patch_size * 0.7072; /* sqrt(2)/2 ≈ diagonal half */
         int nbins = 100;
         double bin_w = r_max / nbins;
         double *h_tcr = (double *)calloc(nbins, sizeof(double));
@@ -767,8 +910,8 @@ DepletionMetrics sim_depletion_metrics(const SimState *s) {
                 double best = 1e18;
                 for (int j = 0; j < n_fc; j++) {
                     int cj = fc_idx[j];
-                    double dx_ = _mic_sim(tx - s->cd45_pos[2 * cj], half_patch, PATCH_SIZE_NM);
-                    double dy_ = _mic_sim(ty - s->cd45_pos[2 * cj + 1], half_patch, PATCH_SIZE_NM);
+                    double dx_ = _mic_sim(tx - s->cd45_pos[2 * cj], half_patch, s->patch_size);
+                    double dy_ = _mic_sim(ty - s->cd45_pos[2 * cj + 1], half_patch, s->patch_size);
                     double d2 = dx_ * dx_ + dy_ * dy_;
                     if (d2 < best) best = d2;
                 }
@@ -797,8 +940,8 @@ DepletionMetrics sim_depletion_metrics(const SimState *s) {
             double ty = s->tcr_pos[2 * i + 1];
             double best = 1e18;
             for (int j = 0; j < nc; j++) {
-                double dx_ = _mic_sim(tx - s->cd45_pos[2 * j], half_patch, PATCH_SIZE_NM);
-                double dy_ = _mic_sim(ty - s->cd45_pos[2 * j + 1], half_patch, PATCH_SIZE_NM);
+                double dx_ = _mic_sim(tx - s->cd45_pos[2 * j], half_patch, s->patch_size);
+                double dy_ = _mic_sim(ty - s->cd45_pos[2 * j + 1], half_patch, s->patch_size);
                 double d2 = dx_ * dx_ + dy_ * dy_;
                 if (d2 < best) best = d2;
             }

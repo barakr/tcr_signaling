@@ -40,7 +40,7 @@ def run_sim(run_dir: Path, rigidity: float) -> float:
     cmd = [
         str(_BINARY),
         "--time_sec", str(TIME_SEC),
-        "--rigidity_kT_nm2", str(rigidity),
+        "--rigidity_kT", str(rigidity),
         "--seed", str(SEED),
         "--grid_size", str(GRID_SIZE),
         "--n_tcr", str(N_TCR),

@@ -34,7 +34,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Kinetic segregation model (CPU/GPU)")
     parser.add_argument("--params", type=str, default=None, help="JSON parameter file")
     parser.add_argument("--time_sec", type=float, default=None)
-    parser.add_argument("--rigidity_kT_nm2", type=float, default=None)
+    parser.add_argument("--rigidity_kT", type=float, default=None,
+                        help="Bending rigidity (kT)")
+    parser.add_argument("--rigidity_kT_nm2", type=float, default=None,
+                        help="Deprecated alias for --rigidity_kT")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--run-dir", type=str, required=True)
     parser.add_argument("--n_tcr", type=lambda x: int(float(x)), default=None)
@@ -80,14 +83,17 @@ def main() -> int:
     # Validate required params
     if args.time_sec is None:
         parser.error("--time_sec is required (via CLI or param file)")
-    if args.rigidity_kT_nm2 is None:
-        parser.error("--rigidity_kT_nm2 is required (via CLI or param file)")
+    # Support deprecated alias --rigidity_kT_nm2
+    if args.rigidity_kT is None and args.rigidity_kT_nm2 is not None:
+        args.rigidity_kT = args.rigidity_kT_nm2
+    if args.rigidity_kT is None:
+        parser.error("--rigidity_kT is required (via CLI or param file)")
 
     binary = _find_binary()
     cmd = [
         str(binary),
         "--time_sec", str(args.time_sec),
-        "--rigidity_kT_nm2", str(args.rigidity_kT_nm2),
+        "--rigidity_kT", str(args.rigidity_kT),
         "--seed", str(args.seed),
         "--run-dir", args.run_dir,
         "--n_tcr", str(args.n_tcr),

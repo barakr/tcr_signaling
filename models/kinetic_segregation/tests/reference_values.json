@@ -2,7 +2,7 @@
   "description": "Baseline reference values recorded after shared-physics-header refactor (FNV-1a seed derivation). Used for regression testing.",
   "params": {
     "time_sec": 5.0,
-    "rigidity_kT_nm2": 20.0,
+    "rigidity_kT": 20.0,
     "seed": 42,
     "grid_size": 64,
     "n_steps": 500,

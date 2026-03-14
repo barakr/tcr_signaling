@@ -33,7 +33,7 @@ typedef struct {
     double *cd45_pos;         /* n_cd45 x 2 (x, y) */
 
     /* Parameters */
-    double kappa;             /* rigidity_kT_nm2 */
+    double kappa;             /* bending rigidity (kT) */
     double u_assoc;
     double step_size_mol;
     double step_size_h;
@@ -58,6 +58,12 @@ typedef struct {
 
     /* TCR binding state (forced mode) */
     int *tcr_bound;           /* n_tcr array: 1=bound, 0=free. NULL if gaussian mode */
+
+    /* pMHC influence field (gaussian binding mode) */
+    double sigma_r;            /* lateral pMHC influence range (nm) */
+    double sigma_bind;         /* TCR binding well width (nm) */
+    double patch_size;         /* membrane patch size (nm, runtime) */
+    float *pmhc_influence;     /* precomputed grid weights [0,1], NULL for forced mode */
 
     /* Diagnostics */
     long accepted;
@@ -88,7 +94,8 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      int n_pmhc, uint64_t pmhc_seed,
                      int pmhc_mode, double pmhc_radius,
                      int binding_mode, int step_mode,
-                     double h0_tcr, double init_height);
+                     double h0_tcr, double init_height,
+                     double sigma_r, double sigma_bind, double patch_size);
 
 /* Free simulation state. */
 void sim_destroy(SimState *s);

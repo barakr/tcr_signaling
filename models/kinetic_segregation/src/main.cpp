@@ -44,11 +44,13 @@ static uint64_t derive_seed(uint64_t base_seed, double time_sec, double rigidity
 
 static void print_usage(std::string_view prog) {
     std::cerr << "Usage: " << prog
-              << " --time_sec FLOAT --rigidity_kT_nm2 FLOAT --run-dir PATH\n"
+              << " --time_sec FLOAT --rigidity_kT FLOAT --run-dir PATH\n"
               << "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
               << "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
               << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT] [--dt FLOAT]\n"
-              << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n";
+              << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n"
+              << "       [--u_assoc FLOAT] [--sigma_bind FLOAT] [--sigma_r FLOAT]\n"
+              << "       [--patch_size FLOAT]\n";
 }
 
 /* ---------- Frame dump (raw binary I/O) ---------- */
@@ -92,7 +94,9 @@ static void load_params_file(const std::string &path,
                              int &n_pmhc_arg, int &pmhc_seed_arg,
                              int &pmhc_mode_arg, double &pmhc_radius_arg,
                              int &binding_mode_arg, int &step_mode_arg,
-                             double &h0_tcr_arg, double &init_height_arg) {
+                             double &h0_tcr_arg, double &init_height_arg,
+                             double &u_assoc_arg, double &sigma_bind_arg,
+                             double &sigma_r_arg, double &patch_size_arg) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << "Error: cannot read param file: " << path << "\n";
@@ -116,7 +120,8 @@ static void load_params_file(const std::string &path,
     };
 
     get_d("time_sec", -1.0, time_sec);
-    get_d("rigidity_kT_nm2", -1.0, rigidity);
+    get_d("rigidity_kT", -1.0, rigidity);
+    get_d("rigidity_kT_nm2", -1.0, rigidity);  /* deprecated alias */
     get_i("seed", 42, seed);
     get_i("n_tcr", 125, n_tcr);
     get_i("n_cd45", 500, n_cd45);
@@ -134,6 +139,10 @@ static void load_params_file(const std::string &path,
     get_d("pmhc_radius", 0.0, pmhc_radius_arg);
     get_d("h0_tcr", 0.0, h0_tcr_arg);
     get_d("init_height", 0.0, init_height_arg);
+    get_d("u_assoc", 0.0, u_assoc_arg);
+    get_d("sigma_bind", 0.0, sigma_bind_arg);
+    get_d("sigma_r", 0.0, sigma_r_arg);
+    get_d("patch_size", 0.0, patch_size_arg);
 
     if (params.contains("pmhc_mode")) {
         auto mode = params["pmhc_mode"].get<std::string>();
@@ -170,6 +179,10 @@ int main(int argc, const char *argv[]) {
     int step_mode_arg = 1;     /* 1=paper, 0=brownian */
     double h0_tcr_arg = 0.0;
     double init_height_arg = 0.0;
+    double u_assoc_arg = 0.0;
+    double sigma_bind_arg = 0.0;
+    double sigma_r_arg = 0.0;
+    double patch_size_arg = 0.0;
     std::string params_file;
     std::string run_dir;
 
@@ -177,7 +190,8 @@ int main(int argc, const char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (match(argv[i], "--time_sec") && i + 1 < argc)
             time_sec = std::atof(argv[++i]);
-        else if (match(argv[i], "--rigidity_kT_nm2") && i + 1 < argc)
+        else if ((match(argv[i], "--rigidity_kT") ||
+                  match(argv[i], "--rigidity_kT_nm2")) && i + 1 < argc)
             rigidity = std::atof(argv[++i]);
         else if (match(argv[i], "--seed") && i + 1 < argc)
             seed = std::atoi(argv[++i]);
@@ -235,6 +249,14 @@ int main(int argc, const char *argv[]) {
             h0_tcr_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--init_height") && i + 1 < argc)
             init_height_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--u_assoc") && i + 1 < argc)
+            u_assoc_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--sigma_bind") && i + 1 < argc)
+            sigma_bind_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--sigma_r") && i + 1 < argc)
+            sigma_r_arg = std::atof(argv[++i]);
+        else if (match(argv[i], "--patch_size") && i + 1 < argc)
+            patch_size_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--grid-substeps") && i + 1 < argc)
             grid_substeps = std::atoi(argv[++i]);
         else if (match(argv[i], "--help") || match(argv[i], "-h")) {
@@ -253,7 +275,9 @@ int main(int argc, const char *argv[]) {
                          n_pmhc_arg, pmhc_seed_arg,
                          pmhc_mode_arg, pmhc_radius_arg,
                          binding_mode_arg, step_mode_arg,
-                         h0_tcr_arg, init_height_arg);
+                         h0_tcr_arg, init_height_arg,
+                         u_assoc_arg, sigma_bind_arg,
+                         sigma_r_arg, patch_size_arg);
     }
 
     if (time_sec < 0 || rigidity < 0 || run_dir.empty()) {
@@ -271,15 +295,17 @@ int main(int argc, const char *argv[]) {
     uint64_t pmhc_sd = (pmhc_seed_arg >= 0)
         ? static_cast<uint64_t>(pmhc_seed_arg)
         : (point_seed + 1);
+    double u_assoc_val = (u_assoc_arg > 0.0) ? u_assoc_arg : U_ASSOC_DEFAULT;
     auto *sim = sim_create(grid_size, n_tcr, n_cd45,
-                           rigidity, U_ASSOC_DEFAULT, point_seed,
+                           rigidity, u_assoc_val, point_seed,
                            use_gpu, D_mol_arg, D_h_arg, dt_arg,
                            cd45_height_arg, cd45_k_rep_arg,
                            mol_repulsion_eps_arg, mol_repulsion_rcut_arg,
                            n_pmhc_arg, pmhc_sd,
                            pmhc_mode_arg, pmhc_radius_arg,
                            binding_mode_arg, step_mode_arg,
-                           h0_tcr_arg, init_height_arg);
+                           h0_tcr_arg, init_height_arg,
+                           sigma_r_arg, sigma_bind_arg, patch_size_arg);
     if (grid_substeps > 1) sim->grid_substeps = grid_substeps;
 
     /* Compute n_steps: explicit override or auto from time_sec / dt. */
@@ -301,10 +327,10 @@ int main(int argc, const char *argv[]) {
         /* Write metadata. */
         json meta = {
             {"grid_size", grid_size}, {"n_tcr", n_tcr}, {"n_cd45", n_cd45},
-            {"n_steps", n_steps}, {"dx", sim->dx}, {"patch_nm", PATCH_SIZE_NM},
+            {"n_steps", n_steps}, {"dx", sim->dx}, {"patch_nm", sim->patch_size},
             {"dump_interval", dump_interval}, {"n_frames", n_frames},
             {"dt", sim->dt}, {"time_sec", time_sec},
-            {"rigidity_kT_nm2", rigidity}, {"n_pmhc", sim->n_pmhc},
+            {"rigidity_kT", rigidity}, {"n_pmhc", sim->n_pmhc},
             {"pmhc_mode", (pmhc_mode_arg == 0) ? "uniform" : "inner_circle"},
             {"pmhc_radius", sim->pmhc_radius}
         };
@@ -363,8 +389,12 @@ int main(int argc, const char *argv[]) {
             {"step_size_mol_nm", sim->step_size_mol}
         }},
         {"inputs", {
-            {"rigidity_kT_nm2", rigidity},
-            {"time_sec", time_sec}
+            {"rigidity_kT", rigidity},
+            {"time_sec", time_sec},
+            {"patch_size_nm", sim->patch_size},
+            {"sigma_bind_nm", sim->sigma_bind},
+            {"sigma_r_nm", sim->sigma_r},
+            {"u_assoc", sim->u_assoc}
         }}
     };
 

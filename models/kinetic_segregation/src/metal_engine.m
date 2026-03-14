@@ -23,6 +23,7 @@ typedef struct {
     float step_size_h;
     float u_assoc;
     float sigma_bind;
+    float h0_tcr;
     float cd45_height;
     float k_rep;
     int color;
@@ -56,6 +57,7 @@ typedef struct {
     id<MTLBuffer> tcr_count_buf;      /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> cd45_count_buf;     /* int[n^2]   — molecule count per cell */
     id<MTLBuffer> pmhc_count_buf;     /* int[n^2]   — pMHC count per cell */
+    id<MTLBuffer> pmhc_influence_buf; /* float[n^2] — pMHC influence weights [0,1] */
     id<MTLBuffer> params_buf;         /* GridParams */
     id<MTLBuffer> accept_buf;         /* atomic_int[1] */
     id<MTLBuffer> proposals_buf;      /* CellProposal[n^2/2] */
@@ -214,6 +216,8 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
                                                   options:MTLResourceStorageModeShared];
         eng->pmhc_count_buf = [device newBufferWithLength:n2 * sizeof(int)
                                                   options:MTLResourceStorageModeShared];
+        eng->pmhc_influence_buf = [device newBufferWithLength:n2 * sizeof(float)
+                                                      options:MTLResourceStorageModeShared];
         eng->params_buf = [device newBufferWithLength:sizeof(GridParams)
                                               options:MTLResourceStorageModeShared];
         eng->accept_buf = [device newBufferWithLength:sizeof(int)
@@ -282,11 +286,12 @@ static void upload_positions(const double *pos, int n_mol, id<MTLBuffer> buf) {
 
 void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                               double kappa, double dx, double step_size_h,
-                              double u_assoc, double sigma_bind,
+                              double u_assoc, double sigma_bind, double h0_tcr,
                               double cd45_height, double k_rep,
                               const double *tcr_pos, int n_tcr,
                               const double *cd45_pos, int n_cd45,
                               const int *pmhc_count,
+                              const float *pmhc_influence,
                               long *accepted, long *total_proposals,
                               int n_substeps) {
     @autoreleasepool {
@@ -319,6 +324,14 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
         } else {
             for (int i = 0; i < n2; i++) pmhc_gpu[i] = 1;
         }
+
+        /* Copy pMHC influence weights (or fill with 1.0 if NULL). */
+        float *influence_gpu = (float *)[eng->pmhc_influence_buf contents];
+        if (pmhc_influence) {
+            memcpy(influence_gpu, pmhc_influence, n2 * sizeof(float));
+        } else {
+            for (int i = 0; i < n2; i++) influence_gpu[i] = 1.0f;
+        }
 #ifdef KS_PROFILE
         _profile_bin_ms += _metal_clock_ms() - _bt0;
 #endif
@@ -331,6 +344,7 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
         base_params.step_size_h = (float)step_size_h;
         base_params.u_assoc = (float)u_assoc;
         base_params.sigma_bind = (float)sigma_bind;
+        base_params.h0_tcr = (float)h0_tcr;
         base_params.cd45_height = (float)cd45_height;
         base_params.k_rep = (float)k_rep;
         base_params.rng_key0 = eng->rng_key0;
@@ -432,6 +446,7 @@ void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                     [enc setBuffer:eng->accept_buf offset:0 atIndex:4];
                     [enc setBuffer:eng->proposals_buf offset:0 atIndex:5];
                     [enc setBuffer:eng->pmhc_count_buf offset:0 atIndex:6];
+                    [enc setBuffer:eng->pmhc_influence_buf offset:0 atIndex:7];
                     [enc dispatchThreads:halfGrid threadsPerThreadgroup:etg];
                     [enc endEncoding];
                 }

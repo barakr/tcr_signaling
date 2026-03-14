@@ -16,16 +16,16 @@ make testlib  # builds shared library for Python ctypes tests
 ## Usage
 
 ```bash
-./ks_gpu --time_sec 20 --rigidity_kT_nm2 20 --run-dir /tmp/test
+./ks_gpu --time_sec 20 --rigidity_kT 20 --run-dir /tmp/test
 
 # CPU-only mode (no Metal GPU):
-./ks_gpu --time_sec 20 --rigidity_kT_nm2 20 --run-dir /tmp/test --no-gpu
+./ks_gpu --time_sec 20 --rigidity_kT 20 --run-dir /tmp/test --no-gpu
 ```
 
 Python wrapper (for framework compatibility):
 
 ```bash
-python -m models.kinetic_segregation --time_sec 20 --rigidity_kT_nm2 20 --run-dir /tmp/test
+python -m models.kinetic_segregation --time_sec 20 --rigidity_kT 20 --run-dir /tmp/test
 ```
 
 ## Architecture

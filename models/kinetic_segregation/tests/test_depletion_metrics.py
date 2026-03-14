@@ -32,7 +32,7 @@ def _run(tmp_path, label="run", **kwargs):
     cmd = [str(_BINARY), "--run-dir", str(rd), "--no-gpu"]
     defaults = {
         "time_sec": 10.0,
-        "rigidity_kT_nm2": 20.0,
+        "rigidity_kT": 20.0,
         "seed": 42,
         "n_steps": 200,
         "grid_size": 64,
@@ -101,28 +101,28 @@ class TestMetricPhysics:
 
     def test_percentile_gap_positive_at_high_rigidity(self, tmp_path):
         # Need enough steps for equilibration; 500 is too few for clear separation.
-        data = _run(tmp_path, label="pct_high", rigidity_kT_nm2=80.0, n_steps=5000)
+        data = _run(tmp_path, label="pct_high", rigidity_kT=80.0, n_steps=5000)
         gap = data["diagnostics"]["depletion_percentile_gap_nm"]
         assert gap > -50, f"Percentile gap too negative at rig=80: {gap}"
 
     def test_overlap_low_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="ovl_high", rigidity_kT_nm2=80.0, n_steps=5000)
+        data = _run(tmp_path, label="ovl_high", rigidity_kT=80.0, n_steps=5000)
         ovl = data["diagnostics"]["depletion_overlap_coeff"]
         assert ovl < 0.6, f"Overlap too high at rig=80: {ovl}"
 
     def test_ks_high_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="ks_high", rigidity_kT_nm2=80.0, n_steps=5000)
+        data = _run(tmp_path, label="ks_high", rigidity_kT=80.0, n_steps=5000)
         ks = data["diagnostics"]["depletion_ks_statistic"]
         assert ks > 0.2, f"KS too low at rig=80: {ks}"
 
     def test_frontier_nn_positive_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="fnn_high", rigidity_kT_nm2=30.0, n_steps=5000)
+        data = _run(tmp_path, label="fnn_high", rigidity_kT=30.0, n_steps=5000)
         fnn = data["diagnostics"]["depletion_frontier_nn_gap_nm"]
         assert fnn > 20, f"Frontier NN too small at rig=30: {fnn}"
 
     def test_metrics_monotonic_with_rigidity(self, tmp_path):
-        d_low = _run(tmp_path, label="mono_low", rigidity_kT_nm2=1.0, n_steps=5000)
-        d_high = _run(tmp_path, label="mono_high", rigidity_kT_nm2=100.0, n_steps=5000)
+        d_low = _run(tmp_path, label="mono_low", rigidity_kT=1.0, n_steps=5000)
+        d_high = _run(tmp_path, label="mono_high", rigidity_kT=100.0, n_steps=5000)
 
         # Frontier NN should be larger at higher rigidity (better separation).
         fnn_low = d_low["diagnostics"]["depletion_frontier_nn_gap_nm"]

@@ -29,11 +29,12 @@ float *gpu_engine_h_ptr(void *ctx);
    No CPU RNG consumed — GPU uses counter-based PRNG internally. */
 void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                             double kappa, double dx, double step_size_h,
-                            double u_assoc, double sigma_bind,
+                            double u_assoc, double sigma_bind, double h0_tcr,
                             double cd45_height, double k_rep,
                             const double *tcr_pos, int n_tcr,
                             const double *cd45_pos, int n_cd45,
                             const int *pmhc_count,
+                            const float *pmhc_influence,
                             long *accepted, long *total_proposals,
                             int n_substeps);
 

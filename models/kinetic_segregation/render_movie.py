@@ -124,7 +124,7 @@ def main():
     dt = meta.get("dt", 0.0)
     h_vmax = meta.get("init_height", INIT_HEIGHT_NM)
 
-    rigidity = args.rigidity if args.rigidity is not None else meta.get("rigidity_kT_nm2")
+    rigidity = args.rigidity if args.rigidity is not None else meta.get("rigidity_kT", meta.get("rigidity_kT_nm2"))
     n_pmhc = meta.get("n_pmhc", 0)
     n_frames = meta.get("n_frames", n_steps)
     all_frames = list(range(0, n_frames + 1))

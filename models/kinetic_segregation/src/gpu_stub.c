@@ -18,20 +18,22 @@ float *gpu_engine_h_ptr(void *ctx) { (void)ctx; return NULL; }
 
 void gpu_engine_grid_update(void *ctx, float *h, int grid_size,
                             double kappa, double dx, double step_size_h,
-                            double u_assoc, double sigma_bind,
+                            double u_assoc, double sigma_bind, double h0_tcr,
                             double cd45_height, double k_rep,
                             const double *tcr_pos, int n_tcr,
                             const double *cd45_pos, int n_cd45,
                             const int *pmhc_count,
+                            const float *pmhc_influence,
                             long *accepted, long *total_proposals,
                             int n_substeps) {
     (void)ctx; (void)h; (void)grid_size;
     (void)kappa; (void)dx; (void)step_size_h;
-    (void)u_assoc; (void)sigma_bind;
+    (void)u_assoc; (void)sigma_bind; (void)h0_tcr;
     (void)cd45_height; (void)k_rep;
     (void)tcr_pos; (void)n_tcr;
     (void)cd45_pos; (void)n_cd45;
     (void)pmhc_count;
+    (void)pmhc_influence;
     (void)accepted; (void)total_proposals;
     (void)n_substeps;
 }

@@ -2,8 +2,9 @@
 #include "cell_list.h"
 #include <math.h>
 
-double tcr_pmhc_potential(double h, double u_assoc, double sigma_bind) {
-    return -u_assoc * exp(-(h * h) / (2.0 * sigma_bind * sigma_bind));
+double tcr_pmhc_potential(double h, double h0_tcr, double u_assoc, double sigma_bind) {
+    double dh = h - h0_tcr;
+    return -u_assoc * exp(-(dh * dh) / (2.0 * sigma_bind * sigma_bind));
 }
 
 double cd45_repulsion(double h, double cd45_height, double k_rep) {
