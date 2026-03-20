@@ -100,30 +100,37 @@ class TestMetricPhysics:
         _ensure_binary()
 
     def test_percentile_gap_positive_at_high_rigidity(self, tmp_path):
-        # Use explicit dt so n_steps gives consistent physical time across rigidities.
-        data = _run(tmp_path, label="pct_high", rigidity_kT=80.0, n_steps=5000, dt=0.01)
+        # Use paper mode + explicit dt so n_steps gives consistent physical time.
+        # Paper mode's fixed step_size_h=1nm equilibrates faster at extreme κ.
+        data = _run(tmp_path, label="pct_high", rigidity_kT=80.0, n_steps=5000,
+                    dt=0.01, step_mode="paper")
         gap = data["diagnostics"]["depletion_percentile_gap_nm"]
         assert gap > -50, f"Percentile gap too negative at rig=80: {gap}"
 
     def test_overlap_low_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="ovl_high", rigidity_kT=80.0, n_steps=5000, dt=0.01)
+        data = _run(tmp_path, label="ovl_high", rigidity_kT=80.0, n_steps=5000,
+                    dt=0.01, step_mode="paper")
         ovl = data["diagnostics"]["depletion_overlap_coeff"]
         assert ovl < 0.6, f"Overlap too high at rig=80: {ovl}"
 
     def test_ks_high_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="ks_high", rigidity_kT=80.0, n_steps=5000, dt=0.01)
+        data = _run(tmp_path, label="ks_high", rigidity_kT=80.0, n_steps=5000,
+                    dt=0.01, step_mode="paper")
         ks = data["diagnostics"]["depletion_ks_statistic"]
         assert ks > 0.2, f"KS too low at rig=80: {ks}"
 
     def test_frontier_nn_positive_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="fnn_high", rigidity_kT=30.0, n_steps=5000, dt=0.01)
+        data = _run(tmp_path, label="fnn_high", rigidity_kT=30.0, n_steps=5000,
+                    dt=0.01, step_mode="paper")
         fnn = data["diagnostics"]["depletion_frontier_nn_gap_nm"]
         assert fnn > 20, f"Frontier NN too small at rig=30: {fnn}"
 
     def test_metrics_monotonic_with_rigidity(self, tmp_path):
-        # Use explicit dt to ensure both runs get the same physical time (50 s).
-        d_low = _run(tmp_path, label="mono_low", rigidity_kT=1.0, n_steps=5000, dt=0.01)
-        d_high = _run(tmp_path, label="mono_high", rigidity_kT=100.0, n_steps=5000, dt=0.01)
+        # Use paper mode + explicit dt to ensure both runs get the same physical time.
+        d_low = _run(tmp_path, label="mono_low", rigidity_kT=1.0, n_steps=5000,
+                     dt=0.01, step_mode="paper")
+        d_high = _run(tmp_path, label="mono_high", rigidity_kT=100.0, n_steps=5000,
+                      dt=0.01, step_mode="paper")
 
         # Frontier NN should be larger at higher rigidity (better separation).
         fnn_low = d_low["diagnostics"]["depletion_frontier_nn_gap_nm"]

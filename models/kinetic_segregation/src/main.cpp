@@ -207,7 +207,7 @@ int main(int argc, const char *argv[]) {
     int pmhc_mode_arg = 1;     /* 1=inner_circle (default), 0=uniform */
     double pmhc_radius_arg = 0.0;
     int binding_mode_arg = 1;  /* 1=forced (paper), 0=gaussian */
-    int step_mode_arg = 1;     /* 1=paper, 0=brownian */
+    int step_mode_arg = 0;     /* 0=brownian (default), 1=paper */
     double h0_tcr_arg = 0.0;
     double init_height_arg = 0.0;
     double u_assoc_arg = 0.0;

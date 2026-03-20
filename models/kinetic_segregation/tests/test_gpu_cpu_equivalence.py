@@ -265,9 +265,10 @@ class TestDeterminism:
             tmp_path, use_gpu=True, label="detf_gpu2", seed=77
         )
         # GPU height fields should be statistically close (not necessarily bit-identical).
-        # Metal GPU atomic scheduling can cause ~0.3% of cells to diverge by up to ~15nm.
+        # Metal GPU atomic scheduling can cause ~0.3% of cells to diverge by up to ~30nm.
+        # Brownian mode's larger step_size_h widens the divergence envelope.
         np.testing.assert_allclose(
-            h1, h2, rtol=0.25, atol=20.0,
+            h1, h2, rtol=0.25, atol=35.0,
             err_msg="GPU height fields too different between runs"
         )
         # Molecule positions depend on h[] via MC energy, so can diverge more.

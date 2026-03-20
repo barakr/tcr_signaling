@@ -1,5 +1,5 @@
 {
-  "description": "Baseline reference values recorded with universal auto-calibrated dt (stability + force-field). FNV-1a seed derivation, pMHC influence, h0_tcr centering.",
+  "description": "Baseline reference values recorded with brownian default mode (k_rep=1.0, step_size_h=sqrt(2*D_h*dt)). Universal auto-calibrated dt, FNV-1a seed derivation, pMHC influence, h0_tcr centering.",
   "params": {
     "time_sec": 5.0,
     "rigidity_kT": 20.0,
@@ -11,14 +11,14 @@
   },
   "gpu": {
     "depletion_width_nm": 445.705139,
-    "accept_rate": 0.825643,
-    "final_tcr_mean_r_nm": 386.285217,
-    "final_cd45_mean_r_nm": 756.038078
+    "accept_rate": 0.464826,
+    "final_tcr_mean_r_nm": 386.269941,
+    "final_cd45_mean_r_nm": 756.519794
   },
   "cpu": {
     "depletion_width_nm": 423.155501,
-    "accept_rate": 0.826015,
-    "final_tcr_mean_r_nm": 383.443501,
-    "final_cd45_mean_r_nm": 756.301483
+    "accept_rate": 0.457178,
+    "final_tcr_mean_r_nm": 384.649279,
+    "final_cd45_mean_r_nm": 757.097651
   }
 }
