@@ -38,6 +38,10 @@ static void compute_pmhc_influence(SimState *s);
 static double pmhc_influence_at(const SimState *s, double x, double y);
 static void calibrate_dt(SimState *s, double D_mol, double D_h);
 
+/* ------------------------------------------------------------------ */
+/*  Initialization helpers                                             */
+/* ------------------------------------------------------------------ */
+
 static void init_height_field(SimState *s) {
     int n = s->grid_size;
     for (int i = 0; i < n * n; i++)
@@ -90,21 +94,18 @@ static void init_binding_state(SimState *s) {
     }
 }
 
-SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
-                     double kappa, double u_assoc, uint64_t seed,
-                     int use_gpu,
-                     double D_mol, double D_h, double dt_override,
-                     double dt_factor,
-                     double cd45_height, double k_rep,
-                     double mol_repulsion_eps, double mol_repulsion_rcut,
-                     int n_pmhc, uint64_t pmhc_seed,
-                     int pmhc_mode, double pmhc_radius,
-                     int binding_mode, int step_mode,
-                     double h0_tcr, double init_height,
-                     double sigma_r, double sigma_bind, double patch_size) {
-    SimState *s = (SimState *)calloc(1, sizeof(SimState));
+/* Set struct fields from arguments, apply defaults for zero-valued params. */
+static void init_params(SimState *s, int grid_size, int n_tcr, int n_cd45,
+                        double kappa, double u_assoc,
+                        double cd45_height, double k_rep,
+                        double mol_repulsion_eps, double mol_repulsion_rcut,
+                        int binding_mode, int step_mode,
+                        double h0_tcr, double init_height,
+                        double sigma_r, double sigma_bind, double patch_size,
+                        int n_pmhc, int pmhc_mode, double pmhc_radius,
+                        double D_mol, double D_h) {
     s->grid_size = grid_size;
-    s->sigma_r = (sigma_r > 0.0) ? sigma_r : 2.0;
+    s->sigma_r = (sigma_r > 0.0) ? sigma_r : SIGMA_R_DEFAULT;
     s->sigma_bind = (sigma_bind > 0.0) ? sigma_bind : SIGMA_BIND_NM;
     s->patch_size = (patch_size > 0.0) ? patch_size : PATCH_SIZE_NM;
     s->pmhc_influence = NULL;
@@ -119,7 +120,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->binding_mode = binding_mode;
     s->step_mode = step_mode;
     s->mol_repulsion_eps = mol_repulsion_eps;
-    s->mol_repulsion_rcut = (mol_repulsion_rcut > 0.0) ? mol_repulsion_rcut : 10.0;
+    s->mol_repulsion_rcut = (mol_repulsion_rcut > 0.0) ? mol_repulsion_rcut : MOL_RCUT_DEFAULT;
     s->n_pmhc = n_pmhc;
     s->pmhc_pos = NULL;
     s->pmhc_count = NULL;
@@ -128,36 +129,35 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->tcr_bound = NULL;
 
     /* Apply defaults if zero. */
-    if (D_mol <= 0.0) D_mol = D_MOL_DEFAULT;
-    if (D_h <= 0.0) D_h = D_H_DEFAULT;
-    s->D_mol = D_mol;
-    s->D_h = D_h;
+    s->D_mol = (D_mol > 0.0) ? D_mol : D_MOL_DEFAULT;
+    s->D_h = (D_h > 0.0) ? D_h : D_H_DEFAULT;
 
     /* Spring constant: paper formula or explicit. */
     if (k_rep > 0.0) {
         s->k_rep = k_rep;
     } else if (step_mode == 1) {
-        /* paper: k = 10*kappa/a^2 */
-        s->k_rep = 10.0 * kappa / (s->dx * s->dx);
+        s->k_rep = K_REP_PAPER_FACTOR * kappa / (s->dx * s->dx);
     } else {
-        s->k_rep = 1.0;
+        s->k_rep = K_REP_BROWNIAN;
     }
+}
 
-    /* --- Universal auto-calibrated dt ---
-     * Always compute dt_auto from physics (stability + force-field),
-     * then apply user override (--dt absolute or --dt_factor multiplier). */
+/* Compute dt from stability + force-field constraints, apply user override. */
+static void init_dt(SimState *s, double dt_override, double dt_factor) {
+    double D_mol = s->D_mol;
+    double D_h = s->D_h;
 
-    /* Phase 1: stability-constrained dt (membrane height dynamics). */
-    double dt_stable = (s->dx * s->dx) / (2.0 * D_h * kappa);
+    /* Stability-constrained dt (membrane height dynamics). */
+    double dt_stable = (s->dx * s->dx) / (2.0 * D_h * s->kappa);
     s->dt = dt_stable * DT_SAFETY;
     s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
     s->step_size_h = sqrt(2.0 * D_h * s->dt);
 
-    /* Phase 2: force-field calibration may reduce dt further. */
+    /* Force-field calibration may reduce dt further. */
     calibrate_dt(s, D_mol, D_h);
 
-    /* Preserve paper-mode fixed height step (independent of dt). */
-    if (step_mode == 1) {
+    /* Paper mode: fixed height step (independent of dt). */
+    if (s->step_mode == 1) {
         s->step_size_h = STEP_H_PAPER;
     }
 
@@ -165,16 +165,16 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     s->dt_auto = s->dt;
     s->dt_factor = dt_factor;
 
-    /* Phase 3: apply user override (mutually exclusive). */
+    /* Apply user override (mutually exclusive). */
     if (dt_override > 0.0) {
         s->dt = dt_override;
         s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        if (step_mode != 1)
+        if (s->step_mode != 1)
             s->step_size_h = sqrt(2.0 * D_h * s->dt);
     } else if (dt_factor > 0.0) {
         s->dt = s->dt_auto * dt_factor;
         s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        if (step_mode != 1)
+        if (s->step_mode != 1)
             s->step_size_h = sqrt(2.0 * D_h * s->dt);
     }
 
@@ -187,27 +187,33 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         fprintf(stderr, " → scaled to dt=%.4g s (--dt_factor %.3g)",
                 s->dt, dt_factor);
     fprintf(stderr, "\n");
+}
+
+/* Allocate and place molecules (pMHC, TCR, CD45), precompute fields. */
+static void init_molecules(SimState *s, uint64_t seed,
+                           uint64_t pmhc_seed) {
+    int grid_size = s->grid_size;
 
     s->h = (float *)malloc(grid_size * grid_size * sizeof(float));
-    s->tcr_pos = (double *)malloc(n_tcr * 2 * sizeof(double));
-    s->cd45_pos = (double *)malloc(n_cd45 * 2 * sizeof(double));
+    s->tcr_pos = (double *)malloc(s->n_tcr * 2 * sizeof(double));
+    s->cd45_pos = (double *)malloc(s->n_cd45 * 2 * sizeof(double));
 
     pcg64_seed(&s->rng, seed);
     init_height_field(s);
 
-    /* --- pMHC initialization (before TCR so TCR can co-locate) --- */
-    if (n_pmhc > 0) {
-        s->pmhc_pos = (double *)malloc(n_pmhc * 2 * sizeof(double));
+    /* pMHC initialization (before TCR so TCR can co-locate). */
+    if (s->n_pmhc > 0) {
+        s->pmhc_pos = (double *)malloc(s->n_pmhc * 2 * sizeof(double));
         pcg64_t pmhc_rng;
         pcg64_seed(&pmhc_rng, pmhc_seed);
 
-        double eff_radius = (pmhc_radius > 0.0) ? pmhc_radius : s->patch_size / 3.0;
+        double eff_radius = (s->pmhc_radius > 0.0) ? s->pmhc_radius : s->patch_size / 3.0;
         double center_xy = s->patch_size / 2.0;
 
-        if (pmhc_mode == 1) {
+        if (s->pmhc_mode == 1) {
             /* inner_circle: rejection sampling within centered disc */
             int placed = 0;
-            while (placed < n_pmhc) {
+            while (placed < s->n_pmhc) {
                 double cx = pcg64_uniform(&pmhc_rng) * s->patch_size;
                 double cy = pcg64_uniform(&pmhc_rng) * s->patch_size;
                 double ddx = cx - center_xy;
@@ -220,7 +226,7 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
             }
         } else {
             /* uniform: full patch */
-            for (int i = 0; i < n_pmhc; i++) {
+            for (int i = 0; i < s->n_pmhc; i++) {
                 s->pmhc_pos[2 * i] = pcg64_uniform(&pmhc_rng) * s->patch_size;
                 s->pmhc_pos[2 * i + 1] = pcg64_uniform(&pmhc_rng) * s->patch_size;
             }
@@ -229,15 +235,15 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         /* Always allocate pmhc_count when pMHC present (needed for rendering
          * and forced-mode gating). Gaussian mode uses pmhc_influence instead. */
         s->pmhc_count = (int *)calloc(grid_size * grid_size, sizeof(int));
-        bin_molecules(s->pmhc_pos, n_pmhc, grid_size, s->dx, s->pmhc_count);
+        bin_molecules(s->pmhc_pos, s->n_pmhc, grid_size, s->dx, s->pmhc_count);
     }
 
-    /* --- TCR initialization --- */
-    if (n_pmhc > 0 && s->pmhc_pos) {
+    /* TCR initialization. */
+    if (s->n_pmhc > 0 && s->pmhc_pos) {
         /* Co-locate TCR on pMHC positions with small jitter (sigma_bind) */
-        for (int i = 0; i < n_tcr; i++) {
-            int pidx = (int)(pcg64_uniform(&s->rng) * n_pmhc);
-            if (pidx >= n_pmhc) pidx = n_pmhc - 1;
+        for (int i = 0; i < s->n_tcr; i++) {
+            int pidx = (int)(pcg64_uniform(&s->rng) * s->n_pmhc);
+            if (pidx >= s->n_pmhc) pidx = s->n_pmhc - 1;
             double tx = s->pmhc_pos[2 * pidx] + pcg64_normal(&s->rng, s->sigma_bind);
             double ty = s->pmhc_pos[2 * pidx + 1] + pcg64_normal(&s->rng, s->sigma_bind);
             tx = fmod(tx, s->patch_size); if (tx < 0.0) tx += s->patch_size;
@@ -247,15 +253,15 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         }
     } else {
         /* Backward compat: center-biased Gaussian */
-        init_positions(s->tcr_pos, n_tcr, s->patch_size, &s->rng, 1);
+        init_positions(s->tcr_pos, s->n_tcr, s->patch_size, &s->rng, 1);
     }
 
     /* CD45: always uniform */
-    init_positions(s->cd45_pos, n_cd45, s->patch_size, &s->rng, 0);
+    init_positions(s->cd45_pos, s->n_cd45, s->patch_size, &s->rng, 0);
 
     /* Precompute pMHC influence field for gaussian binding mode. */
-    if (binding_mode == 0) {
-        if (n_pmhc > 0) {
+    if (s->binding_mode == 0) {
+        if (s->n_pmhc > 0) {
             compute_pmhc_influence(s);
         } else {
             /* No pMHC in gaussian mode: uniform weight = 1.0 everywhere. */
@@ -265,9 +271,9 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
         }
     }
 
-    /* --- TCR binding state (forced mode) --- */
-    if (binding_mode == 1 && s->pmhc_count) {
-        s->tcr_bound = (int *)calloc(n_tcr, sizeof(int));
+    /* TCR binding state (forced mode). */
+    if (s->binding_mode == 1 && s->pmhc_count) {
+        s->tcr_bound = (int *)calloc(s->n_tcr, sizeof(int));
         init_binding_state(s);
     }
 
@@ -277,16 +283,18 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     /* Allocate persistent cell lists if repulsion is enabled. */
     s->tcr_cell_list = NULL;
     s->cd45_cell_list = NULL;
-    if (mol_repulsion_eps > 0.0 && mol_repulsion_rcut > 0.0) {
+    if (s->mol_repulsion_eps > 0.0 && s->mol_repulsion_rcut > 0.0) {
         CellList *tcl = (CellList *)malloc(sizeof(CellList));
-        cell_list_init(tcl, n_tcr, mol_repulsion_rcut, s->patch_size);
+        cell_list_init(tcl, s->n_tcr, s->mol_repulsion_rcut, s->patch_size);
         s->tcr_cell_list = tcl;
         CellList *ccl = (CellList *)malloc(sizeof(CellList));
-        cell_list_init(ccl, n_cd45, mol_repulsion_rcut, s->patch_size);
+        cell_list_init(ccl, s->n_cd45, s->mol_repulsion_rcut, s->patch_size);
         s->cd45_cell_list = ccl;
     }
+}
 
-    /* Try to init Metal GPU engine. Derive GPU RNG key from CPU seed. */
+/* Initialize GPU engine if requested. */
+static void init_gpu(SimState *s, int use_gpu, uint64_t seed) {
     s->use_gpu = 0;
     s->metal_ctx = NULL;
     s->h_is_shared = 0;
@@ -294,19 +302,45 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
     if (use_gpu) {
         /* Use a deterministic key derived from the seed for GPU Philox RNG. */
         uint64_t gpu_key = seed ^ 0xA5A5A5A5A5A5A5A5ULL;
-        s->metal_ctx = gpu_engine_create(grid_size, gpu_key);
+        s->metal_ctx = gpu_engine_create(s->grid_size, gpu_key);
         if (s->metal_ctx) {
             s->use_gpu = 1;
             /* Move h to the Metal shared buffer so CPU and GPU share memory
                directly (no per-step memcpy needed on unified memory). */
             float *shared_h = gpu_engine_h_ptr(s->metal_ctx);
-            memcpy(shared_h, s->h, grid_size * grid_size * sizeof(float));
+            memcpy(shared_h, s->h, s->grid_size * s->grid_size * sizeof(float));
             free(s->h);
             s->h = shared_h;
             s->h_is_shared = 1;
         }
     }
+}
 
+/* ------------------------------------------------------------------ */
+/*  Public: create / destroy                                           */
+/* ------------------------------------------------------------------ */
+
+SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
+                     double kappa, double u_assoc, uint64_t seed,
+                     int use_gpu,
+                     double D_mol, double D_h, double dt_override,
+                     double dt_factor,
+                     double cd45_height, double k_rep,
+                     double mol_repulsion_eps, double mol_repulsion_rcut,
+                     int n_pmhc, uint64_t pmhc_seed,
+                     int pmhc_mode, double pmhc_radius,
+                     int binding_mode, int step_mode,
+                     double h0_tcr, double init_height,
+                     double sigma_r, double sigma_bind, double patch_size) {
+    SimState *s = (SimState *)calloc(1, sizeof(SimState));
+    init_params(s, grid_size, n_tcr, n_cd45, kappa, u_assoc,
+                cd45_height, k_rep, mol_repulsion_eps, mol_repulsion_rcut,
+                binding_mode, step_mode, h0_tcr, init_height,
+                sigma_r, sigma_bind, patch_size,
+                n_pmhc, pmhc_mode, pmhc_radius, D_mol, D_h);
+    init_dt(s, dt_override, dt_factor);
+    init_molecules(s, seed, pmhc_seed);
+    init_gpu(s, use_gpu, seed);
     return s;
 }
 
@@ -331,6 +365,10 @@ void sim_destroy(SimState *s) {
     free(s);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Phase 1: molecular Metropolis MC                                   */
+/* ------------------------------------------------------------------ */
+
 static float height_at_pos_f(const float *h, int n, double dx, double x, double y) {
     int ix = (int)(x / dx);
     int iy = (int)(y / dx);
@@ -341,8 +379,20 @@ static float height_at_pos_f(const float *h, int n, double dx, double x, double 
     return h[ix * n + iy];
 }
 
+/* Compute TCR energy at position (x,y). */
+static double tcr_energy_at(const SimState *s, double x, double y, double h_val) {
+    if (s->pmhc_influence) {
+        double w = pmhc_influence_at(s, x, y);
+        return w * tcr_pmhc_potential(h_val, s->h0_tcr, s->u_assoc, s->sigma_bind);
+    }
+    int n = s->grid_size;
+    int ix = (int)(x / s->dx); if (ix >= n) ix = n - 1;
+    int iy = (int)(y / s->dx); if (iy >= n) iy = n - 1;
+    int has_pmhc = (s->pmhc_count == NULL) || (s->pmhc_count[ix * n + iy] > 0);
+    return has_pmhc ? tcr_pmhc_potential(h_val, s->h0_tcr, s->u_assoc, s->sigma_bind) : 0.0;
+}
+
 static void phase1_molecules(SimState *s) {
-    double patch = s->patch_size;
     int n = s->grid_size;
     double dx = s->dx;
     int use_cell = (s->mol_repulsion_eps > 0.0 && s->mol_repulsion_rcut > 0.0);
@@ -358,49 +408,33 @@ static void phase1_molecules(SimState *s) {
     /* TCR molecules. */
     for (int idx = 0; idx < s->n_tcr; idx++) {
         /* Forced binding: bound TCRs are immobile. */
-        if (s->binding_mode == 1 && s->tcr_bound && s->tcr_bound[idx]) {
+        if (s->binding_mode == 1 && s->tcr_bound && s->tcr_bound[idx])
             continue;
-        }
 
         double ox = s->tcr_pos[2 * idx];
         double oy = s->tcr_pos[2 * idx + 1];
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
-        int old_ix = (int)(ox / dx); if (old_ix >= n) old_ix = n - 1;
-        int old_iy = (int)(oy / dx); if (old_iy >= n) old_iy = n - 1;
-        double old_e;
-        if (s->pmhc_influence) {
-            /* Exact-position influence: smooth Gaussian decay from pMHC locations */
-            double w = pmhc_influence_at(s, ox, oy);
-            old_e = w * tcr_pmhc_potential(old_h, s->h0_tcr, s->u_assoc, s->sigma_bind);
-        } else {
-            int has_pmhc_old = (s->pmhc_count == NULL) || (s->pmhc_count[old_ix * n + old_iy] > 0);
-            old_e = has_pmhc_old ? tcr_pmhc_potential(old_h, s->h0_tcr, s->u_assoc, s->sigma_bind) : 0.0;
-        }
+        double old_e = tcr_energy_at(s, ox, oy, old_h);
 
-        double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
-        double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
-        nx_ = fmod(nx_, patch); if (nx_ < 0.0) nx_ += patch;
-        ny_ = fmod(ny_, patch); if (ny_ < 0.0) ny_ += patch;
+        /* Propose displacement — need proposed position to compute new energy. */
+        double nx_, ny_;
+        /* We need the proposed position before calling propose_and_accept,
+         * so generate it inline here (matching the RNG sequence). */
+        nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
+        ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
+        nx_ = fmod(nx_, s->patch_size); if (nx_ < 0.0) nx_ += s->patch_size;
+        ny_ = fmod(ny_, s->patch_size); if (ny_ < 0.0) ny_ += s->patch_size;
 
         double new_h = (double)height_at_pos_f(s->h, n, dx, nx_, ny_);
-        int new_ix = (int)(nx_ / dx); if (new_ix >= n) new_ix = n - 1;
-        int new_iy = (int)(ny_ / dx); if (new_iy >= n) new_iy = n - 1;
-        double new_e;
-        if (s->pmhc_influence) {
-            double w = pmhc_influence_at(s, nx_, ny_);
-            new_e = w * tcr_pmhc_potential(new_h, s->h0_tcr, s->u_assoc, s->sigma_bind);
-        } else {
-            int has_pmhc_new = (s->pmhc_count == NULL) || (s->pmhc_count[new_ix * n + new_iy] > 0);
-            new_e = has_pmhc_new ? tcr_pmhc_potential(new_h, s->h0_tcr, s->u_assoc, s->sigma_bind) : 0.0;
-        }
-
+        double new_e = tcr_energy_at(s, nx_, ny_, new_h);
         double dE = new_e - old_e;
+
         if (use_cell) {
             double old_pos2[2] = {ox, oy};
             double new_pos2[2] = {nx_, ny_};
             dE += mol_repulsion_delta(old_pos2, new_pos2, idx, tcr_cl,
                                       s->tcr_pos, s->mol_repulsion_eps,
-                                      s->mol_repulsion_rcut, patch);
+                                      s->mol_repulsion_rcut, s->patch_size);
         }
 
         s->total_proposals++;
@@ -416,6 +450,8 @@ static void phase1_molecules(SimState *s) {
             }
             /* Update binding state after accepted move. */
             if (s->binding_mode == 1 && s->tcr_bound && s->pmhc_count) {
+                int new_ix = (int)(nx_ / dx); if (new_ix >= n) new_ix = n - 1;
+                int new_iy = (int)(ny_ / dx); if (new_iy >= n) new_iy = n - 1;
                 s->tcr_bound[idx] = (s->pmhc_count[new_ix * n + new_iy] > 0) ? 1 : 0;
                 if (s->tcr_bound[idx]) {
                     s->h[new_ix * n + new_iy] = (float)s->h0_tcr;
@@ -431,21 +467,22 @@ static void phase1_molecules(SimState *s) {
         double old_h = (double)height_at_pos_f(s->h, n, dx, ox, oy);
         double old_e = cd45_repulsion(old_h, s->cd45_height, s->k_rep);
 
-        double nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
-        double ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
-        nx_ = fmod(nx_, patch); if (nx_ < 0.0) nx_ += patch;
-        ny_ = fmod(ny_, patch); if (ny_ < 0.0) ny_ += patch;
+        double nx_, ny_;
+        nx_ = ox + pcg64_normal(&s->rng, s->step_size_mol);
+        ny_ = oy + pcg64_normal(&s->rng, s->step_size_mol);
+        nx_ = fmod(nx_, s->patch_size); if (nx_ < 0.0) nx_ += s->patch_size;
+        ny_ = fmod(ny_, s->patch_size); if (ny_ < 0.0) ny_ += s->patch_size;
 
         double new_h = (double)height_at_pos_f(s->h, n, dx, nx_, ny_);
         double new_e = cd45_repulsion(new_h, s->cd45_height, s->k_rep);
-
         double dE = new_e - old_e;
+
         if (use_cell) {
             double old_pos2[2] = {ox, oy};
             double new_pos2[2] = {nx_, ny_};
             dE += mol_repulsion_delta(old_pos2, new_pos2, idx, cd45_cl,
                                       s->cd45_pos, s->mol_repulsion_eps,
-                                      s->mol_repulsion_rcut, patch);
+                                      s->mol_repulsion_rcut, s->patch_size);
         }
 
         s->total_proposals++;
@@ -462,6 +499,10 @@ static void phase1_molecules(SimState *s) {
         }
     }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Molecule binning + force-field helpers                             */
+/* ------------------------------------------------------------------ */
 
 static void bin_molecules(const double *pos, int n_mol, int n, double dx,
                           int *count_grid) {
@@ -514,7 +555,7 @@ static void compute_pmhc_influence(SimState *s) {
     double dx = s->dx;
     double sigma_r = s->sigma_r;
     double inv_2sigma2 = 1.0 / (2.0 * sigma_r * sigma_r);
-    double r_cut = 3.0 * sigma_r;
+    double r_cut = PMHC_CUTOFF_SIGMAS * sigma_r;
     double r_cut2 = r_cut * r_cut;
     double patch = s->patch_size;
     double half_patch = patch / 2.0;
@@ -549,7 +590,7 @@ static void compute_pmhc_influence(SimState *s) {
 static double pmhc_influence_at(const SimState *s, double x, double y) {
     double sigma_r = s->sigma_r;
     double inv2sig2 = 1.0 / (2.0 * sigma_r * sigma_r);
-    double rcut = 3.0 * sigma_r;
+    double rcut = PMHC_CUTOFF_SIGMAS * sigma_r;
     double rcut2 = rcut * rcut;
     double p = s->patch_size;
     double half = p / 2.0;
@@ -567,6 +608,10 @@ static double pmhc_influence_at(const SimState *s, double x, double y) {
     }
     return sum > 1.0 ? 1.0 : sum;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Phase 2: grid Metropolis MC (CPU path)                             */
+/* ------------------------------------------------------------------ */
 
 /* Build frozen cell mask for forced binding. */
 static void build_frozen_mask(SimState *s, int *frozen) {
@@ -639,11 +684,11 @@ static void phase2_grid_cpu(SimState *s) {
 
                 /* Float32 Box-Muller matching GPU shader precision. */
                 float u1_f = pcg64_uniform_f(&s->rng);
-                if (u1_f < 1e-30f) u1_f = 1e-30f;
+                if (u1_f < BOX_MULLER_FLOOR) u1_f = BOX_MULLER_FLOOR;
                 float u2_f = pcg64_uniform_f(&s->rng);
                 float normal_f = (float)s->step_size_h
                                * sqrtf(-2.0f * logf(u1_f))
-                               * cosf(6.2831853071795864f * u2_f);
+                               * cosf(TWO_PI_F * u2_f);
                 float new_h_val = old_h_val + normal_f;
                 if (new_h_val < 0.0f) new_h_val = -new_h_val;
 
@@ -713,6 +758,10 @@ static void phase2_grid_cpu(SimState *s) {
     free(frozen);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Public: step / run                                                 */
+/* ------------------------------------------------------------------ */
+
 void sim_step(SimState *s) {
     int K = s->grid_substeps > 1 ? s->grid_substeps : 1;
 #ifdef KS_PROFILE
@@ -754,43 +803,9 @@ void sim_run(SimState *s, int n_steps) {
     }
 }
 
-double sim_depletion_width(const SimState *s) {
-    double center = s->patch_size / 2.0;
-
-    double *tcr_r = (double *)malloc(s->n_tcr * sizeof(double));
-    double *cd45_r = (double *)malloc(s->n_cd45 * sizeof(double));
-
-    for (int i = 0; i < s->n_tcr; i++) {
-        double dx_ = s->tcr_pos[2 * i] - center;
-        double dy_ = s->tcr_pos[2 * i + 1] - center;
-        tcr_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
-    }
-    for (int i = 0; i < s->n_cd45; i++) {
-        double dx_ = s->cd45_pos[2 * i] - center;
-        double dy_ = s->cd45_pos[2 * i + 1] - center;
-        cd45_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
-    }
-
-    for (int i = 0; i < s->n_tcr - 1; i++)
-        for (int j = i + 1; j < s->n_tcr; j++)
-            if (tcr_r[j] < tcr_r[i]) {
-                double tmp = tcr_r[i]; tcr_r[i] = tcr_r[j]; tcr_r[j] = tmp;
-            }
-    for (int i = 0; i < s->n_cd45 - 1; i++)
-        for (int j = i + 1; j < s->n_cd45; j++)
-            if (cd45_r[j] < cd45_r[i]) {
-                double tmp = cd45_r[i]; cd45_r[i] = cd45_r[j]; cd45_r[j] = tmp;
-            }
-
-    double tcr_median = tcr_r[s->n_tcr / 2];
-    double cd45_median = cd45_r[s->n_cd45 / 2];
-
-    free(tcr_r);
-    free(cd45_r);
-
-    double w = cd45_median - tcr_median;
-    return w > 0.0 ? w : 0.0;
-}
+/* ------------------------------------------------------------------ */
+/*  Depletion metrics                                                  */
+/* ------------------------------------------------------------------ */
 
 /* Minimum-image distance helper (same as potentials.c _mic). */
 static inline double _mic_sim(double d, double half_patch, double patch_size) {
@@ -817,30 +832,170 @@ static double _percentile(const double *sorted, int n, double p) {
     return sorted[lo] * (1.0 - frac) + sorted[lo + 1] * frac;
 }
 
-DepletionMetrics sim_depletion_metrics(const SimState *s) {
-    DepletionMetrics dm = {0};
-    double center = s->patch_size / 2.0;
-    double half_patch = s->patch_size / 2.0;
-    int nt = s->n_tcr, nc = s->n_cd45;
+/* Compute radial distances from patch center for a set of molecules. */
+static void compute_radial_distances(const double *pos, int n_mol,
+                                     double center, double *out_r) {
+    for (int i = 0; i < n_mol; i++) {
+        double dx_ = pos[2 * i] - center;
+        double dy_ = pos[2 * i + 1] - center;
+        out_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
+    }
+}
 
-    /* Compute radial distances from patch center. */
-    double *tcr_r = (double *)malloc(nt * sizeof(double));
-    double *cd45_r = (double *)malloc(nc * sizeof(double));
+static double compute_overlap_coeff(const double *tcr_r, int nt,
+                                    const double *cd45_r, int nc,
+                                    double patch_size) {
+    double r_max = patch_size * DIAG_HALF_FACTOR;
+    double bin_w = r_max / OVERLAP_NBINS;
+    double *h_tcr = (double *)calloc(OVERLAP_NBINS, sizeof(double));
+    double *h_cd45 = (double *)calloc(OVERLAP_NBINS, sizeof(double));
+
     for (int i = 0; i < nt; i++) {
-        double dx_ = s->tcr_pos[2 * i] - center;
-        double dy_ = s->tcr_pos[2 * i + 1] - center;
-        tcr_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
+        int b = (int)(tcr_r[i] / bin_w);
+        if (b >= OVERLAP_NBINS) b = OVERLAP_NBINS - 1;
+        h_tcr[b] += 1.0;
     }
     for (int i = 0; i < nc; i++) {
-        double dx_ = s->cd45_pos[2 * i] - center;
-        double dy_ = s->cd45_pos[2 * i + 1] - center;
-        cd45_r[i] = sqrt(dx_ * dx_ + dy_ * dy_);
+        int b = (int)(cd45_r[i] / bin_w);
+        if (b >= OVERLAP_NBINS) b = OVERLAP_NBINS - 1;
+        h_cd45[b] += 1.0;
     }
+    /* Normalize to density. */
+    for (int i = 0; i < OVERLAP_NBINS; i++) {
+        h_tcr[i] /= (nt * bin_w);
+        h_cd45[i] /= (nc * bin_w);
+    }
+    double overlap = 0.0;
+    for (int i = 0; i < OVERLAP_NBINS; i++) {
+        double m = (h_tcr[i] < h_cd45[i]) ? h_tcr[i] : h_cd45[i];
+        overlap += m * bin_w;
+    }
+    free(h_tcr);
+    free(h_cd45);
+    return overlap;
+}
 
+static double compute_ks_statistic(const double *tcr_r, int nt,
+                                   const double *cd45_r, int nc) {
+    int it = 0, ic = 0;
+    double max_d = 0.0;
+    while (it < nt || ic < nc) {
+        double ft = (double)it / nt;
+        double fc = (double)ic / nc;
+        double d = ft - fc;
+        if (d < 0) d = -d;
+        if (d > max_d) max_d = d;
+
+        if (it < nt && (ic >= nc || tcr_r[it] <= cd45_r[ic]))
+            it++;
+        else
+            ic++;
+    }
+    return max_d;
+}
+
+static double compute_frontier_nn_gap(const SimState *s,
+                                      const double *tcr_r, int nt,
+                                      const double *cd45_r, int nc,
+                                      double tcr_p75, double cd45_p25) {
+    double half_patch = s->patch_size / 2.0;
+    int n_ft = 0, n_fc = 0;
+    for (int i = 0; i < nt; i++)
+        if (tcr_r[i] > tcr_p75) n_ft++;
+    for (int i = 0; i < nc; i++)
+        if (cd45_r[i] < cd45_p25) n_fc++;
+
+    if (n_ft == 0 || n_fc == 0) return 0.0;
+
+    int *ft_idx = (int *)malloc(n_ft * sizeof(int));
+    int *fc_idx = (int *)malloc(n_fc * sizeof(int));
+    int fi = 0, ci = 0;
+    for (int i = 0; i < nt; i++)
+        if (tcr_r[i] > tcr_p75) ft_idx[fi++] = i;
+    for (int i = 0; i < nc; i++)
+        if (cd45_r[i] < cd45_p25) fc_idx[ci++] = i;
+
+    double *nn_dist = (double *)malloc(n_ft * sizeof(double));
+    for (int i = 0; i < n_ft; i++) {
+        int ti = ft_idx[i];
+        double tx = s->tcr_pos[2 * ti];
+        double ty = s->tcr_pos[2 * ti + 1];
+        double best = 1e18;
+        for (int j = 0; j < n_fc; j++) {
+            int cj = fc_idx[j];
+            double dx_ = _mic_sim(tx - s->cd45_pos[2 * cj], half_patch, s->patch_size);
+            double dy_ = _mic_sim(ty - s->cd45_pos[2 * cj + 1], half_patch, s->patch_size);
+            double d2 = dx_ * dx_ + dy_ * dy_;
+            if (d2 < best) best = d2;
+        }
+        nn_dist[i] = sqrt(best);
+    }
+    _bsort(nn_dist, n_ft);
+
+    /* Trimmed median: exclude bottom/top 10%. */
+    int lo = n_ft / 10;
+    int hi = n_ft - 1 - n_ft / 10;
+    if (lo > hi) { lo = 0; hi = n_ft - 1; }
+    double result = nn_dist[(lo + hi) / 2];
+
+    free(nn_dist);
+    free(ft_idx);
+    free(fc_idx);
+    return result;
+}
+
+static double compute_cross_nn_median(const SimState *s, int nt) {
+    int nc = s->n_cd45;
+    double half_patch = s->patch_size / 2.0;
+    double *nn_dist = (double *)malloc(nt * sizeof(double));
+    for (int i = 0; i < nt; i++) {
+        double tx = s->tcr_pos[2 * i];
+        double ty = s->tcr_pos[2 * i + 1];
+        double best = 1e18;
+        for (int j = 0; j < nc; j++) {
+            double dx_ = _mic_sim(tx - s->cd45_pos[2 * j], half_patch, s->patch_size);
+            double dy_ = _mic_sim(ty - s->cd45_pos[2 * j + 1], half_patch, s->patch_size);
+            double d2 = dx_ * dx_ + dy_ * dy_;
+            if (d2 < best) best = d2;
+        }
+        nn_dist[i] = sqrt(best);
+    }
+    _bsort(nn_dist, nt);
+    double result = nn_dist[nt / 2];
+    free(nn_dist);
+    return result;
+}
+
+double sim_depletion_width(const SimState *s) {
+    double center = s->patch_size / 2.0;
+    int nt = s->n_tcr, nc = s->n_cd45;
+
+    double *tcr_r = (double *)malloc(nt * sizeof(double));
+    double *cd45_r = (double *)malloc(nc * sizeof(double));
+    compute_radial_distances(s->tcr_pos, nt, center, tcr_r);
+    compute_radial_distances(s->cd45_pos, nc, center, cd45_r);
     _bsort(tcr_r, nt);
     _bsort(cd45_r, nc);
 
-    /* Metric 1: median_diff (same as sim_depletion_width). */
+    double w = cd45_r[nc / 2] - tcr_r[nt / 2];
+    free(tcr_r);
+    free(cd45_r);
+    return w > 0.0 ? w : 0.0;
+}
+
+DepletionMetrics sim_depletion_metrics(const SimState *s) {
+    DepletionMetrics dm = {0};
+    double center = s->patch_size / 2.0;
+    int nt = s->n_tcr, nc = s->n_cd45;
+
+    double *tcr_r = (double *)malloc(nt * sizeof(double));
+    double *cd45_r = (double *)malloc(nc * sizeof(double));
+    compute_radial_distances(s->tcr_pos, nt, center, tcr_r);
+    compute_radial_distances(s->cd45_pos, nc, center, cd45_r);
+    _bsort(tcr_r, nt);
+    _bsort(cd45_r, nc);
+
+    /* Metric 1: median_diff. */
     double tcr_med = tcr_r[nt / 2];
     double cd45_med = cd45_r[nc / 2];
     dm.median_diff = (cd45_med > tcr_med) ? cd45_med - tcr_med : 0.0;
@@ -850,137 +1005,30 @@ DepletionMetrics sim_depletion_metrics(const SimState *s) {
     double cd45_p25 = _percentile(cd45_r, nc, 25.0);
     dm.percentile_gap = cd45_p25 - tcr_p75;
 
-    /* Metric 3: overlap_coeff via histogram. */
-    {
-        double r_max = s->patch_size * 0.7072; /* sqrt(2)/2 ≈ diagonal half */
-        int nbins = 100;
-        double bin_w = r_max / nbins;
-        double *h_tcr = (double *)calloc(nbins, sizeof(double));
-        double *h_cd45 = (double *)calloc(nbins, sizeof(double));
+    /* Metric 3: overlap coefficient. */
+    dm.overlap_coeff = compute_overlap_coeff(tcr_r, nt, cd45_r, nc, s->patch_size);
 
-        for (int i = 0; i < nt; i++) {
-            int b = (int)(tcr_r[i] / bin_w);
-            if (b >= nbins) b = nbins - 1;
-            h_tcr[b] += 1.0;
-        }
-        for (int i = 0; i < nc; i++) {
-            int b = (int)(cd45_r[i] / bin_w);
-            if (b >= nbins) b = nbins - 1;
-            h_cd45[b] += 1.0;
-        }
-        /* Normalize to density. */
-        for (int i = 0; i < nbins; i++) {
-            h_tcr[i] /= (nt * bin_w);
-            h_cd45[i] /= (nc * bin_w);
-        }
-        double overlap = 0.0;
-        for (int i = 0; i < nbins; i++) {
-            double m = (h_tcr[i] < h_cd45[i]) ? h_tcr[i] : h_cd45[i];
-            overlap += m * bin_w;
-        }
-        dm.overlap_coeff = overlap;
-        free(h_tcr);
-        free(h_cd45);
-    }
+    /* Metric 4: KS statistic. */
+    dm.ks_statistic = compute_ks_statistic(tcr_r, nt, cd45_r, nc);
 
-    /* Metric 4: KS statistic via merge-walk of sorted arrays. */
-    {
-        int it = 0, ic = 0;
-        double max_d = 0.0;
-        while (it < nt || ic < nc) {
-            double ft = (double)it / nt;
-            double fc = (double)ic / nc;
-            double d = ft - fc;
-            if (d < 0) d = -d;
-            if (d > max_d) max_d = d;
+    /* Metric 5: frontier nearest-neighbor gap. */
+    dm.frontier_nn_gap = compute_frontier_nn_gap(s, tcr_r, nt, cd45_r, nc,
+                                                  tcr_p75, cd45_p25);
 
-            /* Advance the pointer with the smaller current value. */
-            if (it < nt && (ic >= nc || tcr_r[it] <= cd45_r[ic]))
-                it++;
-            else
-                ic++;
-        }
-        dm.ks_statistic = max_d;
-    }
-
-    /* Metric 5: frontier nearest-neighbor gap.
-     * Frontier TCRs: r > P75 (outermost 25%).
-     * Frontier CD45s: r < P25 (innermost 25%). */
-    {
-        int n_ft = 0, n_fc = 0;
-        for (int i = 0; i < nt; i++)
-            if (tcr_r[i] > tcr_p75) n_ft++;
-        for (int i = 0; i < nc; i++)
-            if (cd45_r[i] < cd45_p25) n_fc++;
-
-        if (n_ft > 0 && n_fc > 0) {
-            /* Collect frontier molecule indices. */
-            int *ft_idx = (int *)malloc(n_ft * sizeof(int));
-            int *fc_idx = (int *)malloc(n_fc * sizeof(int));
-            int fi = 0, ci = 0;
-            for (int i = 0; i < nt; i++)
-                if (tcr_r[i] > tcr_p75) ft_idx[fi++] = i;
-            for (int i = 0; i < nc; i++)
-                if (cd45_r[i] < cd45_p25) fc_idx[ci++] = i;
-
-            /* For each frontier TCR, find nearest frontier CD45. */
-            double *nn_dist = (double *)malloc(n_ft * sizeof(double));
-            for (int i = 0; i < n_ft; i++) {
-                int ti = ft_idx[i];
-                double tx = s->tcr_pos[2 * ti];
-                double ty = s->tcr_pos[2 * ti + 1];
-                double best = 1e18;
-                for (int j = 0; j < n_fc; j++) {
-                    int cj = fc_idx[j];
-                    double dx_ = _mic_sim(tx - s->cd45_pos[2 * cj], half_patch, s->patch_size);
-                    double dy_ = _mic_sim(ty - s->cd45_pos[2 * cj + 1], half_patch, s->patch_size);
-                    double d2 = dx_ * dx_ + dy_ * dy_;
-                    if (d2 < best) best = d2;
-                }
-                nn_dist[i] = sqrt(best);
-            }
-            _bsort(nn_dist, n_ft);
-
-            /* Trimmed median: exclude bottom/top 10%. */
-            int lo = n_ft / 10;
-            int hi = n_ft - 1 - n_ft / 10;
-            if (lo > hi) { lo = 0; hi = n_ft - 1; }
-            dm.frontier_nn_gap = nn_dist[(lo + hi) / 2];
-
-            free(nn_dist);
-            free(ft_idx);
-            free(fc_idx);
-        }
-    }
-
-    /* Metric 6: cross-type nearest-neighbor median.
-     * For each TCR, distance to nearest CD45. */
-    {
-        double *nn_dist = (double *)malloc(nt * sizeof(double));
-        for (int i = 0; i < nt; i++) {
-            double tx = s->tcr_pos[2 * i];
-            double ty = s->tcr_pos[2 * i + 1];
-            double best = 1e18;
-            for (int j = 0; j < nc; j++) {
-                double dx_ = _mic_sim(tx - s->cd45_pos[2 * j], half_patch, s->patch_size);
-                double dy_ = _mic_sim(ty - s->cd45_pos[2 * j + 1], half_patch, s->patch_size);
-                double d2 = dx_ * dx_ + dy_ * dy_;
-                if (d2 < best) best = d2;
-            }
-            nn_dist[i] = sqrt(best);
-        }
-        _bsort(nn_dist, nt);
-        dm.cross_nn_median = nn_dist[nt / 2];
-        free(nn_dist);
-    }
+    /* Metric 6: cross-type nearest-neighbor median. */
+    dm.cross_nn_median = compute_cross_nn_median(s, nt);
 
     free(tcr_r);
     free(cd45_r);
     return dm;
 }
 
-double sim_mean_r(const double *pos, int n) {
-    double center = PATCH_SIZE_NM / 2.0;
+/* ------------------------------------------------------------------ */
+/*  Utility functions                                                  */
+/* ------------------------------------------------------------------ */
+
+double sim_mean_r(const SimState *s, const double *pos, int n) {
+    double center = s->patch_size / 2.0;
     double sum = 0.0;
     for (int i = 0; i < n; i++) {
         double dx_ = pos[2 * i] - center;

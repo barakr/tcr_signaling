@@ -20,6 +20,28 @@
 #define DT_PAPER         0.01    /* paper: 0.01 s */
 #define STEP_H_PAPER     1.0     /* paper: 1 nm */
 
+/* CD45 repulsive spring defaults. */
+#define K_REP_BROWNIAN       1.0     /* kT/nm² — brownian mode default */
+#define K_REP_PAPER_FACTOR  10.0     /* paper formula: k = factor * κ / dx² */
+
+/* Molecular defaults. */
+#define SIGMA_R_DEFAULT      2.0     /* lateral pMHC influence range (nm) */
+#define MOL_RCUT_DEFAULT    10.0     /* soft repulsion cutoff (nm) */
+
+/* pMHC influence field. */
+#define PMHC_CUTOFF_SIGMAS   3.0     /* influence cutoff at N sigma */
+
+/* Numerical constants for Box-Muller transform. */
+#define BOX_MULLER_FLOOR     1e-30f  /* floor for log(u) */
+#define TWO_PI_F             6.2831853071795864f
+
+/* Histogram / metrics. */
+#define OVERLAP_NBINS        100     /* bins for radial overlap coefficient */
+#define DIAG_HALF_FACTOR     0.7072  /* √2/2 for diagonal half-patch */
+
+/* Minimum simulation steps. */
+#define MIN_N_STEPS           50
+
 typedef struct {
     /* Grid */
     int grid_size;
@@ -124,8 +146,8 @@ typedef struct {
 
 DepletionMetrics sim_depletion_metrics(const SimState *s);
 
-/* Compute mean radial distance for TCR and CD45. */
-double sim_mean_r(const double *pos, int n);
+/* Compute mean radial distance from patch center. */
+double sim_mean_r(const SimState *s, const double *pos, int n);
 
 /* Count bound TCRs. */
 int sim_count_bound_tcr(const SimState *s);

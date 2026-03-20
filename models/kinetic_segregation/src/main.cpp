@@ -47,6 +47,7 @@ static void print_usage(std::string_view prog) {
               << " --time_sec FLOAT --rigidity_kT FLOAT --run-dir PATH\n"
               << "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
               << "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
+              << "       [--monitor-binding FLOAT] [--monitor-interval INT]\n"
               << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT]\n"
               << "       [--dt FLOAT] [--dt_factor FLOAT]\n"
               << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n"
@@ -75,6 +76,31 @@ static void dump_frame(const SimState *sim, const fs::path &frames_dir, int step
         ofs.write(reinterpret_cast<const char *>(sim->cd45_pos),
                   sim->n_cd45 * 2 * sizeof(double));
     }
+}
+
+/* ---------- Binding monitor (lightweight, no I/O) ---------- */
+
+static double compute_bound_fraction(const SimState *sim, double threshold) {
+    if (sim->n_pmhc <= 0 || sim->n_tcr <= 0 || !sim->pmhc_pos)
+        return 0.0;
+    double thr2 = threshold * threshold;
+    double half = sim->patch_size / 2.0;
+    double ps = sim->patch_size;
+    int bound = 0;
+    for (int t = 0; t < sim->n_tcr; t++) {
+        double tx = sim->tcr_pos[t * 2];
+        double ty = sim->tcr_pos[t * 2 + 1];
+        for (int p = 0; p < sim->n_pmhc; p++) {
+            double ddx = tx - sim->pmhc_pos[p * 2];
+            double ddy = ty - sim->pmhc_pos[p * 2 + 1];
+            if (ddx > half) ddx -= ps;
+            else if (ddx < -half) ddx += ps;
+            if (ddy > half) ddy -= ps;
+            else if (ddy < -half) ddy += ps;
+            if (ddx * ddx + ddy * ddy < thr2) { bound++; break; }
+        }
+    }
+    return static_cast<double>(bound) / sim->n_tcr;
 }
 
 /* ---------- CLI argument helpers ---------- */
@@ -171,6 +197,8 @@ int main(int argc, const char *argv[]) {
     bool dump_frames_flag = false;
     int dump_interval = 1;
     int grid_substeps = 1;
+    double monitor_binding_threshold = 0.0;  /* 0 = disabled */
+    int monitor_interval = 1;
     double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0, dt_factor_arg = 0.0;
     double cd45_height_arg = 0.0, cd45_k_rep_arg = 0.0;
     double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
@@ -264,6 +292,10 @@ int main(int argc, const char *argv[]) {
             patch_size_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--grid-substeps") && i + 1 < argc)
             grid_substeps = std::atoi(argv[++i]);
+        else if (match(argv[i], "--monitor-binding") && i + 1 < argc)
+            monitor_binding_threshold = std::atof(argv[++i]);
+        else if (match(argv[i], "--monitor-interval") && i + 1 < argc)
+            monitor_interval = static_cast<int>(std::atof(argv[++i]));
         else if (match(argv[i], "--help") || match(argv[i], "-h")) {
             print_usage(argv[0]);
             return 0;
@@ -325,8 +357,11 @@ int main(int argc, const char *argv[]) {
         n_steps = n_steps_arg;
     } else {
         n_steps = static_cast<int>(std::round(time_sec / sim->dt));
-        if (n_steps < 50) n_steps = 50;
+        if (n_steps < MIN_N_STEPS) n_steps = MIN_N_STEPS;
     }
+
+    /* Binding monitor time series (populated if --monitor-binding is set). */
+    std::vector<double> binding_timeseries;
 
     if (dump_frames_flag) {
         auto frames_dir = fs::path(run_dir) / "frames";
@@ -366,6 +401,22 @@ int main(int argc, const char *argv[]) {
                 frame_idx++;
             }
         }
+    } else if (monitor_binding_threshold > 0.0) {
+        /* Lightweight binding monitor: compute bound fraction at intervals,
+         * no file I/O. Much faster than --dump-frames. */
+        if (monitor_interval < 1) monitor_interval = 1;
+        binding_timeseries.reserve(n_steps / monitor_interval + 1);
+        /* Record initial state. */
+        binding_timeseries.push_back(
+            compute_bound_fraction(sim, monitor_binding_threshold));
+        sim->n_steps = n_steps;
+        for (int step = 1; step <= n_steps; step++) {
+            sim_step(sim);
+            if (step % monitor_interval == 0) {
+                binding_timeseries.push_back(
+                    compute_bound_fraction(sim, monitor_binding_threshold));
+            }
+        }
     } else {
         sim_run(sim, n_steps);
     }
@@ -375,8 +426,8 @@ int main(int argc, const char *argv[]) {
 #endif
     double depletion = sim_depletion_width(sim);
     DepletionMetrics dm = sim_depletion_metrics(sim);
-    double tcr_mean_r = sim_mean_r(sim->tcr_pos, sim->n_tcr);
-    double cd45_mean_r = sim_mean_r(sim->cd45_pos, sim->n_cd45);
+    double tcr_mean_r = sim_mean_r(sim, sim->tcr_pos, sim->n_tcr);
+    double cd45_mean_r = sim_mean_r(sim, sim->cd45_pos, sim->n_cd45);
     double accept_rate = (sim->total_proposals > 0)
         ? static_cast<double>(sim->accepted) / sim->total_proposals : 0.0;
 
@@ -410,6 +461,13 @@ int main(int argc, const char *argv[]) {
             {"u_assoc", sim->u_assoc}
         }}
     };
+
+    /* Add binding time series if monitoring was active. */
+    if (!binding_timeseries.empty()) {
+        output["binding_timeseries"] = binding_timeseries;
+        output["binding_monitor_interval"] = monitor_interval;
+        output["binding_threshold_nm"] = monitor_binding_threshold;
+    }
 
     auto json_str = output.dump(2);
 
