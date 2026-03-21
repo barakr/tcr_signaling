@@ -322,6 +322,9 @@ def main():
         tcr_scat.set_offsets(tcr_um)
         cd45_scat.set_offsets(cd45_um)
 
+        # Initialize P10 values (may be overwritten below)
+        tcr_cd45_p10, cd45_tcr_p10 = None, None
+
         # Depletion metrics and annulus
         metrics = _compute_depletion_metrics(tcr, cd45, patch_nm)
         inner_r = metrics["tcr_p75_um"]
@@ -391,18 +394,19 @@ def main():
         # Height
         im.set_data(h.T)
 
-        # Title: frontier NN gap + overlap
+        # Title: time + overlap + P10 separation
         sim_step = fidx * dump_interval
         t_phys = sim_step * dt if dt > 0 else 0
         t_str = f"t = {t_phys:.3f} s" if t_phys < 1 else f"t = {t_phys:.2f} s"
-        fnn = metrics["frontier_nn_nm"]
-        gap = metrics["pct_gap_nm"]
-        if gap > 0:
-            title_text.set_text(
-                f"{t_str}   |   front gap {fnn:.0f} nm  (overlap {ovl:.2f})")
-        else:
-            title_text.set_text(
-                f"{t_str}   |   mixed (overlap {ovl:.2f}, gap {gap:.0f} nm)")
+        title_parts = [t_str, f"overlap {ovl:.2f}"]
+        if args.show_separation and pmhc_pos is not None:
+            if tcr_cd45_p10 is not None:
+                title_parts.append(
+                    f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  "
+                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm")
+            else:
+                title_parts.append("no bound TCR")
+        title_text.set_text("   |   ".join(title_parts))
 
         # Progress
         frac = frame_idx / max(1, len(steps) - 1)
