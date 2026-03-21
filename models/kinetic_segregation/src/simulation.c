@@ -966,6 +966,86 @@ static double compute_cross_nn_median(const SimState *s, int nt) {
     return result;
 }
 
+/* Find bound TCRs using spatial proximity to pMHC (works in both binding modes).
+ * Returns count of bound TCRs; fills bound_idx (caller-allocated, size n_tcr). */
+static int find_bound_tcrs(const SimState *s, int *bound_idx) {
+    if (s->bind_threshold <= 0.0 || !s->pmhc_pos || s->n_pmhc <= 0)
+        return 0;
+    double thr2 = s->bind_threshold * s->bind_threshold;
+    double half = s->patch_size / 2.0;
+    double ps = s->patch_size;
+    int count = 0;
+    for (int t = 0; t < s->n_tcr; t++) {
+        double tx = s->tcr_pos[2 * t];
+        double ty = s->tcr_pos[2 * t + 1];
+        for (int p = 0; p < s->n_pmhc; p++) {
+            double dx_ = tx - s->pmhc_pos[2 * p];
+            double dy_ = ty - s->pmhc_pos[2 * p + 1];
+            if (dx_ > half) dx_ -= ps;
+            else if (dx_ < -half) dx_ += ps;
+            if (dy_ > half) dy_ -= ps;
+            else if (dy_ < -half) dy_ += ps;
+            if (dx_ * dx_ + dy_ * dy_ < thr2) {
+                bound_idx[count++] = t;
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+/* P10 of bound-TCR→nearest-CD45 distances. Returns -1 if n_bound == 0. */
+static double compute_bound_tcr_cd45_nn_p10(const SimState *s,
+                                             const int *bound_idx, int n_bound) {
+    if (n_bound == 0) return -1.0;
+    int nc = s->n_cd45;
+    double half_patch = s->patch_size / 2.0;
+    double *nn_dist = (double *)malloc(n_bound * sizeof(double));
+    for (int i = 0; i < n_bound; i++) {
+        int ti = bound_idx[i];
+        double tx = s->tcr_pos[2 * ti];
+        double ty = s->tcr_pos[2 * ti + 1];
+        double best = 1e18;
+        for (int j = 0; j < nc; j++) {
+            double dx_ = _mic_sim(tx - s->cd45_pos[2 * j], half_patch, s->patch_size);
+            double dy_ = _mic_sim(ty - s->cd45_pos[2 * j + 1], half_patch, s->patch_size);
+            double d2 = dx_ * dx_ + dy_ * dy_;
+            if (d2 < best) best = d2;
+        }
+        nn_dist[i] = sqrt(best);
+    }
+    _bsort(nn_dist, n_bound);
+    double result = nn_dist[n_bound / 10];  /* P10: index floor(n*0.1) */
+    free(nn_dist);
+    return result;
+}
+
+/* P10 of CD45→nearest-bound-TCR distances. Returns -1 if n_bound == 0. */
+static double compute_cd45_bound_tcr_nn_p10(const SimState *s,
+                                             const int *bound_idx, int n_bound) {
+    if (n_bound == 0) return -1.0;
+    int nc = s->n_cd45;
+    double half_patch = s->patch_size / 2.0;
+    double *nn_dist = (double *)malloc(nc * sizeof(double));
+    for (int j = 0; j < nc; j++) {
+        double cx = s->cd45_pos[2 * j];
+        double cy = s->cd45_pos[2 * j + 1];
+        double best = 1e18;
+        for (int i = 0; i < n_bound; i++) {
+            int ti = bound_idx[i];
+            double dx_ = _mic_sim(cx - s->tcr_pos[2 * ti], half_patch, s->patch_size);
+            double dy_ = _mic_sim(cy - s->tcr_pos[2 * ti + 1], half_patch, s->patch_size);
+            double d2 = dx_ * dx_ + dy_ * dy_;
+            if (d2 < best) best = d2;
+        }
+        nn_dist[j] = sqrt(best);
+    }
+    _bsort(nn_dist, nc);
+    double result = nn_dist[nc / 10];  /* P10 */
+    free(nn_dist);
+    return result;
+}
+
 double sim_depletion_width(const SimState *s) {
     double center = s->patch_size / 2.0;
     int nt = s->n_tcr, nc = s->n_cd45;
@@ -1017,6 +1097,13 @@ DepletionMetrics sim_depletion_metrics(const SimState *s) {
 
     /* Metric 6: cross-type nearest-neighbor median. */
     dm.cross_nn_median = compute_cross_nn_median(s, nt);
+
+    /* Metrics 7-8: bound-TCR cross-NN P10 (geometry-free). */
+    int *bound_idx = (int *)malloc(nt * sizeof(int));
+    int n_bound = find_bound_tcrs(s, bound_idx);
+    dm.bound_tcr_cd45_nn_p10 = compute_bound_tcr_cd45_nn_p10(s, bound_idx, n_bound);
+    dm.cd45_bound_tcr_nn_p10 = compute_cd45_bound_tcr_nn_p10(s, bound_idx, n_bound);
+    free(bound_idx);
 
     free(tcr_r);
     free(cd45_r);

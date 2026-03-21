@@ -82,6 +82,7 @@ typedef struct {
 
     /* TCR binding state (forced mode) */
     int *tcr_bound;           /* n_tcr array: 1=bound, 0=free. NULL if gaussian mode */
+    double bind_threshold;    /* distance threshold for "bound" (nm), 0=disabled */
 
     /* pMHC influence field (gaussian binding mode) */
     double sigma_r;            /* lateral pMHC influence range (nm) */
@@ -142,6 +143,8 @@ typedef struct {
     double ks_statistic;      /* KS D-statistic on radial CDFs, [0,1]             */
     double frontier_nn_gap;   /* trimmed median NN dist between frontier molecules */
     double cross_nn_median;   /* median TCR→nearest-CD45 distance                 */
+    double bound_tcr_cd45_nn_p10;  /* P10 bound-TCR→nearest-CD45 dist, -1 if none */
+    double cd45_bound_tcr_nn_p10;  /* P10 CD45→nearest-bound-TCR dist, -1 if none */
 } DepletionMetrics;
 
 DepletionMetrics sim_depletion_metrics(const SimState *s);

@@ -350,6 +350,7 @@ int main(int argc, const char *argv[]) {
                            h0_tcr_arg, init_height_arg,
                            sigma_r_arg, sigma_bind_arg, patch_size_arg);
     if (grid_substeps > 1) sim->grid_substeps = grid_substeps;
+    sim->bind_threshold = monitor_binding_threshold;
 
     /* Compute n_steps: explicit override or auto from time_sec / dt. */
     int n_steps;
@@ -438,6 +439,12 @@ int main(int argc, const char *argv[]) {
             {"D_h_nm2_per_s", sim->D_h},
             {"D_mol_nm2_per_s", sim->D_mol},
             {"accept_rate", accept_rate},
+            {"depletion_bound_tcr_cd45_nn_p10_nm",
+             dm.bound_tcr_cd45_nn_p10 < 0 ? nlohmann::json(nullptr)
+                                           : nlohmann::json(dm.bound_tcr_cd45_nn_p10)},
+            {"depletion_cd45_bound_tcr_nn_p10_nm",
+             dm.cd45_bound_tcr_nn_p10 < 0 ? nlohmann::json(nullptr)
+                                           : nlohmann::json(dm.cd45_bound_tcr_nn_p10)},
             {"depletion_cross_nn_median_nm", dm.cross_nn_median},
             {"depletion_frontier_nn_gap_nm", dm.frontier_nn_gap},
             {"depletion_ks_statistic", dm.ks_statistic},
