@@ -135,7 +135,7 @@ static void init_params(SimState *s, int grid_size, int n_tcr, int n_cd45,
     /* Spring constant: paper formula or explicit. */
     if (k_rep > 0.0) {
         s->k_rep = k_rep;
-    } else if (step_mode == 1) {
+    } else if (step_mode == STEP_MODE_PAPER) {
         s->k_rep = K_REP_PAPER_FACTOR * kappa / (s->dx * s->dx);
     } else {
         s->k_rep = K_REP_BROWNIAN;
@@ -157,7 +157,7 @@ static void init_dt(SimState *s, double dt_override, double dt_factor) {
     calibrate_dt(s, D_mol, D_h);
 
     /* Paper mode: fixed height step (independent of dt). */
-    if (s->step_mode == 1) {
+    if (s->step_mode == STEP_MODE_PAPER) {
         s->step_size_h = STEP_H_PAPER;
     }
 
@@ -169,12 +169,12 @@ static void init_dt(SimState *s, double dt_override, double dt_factor) {
     if (dt_override > 0.0) {
         s->dt = dt_override;
         s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        if (s->step_mode != 1)
+        if (s->step_mode != STEP_MODE_PAPER)
             s->step_size_h = sqrt(2.0 * D_h * s->dt);
     } else if (dt_factor > 0.0) {
         s->dt = s->dt_auto * dt_factor;
         s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
-        if (s->step_mode != 1)
+        if (s->step_mode != STEP_MODE_PAPER)
             s->step_size_h = sqrt(2.0 * D_h * s->dt);
     }
 
@@ -201,16 +201,34 @@ static void init_molecules(SimState *s, uint64_t seed,
     pcg64_seed(&s->rng, seed);
     init_height_field(s);
 
-    /* pMHC initialization (before TCR so TCR can co-locate). */
+    /* pMHC initialization (before TCR so TCR can co-locate).
+     * If n_pmhc == 0, auto-compute from paper density (300/µm²). */
+    double eff_radius = (s->pmhc_radius > 0.0)
+        ? s->pmhc_radius
+        : s->patch_size * PMHC_RADIUS_FRAC_DEFAULT;
+
+    if (s->n_pmhc == 0) {
+        /* Auto-compute from PMHC_DENSITY_PER_UM2. */
+        double area_nm2;
+        if (s->pmhc_mode == PMHC_MODE_INNER_CIRCLE) {
+            area_nm2 = M_PI * eff_radius * eff_radius;
+        } else {
+            area_nm2 = s->patch_size * s->patch_size;
+        }
+        double area_um2 = area_nm2 / 1e6;
+        s->n_pmhc = (int)(PMHC_DENSITY_PER_UM2 * area_um2 + 0.5);
+        if (s->n_pmhc < 1) s->n_pmhc = 1;
+        fprintf(stderr, "AUTO-PMHC: n_pmhc=%d (density=%.0f/µm², area=%.0f nm²)\n",
+                s->n_pmhc, PMHC_DENSITY_PER_UM2, area_nm2);
+    }
+
     if (s->n_pmhc > 0) {
         s->pmhc_pos = (double *)malloc(s->n_pmhc * 2 * sizeof(double));
         pcg64_t pmhc_rng;
         pcg64_seed(&pmhc_rng, pmhc_seed);
-
-        double eff_radius = (s->pmhc_radius > 0.0) ? s->pmhc_radius : s->patch_size / 3.0;
         double center_xy = s->patch_size / 2.0;
 
-        if (s->pmhc_mode == 1) {
+        if (s->pmhc_mode == PMHC_MODE_INNER_CIRCLE) {
             /* inner_circle: rejection sampling within centered disc */
             int placed = 0;
             while (placed < s->n_pmhc) {
@@ -260,7 +278,7 @@ static void init_molecules(SimState *s, uint64_t seed,
     init_positions(s->cd45_pos, s->n_cd45, s->patch_size, &s->rng, 0);
 
     /* Precompute pMHC influence field for gaussian binding mode. */
-    if (s->binding_mode == 0) {
+    if (s->binding_mode == BINDING_MODE_GAUSSIAN) {
         if (s->n_pmhc > 0) {
             compute_pmhc_influence(s);
         } else {
@@ -272,7 +290,7 @@ static void init_molecules(SimState *s, uint64_t seed,
     }
 
     /* TCR binding state (forced mode). */
-    if (s->binding_mode == 1 && s->pmhc_count) {
+    if (s->binding_mode == BINDING_MODE_FORCED && s->pmhc_count) {
         s->tcr_bound = (int *)calloc(s->n_tcr, sizeof(int));
         init_binding_state(s);
     }
@@ -408,7 +426,7 @@ static void phase1_molecules(SimState *s) {
     /* TCR molecules. */
     for (int idx = 0; idx < s->n_tcr; idx++) {
         /* Forced binding: bound TCRs are immobile. */
-        if (s->binding_mode == 1 && s->tcr_bound && s->tcr_bound[idx])
+        if (s->binding_mode == BINDING_MODE_FORCED && s->tcr_bound && s->tcr_bound[idx])
             continue;
 
         double ox = s->tcr_pos[2 * idx];
@@ -449,7 +467,7 @@ static void phase1_molecules(SimState *s) {
                 cell_list_move(tcr_cl, idx, old_cell, new_cell);
             }
             /* Update binding state after accepted move. */
-            if (s->binding_mode == 1 && s->tcr_bound && s->pmhc_count) {
+            if (s->binding_mode == BINDING_MODE_FORCED && s->tcr_bound && s->pmhc_count) {
                 int new_ix = (int)(nx_ / dx); if (new_ix >= n) new_ix = n - 1;
                 int new_iy = (int)(ny_ / dx); if (new_iy >= n) new_iy = n - 1;
                 s->tcr_bound[idx] = (s->pmhc_count[new_ix * n + new_iy] > 0) ? 1 : 0;
@@ -523,7 +541,7 @@ static void calibrate_dt(SimState *s, double D_mol, double D_h) {
     double min_scale = s->dx;  /* grid cell size as upper bound */
 
     /* Gaussian binding: molecular step must resolve sigma_r */
-    if (s->n_pmhc > 0 && s->binding_mode == 0 && s->sigma_r > 0.0)
+    if (s->n_pmhc > 0 && s->binding_mode == BINDING_MODE_GAUSSIAN && s->sigma_r > 0.0)
         if (s->sigma_r < min_scale)
             min_scale = s->sigma_r;
 

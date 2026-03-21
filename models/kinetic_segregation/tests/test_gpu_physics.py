@@ -42,6 +42,8 @@ def _run_c(tmp_path, seed, use_gpu=False, label="c"):
         "--n_steps", str(N_STEPS),
         "--grid_size", str(GRID_SIZE),
         "--run-dir", str(rd),
+        "--binding_mode", "forced",
+        "--n_pmhc", "-1",
         "--dump-frames",
     ]
     if not use_gpu:
@@ -201,6 +203,8 @@ class TestAcceptRateGap:
             "--n_steps", str(n_steps),
             "--grid_size", str(grid_size),
             "--run-dir", str(rd),
+            "--binding_mode", "forced",
+            "--n_pmhc", "-1",
         ]
         if not use_gpu:
             cmd.append("--no-gpu")
@@ -267,6 +271,8 @@ class TestGridConvergence:
                     "--seed", str(seed),
                     "--grid_size", str(grid),
                     "--run-dir", str(rd),
+                    "--binding_mode", "forced",
+                    "--n_pmhc", "-1",
                     "--no-gpu",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)

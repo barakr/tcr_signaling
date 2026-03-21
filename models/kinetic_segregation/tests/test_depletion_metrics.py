@@ -36,6 +36,9 @@ def _run(tmp_path, label="run", **kwargs):
         "seed": 42,
         "n_steps": 200,
         "grid_size": 64,
+        "binding_mode": "forced",
+        "step_mode": "paper",
+        "n_pmhc": "-1",
     }
     defaults.update(kwargs)
     for k, v in defaults.items():

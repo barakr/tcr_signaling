@@ -40,6 +40,9 @@ def _run(tmp_path, label="run", **kwargs):
         "seed": 42,
         "n_steps": 50,
         "grid_size": 32,
+        "binding_mode": "forced",
+        "step_mode": "paper",
+        "n_pmhc": "-1",
     }
     defaults.update(kwargs)
     for k, v in defaults.items():
@@ -279,6 +282,8 @@ class TestBoundaryConditions:
             "--time_sec", "10", "--rigidity_kT", "20",
             "--seed", "42", "--n_steps", "50", "--grid_size", "32",
             "--n_tcr", str(n_tcr), "--n_cd45", str(n_cd45),
+            "--binding_mode", "forced", "--step_mode", "paper",
+            "--n_pmhc", "-1",
             "--dump-frames",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)

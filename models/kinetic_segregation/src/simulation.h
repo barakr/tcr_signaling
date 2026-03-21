@@ -39,6 +39,18 @@
 #define OVERLAP_NBINS        100     /* bins for radial overlap coefficient */
 #define DIAG_HALF_FACTOR     0.7072  /* √2/2 for diagonal half-patch */
 
+/* pMHC paper defaults. */
+#define PMHC_DENSITY_PER_UM2     300.0  /* paper: 300/µm² surface density */
+#define PMHC_RADIUS_FRAC_DEFAULT (1.0/3.0)  /* inner_circle fallback: fraction of patch */
+
+/* Mode enumerations. */
+#define STEP_MODE_BROWNIAN     0
+#define STEP_MODE_PAPER        1
+#define BINDING_MODE_GAUSSIAN  0
+#define BINDING_MODE_FORCED    1
+#define PMHC_MODE_UNIFORM      0
+#define PMHC_MODE_INNER_CIRCLE 1
+
 /* Minimum simulation steps. */
 #define MIN_N_STEPS           50
 

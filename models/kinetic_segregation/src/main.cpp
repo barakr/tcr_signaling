@@ -179,11 +179,11 @@ static void load_params_file(const std::string &path,
     }
     if (params.contains("binding_mode")) {
         auto mode = params["binding_mode"].get<std::string>();
-        binding_mode_arg = (mode == "gaussian") ? 0 : 1;
+        binding_mode_arg = (mode == "gaussian") ? BINDING_MODE_GAUSSIAN : BINDING_MODE_FORCED;
     }
     if (params.contains("step_mode")) {
         auto mode = params["step_mode"].get<std::string>();
-        step_mode_arg = (mode == "brownian") ? 0 : 1;
+        step_mode_arg = (mode == "brownian") ? STEP_MODE_BROWNIAN : STEP_MODE_PAPER;
     }
 }
 
@@ -204,10 +204,10 @@ int main(int argc, const char *argv[]) {
     double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
     int n_pmhc_arg = 0;
     int pmhc_seed_arg = -1;
-    int pmhc_mode_arg = 1;     /* 1=inner_circle (default), 0=uniform */
+    int pmhc_mode_arg = PMHC_MODE_UNIFORM;
     double pmhc_radius_arg = 0.0;
-    int binding_mode_arg = 1;  /* 1=forced (paper), 0=gaussian */
-    int step_mode_arg = 0;     /* 0=brownian (default), 1=paper */
+    int binding_mode_arg = BINDING_MODE_GAUSSIAN;
+    int step_mode_arg = STEP_MODE_BROWNIAN;
     double h0_tcr_arg = 0.0;
     double init_height_arg = 0.0;
     double u_assoc_arg = 0.0;
@@ -272,11 +272,11 @@ int main(int argc, const char *argv[]) {
             params_file = argv[++i];
         else if (match(argv[i], "--binding_mode") && i + 1 < argc) {
             ++i;
-            binding_mode_arg = match(argv[i], "gaussian") ? 0 : 1;
+            binding_mode_arg = match(argv[i], "gaussian") ? BINDING_MODE_GAUSSIAN : BINDING_MODE_FORCED;
         }
         else if (match(argv[i], "--step_mode") && i + 1 < argc) {
             ++i;
-            step_mode_arg = match(argv[i], "brownian") ? 0 : 1;
+            step_mode_arg = match(argv[i], "brownian") ? STEP_MODE_BROWNIAN : STEP_MODE_PAPER;
         }
         else if (match(argv[i], "--h0_tcr") && i + 1 < argc)
             h0_tcr_arg = std::atof(argv[++i]);
@@ -378,7 +378,7 @@ int main(int argc, const char *argv[]) {
             {"dump_interval", dump_interval}, {"n_frames", n_frames},
             {"dt", sim->dt}, {"time_sec", time_sec},
             {"rigidity_kT", rigidity}, {"n_pmhc", sim->n_pmhc},
-            {"pmhc_mode", (pmhc_mode_arg == 0) ? "uniform" : "inner_circle"},
+            {"pmhc_mode", (pmhc_mode_arg == PMHC_MODE_UNIFORM) ? "uniform" : "inner_circle"},
             {"pmhc_radius", sim->pmhc_radius}
         };
         if (std::ofstream ofs(frames_dir / "meta.json"); ofs)

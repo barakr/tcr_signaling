@@ -56,6 +56,8 @@ def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
         "--n_tcr", str(n_tcr),
         "--n_cd45", str(n_cd45),
         "--run-dir", str(rd),
+        "--binding_mode", "forced",
+        "--n_pmhc", "-1",
     ]
     if not use_gpu:
         cmd.append("--no-gpu")
@@ -81,6 +83,8 @@ def _run_with_frames(tmp_path, *, use_gpu=True, label="run", seed=42,
         "--n_tcr", str(n_tcr),
         "--n_cd45", str(n_cd45),
         "--run-dir", str(rd),
+        "--binding_mode", "forced",
+        "--n_pmhc", "-1",
         "--dump-frames",
     ]
     if not use_gpu:
