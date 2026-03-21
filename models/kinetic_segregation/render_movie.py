@@ -99,6 +99,67 @@ def _compute_depletion_metrics(tcr_pos, cd45_pos, patch_size):
     }
 
 
+def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size,
+                           bind_threshold=3.0):
+    """Compute P10 cross-NN distances for bound TCRs.
+
+    Returns (bound_mask, tcr_cd45_p10_nm, cd45_tcr_p10_nm).
+    bound_mask: boolean array of shape (n_tcr,), True for bound TCRs.
+    P10 values are None if no TCRs are bound.
+    """
+    half = patch_size / 2.0
+    n_tcr = len(tcr_pos)
+    n_cd45 = len(cd45_pos)
+
+    # Find bound TCRs: within bind_threshold of any pMHC
+    bound_mask = np.zeros(n_tcr, dtype=bool)
+    if pmhc_pos is not None and len(pmhc_pos) > 0:
+        thr2 = bind_threshold * bind_threshold
+        for t in range(n_tcr):
+            dx = tcr_pos[t, 0] - pmhc_pos[:, 0]
+            dy = tcr_pos[t, 1] - pmhc_pos[:, 1]
+            dx = np.where(dx > half, dx - patch_size,
+                          np.where(dx < -half, dx + patch_size, dx))
+            dy = np.where(dy > half, dy - patch_size,
+                          np.where(dy < -half, dy + patch_size, dy))
+            if np.any(dx * dx + dy * dy < thr2):
+                bound_mask[t] = True
+
+    n_bound = int(np.sum(bound_mask))
+    if n_bound == 0:
+        return bound_mask, None, None
+
+    bound_tcr = tcr_pos[bound_mask]
+
+    # Bound-TCR → nearest CD45
+    nn_tcr_cd45 = np.empty(n_bound)
+    for i in range(n_bound):
+        dx = bound_tcr[i, 0] - cd45_pos[:, 0]
+        dy = bound_tcr[i, 1] - cd45_pos[:, 1]
+        dx = np.where(dx > half, dx - patch_size,
+                      np.where(dx < -half, dx + patch_size, dx))
+        dy = np.where(dy > half, dy - patch_size,
+                      np.where(dy < -half, dy + patch_size, dy))
+        nn_tcr_cd45[i] = np.min(np.sqrt(dx * dx + dy * dy))
+    nn_tcr_cd45.sort()
+    tcr_cd45_p10 = float(nn_tcr_cd45[n_bound // 10])
+
+    # CD45 → nearest bound-TCR
+    nn_cd45_tcr = np.empty(n_cd45)
+    for j in range(n_cd45):
+        dx = cd45_pos[j, 0] - bound_tcr[:, 0]
+        dy = cd45_pos[j, 1] - bound_tcr[:, 1]
+        dx = np.where(dx > half, dx - patch_size,
+                      np.where(dx < -half, dx + patch_size, dx))
+        dy = np.where(dy > half, dy - patch_size,
+                      np.where(dy < -half, dy + patch_size, dy))
+        nn_cd45_tcr[j] = np.min(np.sqrt(dx * dx + dy * dy))
+    nn_cd45_tcr.sort()
+    cd45_tcr_p10 = float(nn_cd45_tcr[n_cd45 // 10])
+
+    return bound_mask, tcr_cd45_p10, cd45_tcr_p10
+
+
 def main():
     parser = argparse.ArgumentParser(description="Render KS simulation movie")
     parser.add_argument("frames_dir", type=str, help="Path to frames directory")
@@ -111,6 +172,11 @@ def main():
                         help="Override rigidity label (kT/nm2), otherwise read from meta.json")
     parser.add_argument("--show-pmhc", action=argparse.BooleanOptionalAction,
                         default=True, help="Show/hide static pMHC markers (default: show)")
+    parser.add_argument("--show-separation", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Show P10 cross-NN separation circles for bound TCRs (default: show)")
+    parser.add_argument("--bind-threshold", type=float, default=3.0,
+                        help="Distance threshold (nm) for TCR-pMHC binding (default: 3.0)")
     args = parser.parse_args()
 
     frames_dir = Path(args.frames_dir)
@@ -192,6 +258,12 @@ def main():
                                label="CD45", zorder=2)
     tcr_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=20, alpha=0.7,
                               label="TCR", zorder=3)
+    # Bound TCR highlight (filled, brighter)
+    bound_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=40, alpha=0.9,
+                                edgecolors="white", linewidths=0.8,
+                                zorder=5) if args.show_separation else None
+    # P10 separation circle (drawn as a single circle at patch center for legend)
+    sep_circles = []  # will be re-created each frame
 
     c_um = center / 1000.0
     depl_annulus = Annulus(
@@ -231,6 +303,14 @@ def main():
     ax_prog.axhline(0.5, color="0.85", linewidth=3, solid_capstyle="round")
     progress_line, = ax_prog.plot([0], [0.5], color=COLOR_TCR, linewidth=3,
                                   solid_capstyle="round")
+
+    # Separation info text (bottom-left of molecule panel)
+    sep_text = ax_mol.text(0.02, 0.02, "", transform=ax_mol.transAxes,
+                           fontsize=8, va="bottom", ha="left",
+                           color="0.3", fontstyle="italic",
+                           bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7,
+                                     ec="0.8", lw=0.5),
+                           zorder=10) if args.show_separation else None
 
     def update(frame_idx):
         fidx = steps[frame_idx]
@@ -272,6 +352,41 @@ def main():
             depl_annulus.set_edgecolor(COLOR_DEPL_POOR)
             depl_annulus.set_alpha(0.08)
             depl_annulus.set_linestyle("--")
+
+        # Cross-NN P10 separation visualization
+        # Remove previous circles
+        for c in sep_circles:
+            c.remove()
+        sep_circles.clear()
+
+        if args.show_separation and pmhc_pos is not None:
+            bound_mask, tcr_cd45_p10, cd45_tcr_p10 = _compute_cross_nn_p10(
+                tcr, cd45, pmhc_pos, patch_nm, args.bind_threshold)
+            n_bound = int(np.sum(bound_mask))
+
+            # Highlight bound TCRs
+            if n_bound > 0:
+                bound_scat.set_offsets(tcr_um[bound_mask])
+            else:
+                bound_scat.set_offsets(np.empty((0, 2)))
+
+            if tcr_cd45_p10 is not None:
+                # Draw P10 radius circle around each bound TCR
+                r_um = tcr_cd45_p10 / 1000.0
+                for bi in np.where(bound_mask)[0]:
+                    circ = plt.Circle(
+                        (tcr_um[bi, 0], tcr_um[bi, 1]), r_um,
+                        fill=False, edgecolor=COLOR_CD45, linewidth=0.6,
+                        alpha=0.4, linestyle=":", zorder=4)
+                    ax_mol.add_patch(circ)
+                    sep_circles.append(circ)
+
+                sep_text.set_text(
+                    f"bound: {n_bound}/{n_tcr}  |  "
+                    f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  |  "
+                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm")
+            else:
+                sep_text.set_text(f"bound: 0/{n_tcr}")
 
         # Height
         im.set_data(h.T)
