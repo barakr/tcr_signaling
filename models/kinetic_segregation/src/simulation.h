@@ -14,7 +14,7 @@
 /* Brownian dynamics defaults (nm^2/s). */
 #define D_MOL_DEFAULT    1e4     /* paper: 10,000 nm²/s for TCR */
 #define D_H_DEFAULT      5e4
-#define DT_SAFETY        0.5
+#define MAX_BENDING_DE_PER_STEP  0.05  /* max typical bending ΔE per MC step per grid point (kT) */
 
 /* Paper fixed step defaults. */
 #define DT_PAPER         0.01    /* paper: 0.01 s */

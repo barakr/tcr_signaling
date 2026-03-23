@@ -147,9 +147,11 @@ static void init_dt(SimState *s, double dt_override, double dt_factor) {
     double D_mol = s->D_mol;
     double D_h = s->D_h;
 
-    /* Stability-constrained dt (membrane height dynamics). */
+    /* Bending-constrained dt: keep bending ΔE per MC step ≤ MAX_BENDING_DE_PER_STEP kT.
+     * ΔE_bend ~ κ · step_h² / dx²  =  κ · 2·D_h·dt / dx²
+     * Setting ΔE_bend = MAX_BENDING_DE_PER_STEP → dt = MAX · dx² / (2·D_h·κ). */
     double dt_stable = (s->dx * s->dx) / (2.0 * D_h * s->kappa);
-    s->dt = dt_stable * DT_SAFETY;
+    s->dt = dt_stable * MAX_BENDING_DE_PER_STEP;
     s->step_size_mol = sqrt(2.0 * D_mol * s->dt);
     s->step_size_h = sqrt(2.0 * D_h * s->dt);
 

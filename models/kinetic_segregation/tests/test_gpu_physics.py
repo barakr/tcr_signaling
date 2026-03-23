@@ -32,7 +32,12 @@ def _ensure_binary():
 
 
 def _run_c(tmp_path, seed, use_gpu=False, label="c"):
-    """Run C model with frame dumps, return final h and molecule positions."""
+    """Run C model with frame dumps, return final h and molecule positions.
+
+    Pin old defaults: forced binding, brownian step mode, dt_factor=10.0.
+    Reference values were recorded with DT_SAFETY=0.5 (now MAX_BENDING_DE_PER_STEP=0.05,
+    i.e. 10x smaller auto-dt), so dt_factor=10.0 reproduces the original auto-dt.
+    """
     rd = tmp_path / f"{label}_seed{seed}"
     cmd = [
         str(_BINARY),
@@ -43,6 +48,8 @@ def _run_c(tmp_path, seed, use_gpu=False, label="c"):
         "--grid_size", str(GRID_SIZE),
         "--run-dir", str(rd),
         "--binding_mode", "forced",
+        "--step_mode", "brownian",
+        "--dt_factor", "10.0",
         "--n_pmhc", "-1",
         "--dump-frames",
     ]
@@ -204,6 +211,8 @@ class TestAcceptRateGap:
             "--grid_size", str(grid_size),
             "--run-dir", str(rd),
             "--binding_mode", "forced",
+            "--step_mode", "brownian",
+            "--dt_factor", "10.0",
             "--n_pmhc", "-1",
         ]
         if not use_gpu:
@@ -272,6 +281,8 @@ class TestGridConvergence:
                     "--grid_size", str(grid),
                     "--run-dir", str(rd),
                     "--binding_mode", "forced",
+                    "--step_mode", "brownian",
+                    "--dt_factor", "10.0",
                     "--n_pmhc", "-1",
                     "--no-gpu",
                 ]

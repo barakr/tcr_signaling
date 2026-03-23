@@ -44,7 +44,12 @@ def _load_reference():
 def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
          rigidity=20.0, grid_size=64, n_steps=500, n_tcr=125, n_cd45=500,
          extra_args=None):
-    """Run the C binary and return parsed JSON output."""
+    """Run the C binary and return parsed JSON output.
+
+    Pin old defaults: forced binding, brownian step mode, dt_factor=5.0.
+    Reference values were recorded with DT_SAFETY=0.5 (now MAX_BENDING_DE_PER_STEP=0.05,
+    i.e. 10x smaller auto-dt), so dt_factor=10.0 reproduces the original auto-dt.
+    """
     rd = tmp_path / label
     cmd = [
         str(_BINARY),
@@ -57,6 +62,8 @@ def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
         "--n_cd45", str(n_cd45),
         "--run-dir", str(rd),
         "--binding_mode", "forced",
+        "--step_mode", "brownian",
+        "--dt_factor", "10.0",
         "--n_pmhc", "-1",
     ]
     if not use_gpu:
@@ -71,7 +78,10 @@ def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
 def _run_with_frames(tmp_path, *, use_gpu=True, label="run", seed=42,
                      time_sec=5.0, rigidity=20.0, grid_size=64, n_steps=500,
                      n_tcr=125, n_cd45=500, extra_args=None):
-    """Run with --dump-frames and return (json_output, final_h, tcr_pos, cd45_pos)."""
+    """Run with --dump-frames and return (json_output, final_h, tcr_pos, cd45_pos).
+
+    Pin old defaults: forced binding, brownian step mode, dt_factor=5.0.
+    """
     rd = tmp_path / label
     cmd = [
         str(_BINARY),
@@ -84,6 +94,8 @@ def _run_with_frames(tmp_path, *, use_gpu=True, label="run", seed=42,
         "--n_cd45", str(n_cd45),
         "--run-dir", str(rd),
         "--binding_mode", "forced",
+        "--step_mode", "brownian",
+        "--dt_factor", "10.0",
         "--n_pmhc", "-1",
         "--dump-frames",
     ]
