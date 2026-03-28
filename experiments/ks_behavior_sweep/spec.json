@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "kinetic_segregation",
+    "version": "0.2.0",
+    "artifact": {
+      "type": "local",
+      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.kinetic_segregation"]
+    }
+  },
+  "runner": {
+    "mode": "local_process",
+    "resources": { "cpus": 1, "mem_gb": 4, "walltime_min": 20 }
+  },
+  "io_schema": {
+    "inputs": [
+      { "name": "rigidity_kT", "type": "float", "units": "kT", "support": [1.0, 40.0] },
+      { "name": "dt_sec", "type": "float", "units": "sec", "support": [1e-6, 1e-4] }
+    ],
+    "outputs": [
+      { "name": "segregation_json", "type": "float" }
+    ]
+  },
+  "design": {
+    "strategy": "grid",
+    "grid": {
+      "rigidity_kT": [1.0, 1.51, 2.29, 3.46, 5.22, 7.88, 11.9, 18.0, 27.1, 40.0],
+      "dt_sec": [1.25e-6, 5e-6, 1.25e-5, 2.5e-5]
+    }
+  },
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [
+      { "var": "rigidity_kT", "to": { "kind": "cli_arg", "key": "--rigidity_kT" } },
+      { "var": "dt_sec", "to": { "kind": "cli_arg", "key": "--dt" } }
+    ],
+    "output_mapping": [
+      { "var": "segregation_json", "from": { "kind": "file", "path": "out/segregation.json" } }
+    ]
+  },
+  "reproducibility": { "seed": 42 },
+  "storage": { "root": "projects/tcr_signaling/store" }
+}
