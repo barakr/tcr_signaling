@@ -48,6 +48,7 @@ static void print_usage(std::string_view prog) {
               << "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
               << "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
               << "       [--monitor-binding FLOAT] [--monitor-interval INT]\n"
+              << "       [--snapshot-interval FLOAT]  (compute all metrics every N seconds)\n"
               << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT]\n"
               << "       [--dt FLOAT] [--dt_factor FLOAT]\n"
               << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n"
@@ -199,6 +200,7 @@ int main(int argc, const char *argv[]) {
     int grid_substeps = 1;
     double monitor_binding_threshold = 0.0;  /* 0 = disabled */
     int monitor_interval = 1;
+    double snapshot_interval_sec = 0.0;  /* 0 = disabled; >0 = compute all metrics every N sec */
     double D_mol_arg = 0.0, D_h_arg = 0.0, dt_arg = -1.0, dt_factor_arg = 0.0;
     double cd45_height_arg = 0.0, cd45_k_rep_arg = 0.0;
     double mol_repulsion_eps_arg = 0.0, mol_repulsion_rcut_arg = 0.0;
@@ -296,6 +298,8 @@ int main(int argc, const char *argv[]) {
             monitor_binding_threshold = std::atof(argv[++i]);
         else if (match(argv[i], "--monitor-interval") && i + 1 < argc)
             monitor_interval = static_cast<int>(std::atof(argv[++i]));
+        else if (match(argv[i], "--snapshot-interval") && i + 1 < argc)
+            snapshot_interval_sec = std::atof(argv[++i]);
         else if (match(argv[i], "--help") || match(argv[i], "-h")) {
             print_usage(argv[0]);
             return 0;
@@ -363,6 +367,8 @@ int main(int argc, const char *argv[]) {
 
     /* Binding monitor time series (populated if --monitor-binding is set). */
     std::vector<double> binding_timeseries;
+    /* Metric snapshots (populated if --snapshot-interval is set). */
+    std::vector<json> snapshots;
 
     if (dump_frames_flag) {
         auto frames_dir = fs::path(run_dir) / "frames";
@@ -402,20 +408,50 @@ int main(int argc, const char *argv[]) {
                 frame_idx++;
             }
         }
-    } else if (monitor_binding_threshold > 0.0) {
-        /* Lightweight binding monitor: compute bound fraction at intervals,
-         * no file I/O. Much faster than --dump-frames. */
+    } else if (snapshot_interval_sec > 0.0 || monitor_binding_threshold > 0.0) {
+        /* Step-by-step loop with optional binding monitor and/or metric snapshots. */
         if (monitor_interval < 1) monitor_interval = 1;
-        binding_timeseries.reserve(n_steps / monitor_interval + 1);
-        /* Record initial state. */
-        binding_timeseries.push_back(
-            compute_bound_fraction(sim, monitor_binding_threshold));
+        if (monitor_binding_threshold > 0.0) {
+            binding_timeseries.reserve(n_steps / monitor_interval + 1);
+            binding_timeseries.push_back(
+                compute_bound_fraction(sim, monitor_binding_threshold));
+        }
+        double next_snapshot_time = snapshot_interval_sec;
         sim->n_steps = n_steps;
         for (int step = 1; step <= n_steps; step++) {
             sim_step(sim);
-            if (step % monitor_interval == 0) {
+            if (monitor_binding_threshold > 0.0 && step % monitor_interval == 0) {
                 binding_timeseries.push_back(
                     compute_bound_fraction(sim, monitor_binding_threshold));
+            }
+            /* Metric snapshot at regular time intervals. */
+            if (snapshot_interval_sec > 0.0) {
+                double sim_time = step * sim->dt;
+                if (sim_time >= next_snapshot_time - 1e-12) {
+                    double dep = sim_depletion_width(sim);
+                    DepletionMetrics sdm = sim_depletion_metrics(sim);
+                    double bf = (monitor_binding_threshold > 0.0)
+                        ? compute_bound_fraction(sim, monitor_binding_threshold)
+                        : 0.0;
+                    json snap = {
+                        {"time_sec", next_snapshot_time},
+                        {"step", step},
+                        {"bound_fraction", bf},
+                        {"depletion_width_nm", dep},
+                        {"depletion_overlap_coeff", sdm.overlap_coeff},
+                        {"depletion_ks_statistic", sdm.ks_statistic},
+                        {"depletion_percentile_gap_nm", sdm.percentile_gap},
+                        {"depletion_frontier_nn_gap_nm", sdm.frontier_nn_gap},
+                        {"depletion_bound_tcr_cd45_nn_p10_nm",
+                         sdm.bound_tcr_cd45_nn_p10 < 0 ? nlohmann::json(nullptr)
+                                                        : nlohmann::json(sdm.bound_tcr_cd45_nn_p10)},
+                        {"depletion_cd45_bound_tcr_nn_p10_nm",
+                         sdm.cd45_bound_tcr_nn_p10 < 0 ? nlohmann::json(nullptr)
+                                                        : nlohmann::json(sdm.cd45_bound_tcr_nn_p10)},
+                    };
+                    snapshots.push_back(std::move(snap));
+                    next_snapshot_time += snapshot_interval_sec;
+                }
             }
         }
     } else {
@@ -474,6 +510,12 @@ int main(int argc, const char *argv[]) {
         output["binding_timeseries"] = binding_timeseries;
         output["binding_monitor_interval"] = monitor_interval;
         output["binding_threshold_nm"] = monitor_binding_threshold;
+    }
+
+    /* Add metric snapshots if --snapshot-interval was used. */
+    if (!snapshots.empty()) {
+        output["snapshots"] = snapshots;
+        output["snapshot_interval_sec"] = snapshot_interval_sec;
     }
 
     auto json_str = output.dump(2);
