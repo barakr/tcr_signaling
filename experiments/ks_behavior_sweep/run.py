@@ -362,7 +362,8 @@ def main():
     print(f"Binary: {BINARY} (exists={BINARY.exists()})")
     print(f"Output: {OUT_DIR}")
 
-    # --- Build run schedule ---
+    # --- Build run schedule (largest dt first = fastest runs first) ---
+    design_points.sort(key=lambda p: -p["dt_sec"])
     schedule = []
     for pt in design_points:
         kappa = pt["rigidity_kT"]
