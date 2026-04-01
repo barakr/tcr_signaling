@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Heatmap comparison: simulation mean vs surrogate prediction for BT→CD45 NN P10.
+"""Heatmap comparison: simulation mean vs dense surrogate prediction for BT→CD45 NN P10.
 
-Produces a figure with rows = selected time steps, columns = [sim mean, surrogate pred].
-Each heatmap has dt on x-axis, K on y-axis, color = metric value.
+Left column: simulation seed-averaged data on the original sparse grid (10 K × 4 dt).
+Right column: surrogate predictions on a dense log-spaced grid (30 K × 30 dt),
+              interpolating/extrapolating beyond training points.
+Rows = selected time snapshots.
+Training points are overlaid as white dots on the surrogate panels.
 
 Usage
 -----
@@ -13,12 +16,12 @@ Usage
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import numpy as np
 
 from bayesian_metamodeling.surrogates.backends import load_backend_model
@@ -35,21 +38,25 @@ SURROGATE_PATH = (Path.home() / "Downloads" / "metamodel_ks" / "surrogates"
                   / f"surrogate_{METRIC_KEY}.json")
 OUT_DIR = Path.home() / "Downloads" / "metamodel_ks" / "surrogates"
 
-# Time snapshots to show as rows (seconds)
 TIME_SNAPSHOTS = [0.5, 1.0, 2.0, 5.0, 10.0]
-
 INPUT_NAMES = ["rigidity_kT", "dt_sec", "time_sec"]
+
+# Dense surrogate grid (log-spaced)
+N_K_DENSE = 30
+N_DT_DENSE = 30
+K_RANGE = (1.0, 40.0)
+DT_RANGE = (1.0e-6, 30e-6)  # slightly beyond training range [1.25, 25] µs
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_sim_data() -> dict[float, np.ndarray]:
+def load_sim_data():
     """Load simulation results, average over seeds.
 
-    Returns {time_sec: 2D array of shape (n_K, n_dt)} with mean metric values.
-    Also returns (k_vals, dt_vals) for axis labels.
+    Returns (grids_dict, k_vals, dt_vals) where grids_dict maps
+    time_sec → 2D array of shape (n_K, n_dt).
     """
     rows = []
     with open(RESULTS_CSV) as f:
@@ -61,16 +68,14 @@ def load_sim_data() -> dict[float, np.ndarray]:
     k_vals = sorted(set(float(r["rigidity_kT"]) for r in rows))
     dt_vals = sorted(set(float(r["dt_sec"]) for r in rows))
 
-    # Group by (K, dt, t), average over seeds
     groups: dict[tuple, list[float]] = {}
     for r in rows:
         key = (float(r["rigidity_kT"]), float(r["dt_sec"]), float(r["time_sec"]))
         groups.setdefault(key, []).append(float(r[METRIC_KEY]))
 
+    available_t = sorted(set(k[2] for k in groups.keys()))
     grids = {}
     for t_snap in TIME_SNAPSHOTS:
-        # Find closest available time
-        available_t = sorted(set(k[2] for k in groups.keys()))
         closest_t = min(available_t, key=lambda x: abs(x - t_snap))
         grid = np.full((len(k_vals), len(dt_vals)), np.nan)
         for ki, k in enumerate(k_vals):
@@ -80,19 +85,19 @@ def load_sim_data() -> dict[float, np.ndarray]:
                     grid[ki, di] = np.mean(vals)
         grids[t_snap] = grid
 
-    return grids, k_vals, dt_vals
+    return grids, np.array(k_vals), np.array(dt_vals)
 
 
-def predict_surrogate(model, k_vals, dt_vals) -> dict[float, np.ndarray]:
-    """Evaluate surrogate on the same grid as simulation data."""
+def predict_dense(model, k_dense, dt_dense):
+    """Evaluate surrogate on a dense K × dt grid for each time snapshot."""
     grids = {}
     for t_snap in TIME_SNAPSHOTS:
-        grid = np.full((len(k_vals), len(dt_vals)), np.nan)
-        for di, dt in enumerate(dt_vals):
+        grid = np.empty((len(k_dense), len(dt_dense)))
+        for di, dt in enumerate(dt_dense):
             inputs = {
-                "rigidity_kT": np.array(k_vals),
-                "dt_sec": np.full(len(k_vals), dt),
-                "time_sec": np.full(len(k_vals), t_snap),
+                "rigidity_kT": k_dense,
+                "dt_sec": np.full(len(k_dense), dt),
+                "time_sec": np.full(len(k_dense), t_snap),
             }
             summary = model.summary(inputs)
             grid[:, di] = np.array(summary["mean"])
@@ -104,46 +109,78 @@ def predict_surrogate(model, k_vals, dt_vals) -> dict[float, np.ndarray]:
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_comparison(sim_grids, surr_grids, k_vals, dt_vals, out_path):
+def plot_comparison(sim_grids, surr_grids, k_sim, dt_sim, k_dense, dt_dense,
+                    out_path):
     n_rows = len(TIME_SNAPSHOTS)
-    fig, axes = plt.subplots(n_rows, 2, figsize=(10, 3.5 * n_rows))
+    fig, axes = plt.subplots(n_rows, 2, figsize=(12, 3.5 * n_rows))
     if n_rows == 1:
         axes = axes[np.newaxis, :]
 
-    # Shared color scale across all panels
+    # Shared color scale from both sim and surrogate data
     all_vals = []
     for g in list(sim_grids.values()) + list(surr_grids.values()):
         all_vals.append(g[~np.isnan(g)])
     all_vals = np.concatenate(all_vals)
     vmin, vmax = np.nanpercentile(all_vals, [2, 98])
 
-    dt_labels = [f"{d * 1e6:.1f}" for d in dt_vals]
-    k_labels = [f"{k:.1f}" for k in k_vals]
-
     for ri, t_snap in enumerate(TIME_SNAPSHOTS):
-        for ci, (grid, title_prefix) in enumerate([
-            (sim_grids[t_snap], "Simulation (seed mean)"),
-            (surr_grids[t_snap], "Surrogate (SBI NPE)"),
-        ]):
-            ax = axes[ri, ci]
-            im = ax.imshow(grid, aspect="auto", origin="lower",
+        # --- Left: simulation (sparse grid, imshow) ---
+        ax_sim = axes[ri, 0]
+        sim_grid = sim_grids[t_snap]
+        im = ax_sim.imshow(sim_grid, aspect="auto", origin="lower",
                            vmin=vmin, vmax=vmax, cmap="viridis")
-            ax.set_xticks(range(len(dt_labels)))
-            ax.set_xticklabels(dt_labels, fontsize=8)
-            ax.set_yticks(range(len(k_labels)))
-            ax.set_yticklabels(k_labels, fontsize=8)
-            if ri == n_rows - 1:
-                ax.set_xlabel("dt (µs)", fontsize=10)
-            if ci == 0:
-                ax.set_ylabel("K (kT)", fontsize=10)
-            ax.set_title(f"{title_prefix}\nt = {t_snap:.1f}s", fontsize=10)
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax_sim.set_xticks(range(len(dt_sim)))
+        ax_sim.set_xticklabels([f"{d * 1e6:.1f}" for d in dt_sim], fontsize=7)
+        ax_sim.set_yticks(range(len(k_sim)))
+        ax_sim.set_yticklabels([f"{k:.1f}" for k in k_sim], fontsize=7)
+        if ri == n_rows - 1:
+            ax_sim.set_xlabel("dt (µs)", fontsize=10)
+        ax_sim.set_ylabel("K (kT)", fontsize=10)
+        ax_sim.set_title(f"Simulation (seed mean)\nt = {t_snap:.1f}s", fontsize=10)
+        fig.colorbar(im, ax=ax_sim, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f"{METRIC_LABEL}: Simulation vs Surrogate", fontsize=13, y=1.01)
+        # --- Right: surrogate (dense grid, pcolormesh with log axes) ---
+        ax_surr = axes[ri, 1]
+        dt_us = dt_dense * 1e6  # convert to µs for axis
+        # pcolormesh needs edge arrays (n+1 values)
+        k_edges = _log_edges(k_dense)
+        dt_edges = _log_edges(dt_us)
+        pcm = ax_surr.pcolormesh(dt_edges, k_edges, surr_grids[t_snap],
+                                 vmin=vmin, vmax=vmax, cmap="viridis",
+                                 shading="flat")
+        ax_surr.set_xscale("log")
+        ax_surr.set_yscale("log")
+        # Overlay training points
+        dt_sim_us = dt_sim * 1e6
+        kk, dd = np.meshgrid(k_sim, dt_sim_us, indexing="ij")
+        ax_surr.scatter(dd.ravel(), kk.ravel(), c="white", s=12,
+                        edgecolors="black", linewidths=0.4, zorder=5,
+                        label="training points" if ri == 0 else None)
+        if ri == n_rows - 1:
+            ax_surr.set_xlabel("dt (µs)", fontsize=10)
+        ax_surr.set_ylabel("K (kT)", fontsize=10)
+        ax_surr.set_title(f"Surrogate (SBI NPE, {N_K_DENSE}×{N_DT_DENSE} dense)\n"
+                          f"t = {t_snap:.1f}s", fontsize=10)
+        fig.colorbar(pcm, ax=ax_surr, fraction=0.046, pad=0.04)
+        if ri == 0:
+            ax_surr.legend(fontsize=7, loc="upper right")
+
+    fig.suptitle(f"{METRIC_LABEL}: Simulation vs Dense Surrogate Interpolation",
+                 fontsize=13, y=1.01)
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close()
     print(f"Saved: {out_path}")
+
+
+def _log_edges(centers):
+    """Build pcolormesh edge array for log-spaced centers."""
+    log_c = np.log10(centers)
+    edges = np.empty(len(centers) + 1)
+    edges[1:-1] = 0.5 * (log_c[:-1] + log_c[1:])
+    edges[0] = log_c[0] - (edges[1] - log_c[0])
+    edges[-1] = log_c[-1] + (log_c[-1] - edges[-2])
+    return 10 ** edges
 
 
 # ---------------------------------------------------------------------------
@@ -152,19 +189,25 @@ def plot_comparison(sim_grids, surr_grids, k_vals, dt_vals, out_path):
 
 def main():
     print(f"Loading simulation data from {RESULTS_CSV}")
-    sim_grids, k_vals, dt_vals = load_sim_data()
+    sim_grids, k_sim, dt_sim = load_sim_data()
 
     print(f"Loading surrogate from {SURROGATE_PATH}")
     model = load_backend_model(BACKEND, SURROGATE_PATH,
                                expected_inputs=INPUT_NAMES,
                                expected_output=METRIC_KEY)
 
-    print("Generating surrogate predictions...")
-    surr_grids = predict_surrogate(model, k_vals, dt_vals)
+    # Dense log-spaced grid for surrogate evaluation
+    k_dense = np.geomspace(*K_RANGE, N_K_DENSE)
+    dt_dense = np.geomspace(*DT_RANGE, N_DT_DENSE)
+    print(f"Dense surrogate grid: {N_K_DENSE} K × {N_DT_DENSE} dt "
+          f"(K: {K_RANGE[0]}-{K_RANGE[1]} kT, dt: {DT_RANGE[0]*1e6:.1f}-{DT_RANGE[1]*1e6:.1f} µs)")
+
+    print("Generating dense surrogate predictions...")
+    surr_grids = predict_dense(model, k_dense, dt_dense)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUT_DIR / "heatmap_bt_cd45_nn_p10_comparison.png"
-    plot_comparison(sim_grids, surr_grids, k_vals, dt_vals, out_path)
+    plot_comparison(sim_grids, surr_grids, k_sim, dt_sim, k_dense, dt_dense, out_path)
 
 
 if __name__ == "__main__":
