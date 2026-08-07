@@ -104,7 +104,7 @@ jobs:
           import os, sys, xml.etree.ElementTree as ET
 
           ALLOWED_SKIP = "requires Metal GPU backend"
-          TOTAL_FLOOR = 156        # 160 collected today; headroom without hiding a collapse
+          TOTAL_FLOOR = 172        # 177 collected today; headroom without hiding a collapse
           root = ET.parse("results.xml").getroot()
           suite = root.find("testsuite")
           if suite is None:

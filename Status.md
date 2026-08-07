@@ -6,6 +6,70 @@
 
 ## Decision Log
 
+### 2026-08-07: Fix the pMHC deposition defect (opt-in), make it undetectable-proof
+
+The under-resolution flagged earlier the same day turned out to be a genuine defect with
+a standard name. The per-cell weights consumed by the Phase-2 grid update are a
+**particle-mesh deposition** of Gaussian kernels of width `sigma_r` (2 nm), and
+`compute_pmhc_influence` sampled each kernel at the **cell centre**. Point-sampling a
+kernel narrower than the cell is a known failure mode: the deposited total collapses as
+the mesh coarsens instead of staying mesh-independent, so the TCR attraction quietly
+leaves the membrane update. Phase 1 was never affected -- it evaluates at continuous
+positions via `pmhc_influence_at`, whose comment already noted the `sigma_r < dx` case.
+
+**Fix, deliberately opt-in.** New `--pmhc_deposition point|area`:
+
+- `point` (default) -- the historical cell-centre sample, kept as the default so every
+  existing result and `tests/reference_values.json` stay **bit-identical**. Verified:
+  all 8 `deterministic` reference tests pass unchanged after the change.
+- `area` -- the exact cell **average** of the same kernel, in closed form via `erf`.
+  Mesh-independent, and it converges to `point` as dx -> 0, so the two are the same
+  physics differing only in mesh fidelity. On a 2000/64 mesh it recovers the full
+  target weight (0.772 vs 0.047 for point).
+
+Changing the default would silently alter everyone's numbers and invalidate the
+reference baselines, which KS rule 3 forbids without sign-off -- hence opt-in. Flipping
+it is a one-line change once the science decision is made, and the tests already pin
+both behaviours.
+
+**Detection, always on.** Three new diagnostics in the run JSON --
+`pmhc_influence_max`, `pmhc_influence_sum`, `pmhc_influence_expected` (the resolved
+target `n_pmhc * 2*pi*sigma_r^2 / dx^2`) -- plus a `WARN-PMHC` stderr note, in the
+existing `AUTO-*` house style, whenever the deposited weight falls below half the
+target. The trigger compares against the analytic target rather than testing for an
+exactly-dead field, because the failure is usually a large deficit rather than a clean
+zero, and its size depends on where ligands happen to land relative to cell centres
+(measured: total loss at dx = 125 nm, partial at 31 nm, negligible below ~8 nm).
+
+Unlike `--binding_mode`/`--step_mode`/`--pmhc_mode`, the new flag **validates its
+argument** and exits non-zero on a typo, rather than silently selecting the other
+option. It is also deliberately NOT readable from a `--params` file, since that path
+overrides explicit CLI flags (the trap KS_5 documents). It is exposed on the Python
+wrapper as well, so specs can opt in.
+
+**Tests.** `tests/test_pmhc_deposition.py` (10) pins: the diagnostics exist and default
+to point; `expected` scales as 1/dx^2; point under-deposits on a coarse mesh and warns;
+a resolved mesh does not warn; area hits the target; area recovers >10x what point
+loses; **the two schemes converge as the mesh is refined** (the correctness argument);
+the typo is rejected; the wrapper forwards the flag.
+
+`tests/test_spec_resolution.py` (7) audits every checked-in spec. It does *not* demand
+that all be resolved -- changing their mesh changes the modelled system, which is a
+scientific decision, not a code fix. It demands that under-resolution be **declared**:
+an unresolved spec must appear in `KNOWN_UNRESOLVED` with a reason, so a new spec that
+drifts into the degenerate regime fails instead of silently producing contact-free
+results. Same principle as the CI skip guard -- exceptions allowed, never blank cheques.
+Verified by removing a declaration and confirming the audit goes red.
+
+`TOTAL_FLOOR` raised 156 -> 172 (177 collected under the CI selector). KS_3 updated to
+read the real diagnostics instead of an analytic proxy, and its prose corrected: the
+deficit is configuration-dependent, not a fixed 16x.
+
+**Still open (scientific, not technical):** whether `specs/model.kinetic_segregation.json`
+should move to a resolved mesh or `--pmhc_deposition area`. Either changes what the
+metamodel is fitted to and would require re-running the sweeps.
+
+
 ### 2026-08-07: KS tutorial series — and two model findings it surfaced
 
 **New**: `notebooks/models/kinetic_segregation/KS_1..KS_5` plus a shared

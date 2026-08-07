@@ -351,13 +351,15 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      int pmhc_mode, double pmhc_radius,
                      int binding_mode, int step_mode,
                      double h0_tcr, double init_height,
-                     double sigma_r, double sigma_bind, double patch_size) {
+                     double sigma_r, double sigma_bind, double patch_size,
+                     int pmhc_deposition) {
     SimState *s = (SimState *)calloc(1, sizeof(SimState));
     init_params(s, grid_size, n_tcr, n_cd45, kappa, u_assoc,
                 cd45_height, k_rep, mol_repulsion_eps, mol_repulsion_rcut,
                 binding_mode, step_mode, h0_tcr, init_height,
                 sigma_r, sigma_bind, patch_size,
                 n_pmhc, pmhc_mode, pmhc_radius, D_mol, D_h);
+    s->pmhc_deposition = pmhc_deposition;
     init_dt(s, dt_override, dt_factor);
     init_molecules(s, seed, pmhc_seed);
     init_gpu(s, use_gpu, seed);
@@ -570,15 +572,45 @@ static void calibrate_dt(SimState *s, double D_mol, double D_h) {
 }
 
 /* Precompute pMHC influence field: W(i,j) = clamp(sum_k exp(-r_k^2 / (2*sigma_r^2)), 0, 1). */
+/* Exact integral of exp(-(t-mu)^2 / 2 sigma^2) over [a, b]. */
+static double gauss_integral_1d(double a, double b, double mu, double sigma) {
+    const double inv = 1.0 / (sigma * M_SQRT2);
+    return sigma * sqrt(M_PI / 2.0) * (erf((b - mu) * inv) - erf((a - mu) * inv));
+}
+
+/* Build the per-cell pMHC influence weights used by the Phase-2 grid update.
+ *
+ * Two deposition schemes, selected by --pmhc_deposition:
+ *
+ *   point (default, historical): sample the Gaussian at the cell CENTRE. This is
+ *     a particle-mesh deposition with a kernel narrower than the cell whenever
+ *     sigma_r < dx, so most pMHC land with no cell centre inside the 3*sigma_r
+ *     cutoff and deposit nothing at all. The total weight then collapses toward
+ *     zero as the mesh coarsens, which silently removes the TCR attraction from
+ *     the membrane update. Kept as the default so existing results and
+ *     tests/reference_values.json remain bit-identical.
+ *
+ *   area: the exact cell AVERAGE of the same Gaussian, evaluated in closed form
+ *     with erf. Converges to the point value as dx -> 0, and decays like
+ *     2*pi*sigma_r^2/dx^2 rather than to exactly zero as dx grows, so the
+ *     deposited total is mesh-independent and the physics survives a coarse grid.
+ *
+ * Note that Phase 1 (molecular moves) is unaffected either way: it calls
+ * pmhc_influence_at() at continuous positions.
+ */
 static void compute_pmhc_influence(SimState *s) {
     int n = s->grid_size;
     double dx = s->dx;
     double sigma_r = s->sigma_r;
     double inv_2sigma2 = 1.0 / (2.0 * sigma_r * sigma_r);
     double r_cut = PMHC_CUTOFF_SIGMAS * sigma_r;
-    double r_cut2 = r_cut * r_cut;
+    /* In area mode a pMHC anywhere within the cell (plus the kernel tail) still
+     * contributes, so widen the search accordingly. */
+    double search = (s->pmhc_deposition == 1) ? (r_cut + dx) : r_cut;
+    double r_cut2 = search * search;
     double patch = s->patch_size;
     double half_patch = patch / 2.0;
+    double cell_area = dx * dx;
 
     s->pmhc_influence = (float *)calloc(n * n, sizeof(float));
 
@@ -596,11 +628,51 @@ static void compute_pmhc_influence(SimState *s) {
                 else if (ddy < -half_patch) ddy += patch;
                 double r2 = ddx * ddx + ddy * ddy;
                 if (r2 < r_cut2) {
-                    sum += exp(-r2 * inv_2sigma2);
+                    if (s->pmhc_deposition == 1) {
+                        /* Cell average: integrate the kernel over the cell and
+                         * divide by its area. ddx/ddy are cell-centre offsets,
+                         * so the cell spans [-dx/2, +dx/2] around them. */
+                        sum += gauss_integral_1d(ddx - dx / 2.0, ddx + dx / 2.0, 0.0, sigma_r)
+                             * gauss_integral_1d(ddy - dx / 2.0, ddy + dx / 2.0, 0.0, sigma_r)
+                             / cell_area;
+                    } else {
+                        sum += exp(-r2 * inv_2sigma2);
+                    }
                 }
             }
             s->pmhc_influence[i * n + j] = (float)(sum > 1.0 ? 1.0 : sum);
         }
+    }
+
+    /* Diagnostics: a dead field means the Phase-2 TCR attraction is absent. */
+    double wmax = 0.0, wsum = 0.0;
+    for (int c = 0; c < n * n; c++) {
+        double w = s->pmhc_influence[c];
+        wsum += w;
+        if (w > wmax) wmax = w;
+    }
+    s->pmhc_influence_max = wmax;
+    s->pmhc_influence_sum = wsum;
+
+    /* A correctly resolved deposition puts n_pmhc * 2*pi*sigma_r^2 / dx^2 of total
+     * weight on the mesh, independent of dx (that is exactly what area mode
+     * yields). Point sampling falls short of this once sigma_r < dx, because most
+     * pMHC then have no cell centre inside the cutoff. Compare against it rather
+     * than testing for an exactly dead field: the failure is usually a large
+     * deficit rather than a clean zero. */
+    double expected = (double)s->n_pmhc * 2.0 * M_PI * sigma_r * sigma_r / (dx * dx);
+    if (expected > (double)(n * n)) expected = (double)(n * n);
+    s->pmhc_influence_expected = expected;
+
+    if (expected > 0.0 && wsum < 0.5 * expected) {
+        fprintf(stderr,
+                "WARN-PMHC: influence field under-resolved -- deposited weight %.3g vs "
+                "%.3g expected (%.0fx deficit; dx=%.1f nm, sigma_r=%.1f nm, "
+                "dx/sigma_r=%.1f). The Phase-2 TCR attraction is correspondingly "
+                "weakened, so a contact may not form or hold. Refine the grid "
+                "(dx ~ sigma_r) or pass --pmhc_deposition area.\n",
+                wsum, expected, (wsum > 0.0 ? expected / wsum : INFINITY),
+                dx, sigma_r, dx / sigma_r);
     }
 }
 

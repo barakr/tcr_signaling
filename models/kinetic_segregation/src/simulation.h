@@ -101,6 +101,10 @@ typedef struct {
     double sigma_bind;         /* TCR binding well width (nm) */
     double patch_size;         /* membrane patch size (nm, runtime) */
     float *pmhc_influence;     /* precomputed grid weights [0,1], NULL for forced mode */
+    int pmhc_deposition;       /* 0=point (cell-centre sample), 1=area (exact cell average) */
+    double pmhc_influence_max; /* max weight over cells; 0 => the field is dead */
+    double pmhc_influence_sum; /* total deposited weight; mesh-independent in area mode */
+    double pmhc_influence_expected; /* n_pmhc*2*pi*sigma_r^2/dx^2: the resolved target */
 
     /* Diagnostics */
     long accepted;
@@ -133,7 +137,8 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      int pmhc_mode, double pmhc_radius,
                      int binding_mode, int step_mode,
                      double h0_tcr, double init_height,
-                     double sigma_r, double sigma_bind, double patch_size);
+                     double sigma_r, double sigma_bind, double patch_size,
+                     int pmhc_deposition);
 
 /* Free simulation state. */
 void sim_destroy(SimState *s);

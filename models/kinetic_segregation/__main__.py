@@ -87,6 +87,16 @@ def main() -> int:
     )
     parser.add_argument("--binding_mode", type=str, default=None, help="'forced' or 'gaussian'")
     parser.add_argument("--step_mode", type=str, default=None, help="'paper' or 'brownian'")
+    # Exposed here (unlike sigma_r/patch_size/u_assoc, which remain binary-only)
+    # because a spec cannot otherwise opt into the mesh-independent deposition.
+    parser.add_argument(
+        "--pmhc_deposition",
+        type=str,
+        default=None,
+        choices=["point", "area"],
+        help="Phase-2 pMHC deposition: 'point' (default, cell-centre sample) or "
+        "'area' (exact cell average; mesh-independent)",
+    )
     parser.add_argument("--h0_tcr", type=float, default=None, help="TCR-pMHC bond length (nm)")
     parser.add_argument(
         "--init_height", type=float, default=None, help="Initial membrane height (nm)"
@@ -183,6 +193,8 @@ def main() -> int:
         cmd.extend(["--binding_mode", str(args.binding_mode)])
     if args.step_mode is not None:
         cmd.extend(["--step_mode", str(args.step_mode)])
+    if args.pmhc_deposition is not None:
+        cmd.extend(["--pmhc_deposition", str(args.pmhc_deposition)])
     if args.h0_tcr is not None:
         cmd.extend(["--h0_tcr", str(args.h0_tcr)])
     if args.init_height is not None:

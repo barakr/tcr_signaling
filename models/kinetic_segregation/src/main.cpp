@@ -210,6 +210,7 @@ int main(int argc, const char *argv[]) {
     double pmhc_radius_arg = 0.0;
     int binding_mode_arg = BINDING_MODE_GAUSSIAN;
     int step_mode_arg = STEP_MODE_BROWNIAN;
+    int pmhc_deposition_arg = 0;   /* 0=point (historical default), 1=area */
     double h0_tcr_arg = 0.0;
     double init_height_arg = 0.0;
     double u_assoc_arg = 0.0;
@@ -272,6 +273,17 @@ int main(int argc, const char *argv[]) {
             pmhc_radius_arg = std::atof(argv[++i]);
         else if (match(argv[i], "--params") && i + 1 < argc)
             params_file = argv[++i];
+        else if (match(argv[i], "--pmhc_deposition") && i + 1 < argc) {
+            std::string mode = argv[++i];
+            if (mode == "point") pmhc_deposition_arg = 0;
+            else if (mode == "area") pmhc_deposition_arg = 1;
+            else {
+                std::fprintf(stderr,
+                             "error: --pmhc_deposition must be 'point' or 'area', got '%s'\n",
+                             mode.c_str());
+                return 2;
+            }
+        }
         else if (match(argv[i], "--binding_mode") && i + 1 < argc) {
             ++i;
             binding_mode_arg = match(argv[i], "gaussian") ? BINDING_MODE_GAUSSIAN : BINDING_MODE_FORCED;
@@ -352,7 +364,8 @@ int main(int argc, const char *argv[]) {
                            pmhc_mode_arg, pmhc_radius_arg,
                            binding_mode_arg, step_mode_arg,
                            h0_tcr_arg, init_height_arg,
-                           sigma_r_arg, sigma_bind_arg, patch_size_arg);
+                           sigma_r_arg, sigma_bind_arg, patch_size_arg,
+                           pmhc_deposition_arg);
     if (grid_substeps > 1) sim->grid_substeps = grid_substeps;
     sim->bind_threshold = monitor_binding_threshold;
 
@@ -488,6 +501,10 @@ int main(int argc, const char *argv[]) {
             {"depletion_percentile_gap_nm", dm.percentile_gap},
             {"dt_seconds", sim->dt},
             {"dt_auto_seconds", sim->dt_auto},
+            {"pmhc_influence_max", sim->pmhc_influence_max},
+            {"pmhc_influence_sum", sim->pmhc_influence_sum},
+            {"pmhc_influence_expected", sim->pmhc_influence_expected},
+            {"pmhc_deposition", sim->pmhc_deposition == 1 ? "area" : "point"},
             {"dt_factor", sim->dt_factor},
             {"final_cd45_mean_r_nm", cd45_mean_r},
             {"final_tcr_mean_r_nm", tcr_mean_r},
