@@ -8,6 +8,7 @@ Usage::
 
     python projects/tcr_signaling/examples/generate_rigidity_movies.py
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -41,18 +42,24 @@ def run_one(rigidity: float, tmp_root: Path) -> Path:
     output_path = OUTPUT_DIR / f"ks_rigidity_{rigidity:g}.mp4"
 
     # Step 1: run GPU binary directly with frame dumps
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running GPU simulation: rigidity={rigidity} kT/nm², time={TIME_SEC}s, grid={GRID_SIZE}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     gpu_cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT_nm2", str(rigidity),
-        "--grid_size", str(GRID_SIZE),
-        "--seed", str(SEED),
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT_nm2",
+        str(rigidity),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--seed",
+        str(SEED),
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(DUMP_INTERVAL),
+        "--dump-interval",
+        str(DUMP_INTERVAL),
     ]
     result = subprocess.run(gpu_cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
@@ -69,10 +76,13 @@ def run_one(rigidity: float, tmp_root: Path) -> Path:
     print(f"Rendering movie to {output_path} ...")
     render_python = str(_RENDER_PYTHON) if _RENDER_PYTHON.exists() else sys.executable
     render_cmd = [
-        render_python, str(_RENDER_SCRIPT),
+        render_python,
+        str(_RENDER_SCRIPT),
         str(frames_dir),
-        "-o", str(output_path),
-        "--fps", str(FPS),
+        "-o",
+        str(output_path),
+        "--fps",
+        str(FPS),
     ]
     result = subprocess.run(render_cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
@@ -101,12 +111,12 @@ def main() -> int:
             out = run_one(rigidity, Path(tmp_root))
             outputs.append(out)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("All movies generated:")
     for p in outputs:
         size_mb = p.stat().st_size / (1024 * 1024)
         print(f"  {p.name}  ({size_mb:.1f} MB)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     return 0
 
 

@@ -2,6 +2,7 @@
 
 GPU only. Movies saved to ~/Downloads/ks_screen2/.
 """
+
 from __future__ import annotations
 
 import os
@@ -17,13 +18,16 @@ _RENDER = _PKG_DIR / "render_movie.py"
 _OUTPUT_DIR = Path.home() / "Downloads" / "ks_screen2"
 # Use conda env with matplotlib + ffmpeg for rendering.
 _RENDER_PYTHON = Path.home() / "miniconda3" / "envs" / "py314_bayesmm" / "bin" / "python"
-_RENDER_ENV = {**os.environ, "PATH": str(_RENDER_PYTHON.parent) + os.pathsep + os.environ.get("PATH", "")}
+_RENDER_ENV = {
+    **os.environ,
+    "PATH": str(_RENDER_PYTHON.parent) + os.pathsep + os.environ.get("PATH", ""),
+}
 
 # 11 linearly-spaced rigidity values from 0 to 100 kT/nm².
 RIGIDITIES = list(range(0, 101, 10))  # [0, 10, 20, ..., 100]
 
 GRID_SIZE = 128
-TIME_SEC = 300       # 300 seconds physical time
+TIME_SEC = 300  # 300 seconds physical time
 DUMP_INTERVAL = 150  # 30000 steps / 150 = 200 frames
 SEED = 42
 N_TCR = 125
@@ -36,20 +40,33 @@ def run_sim(run_dir: Path, rigidity: float) -> float:
     """Run GPU simulation with gaussian binding + repulsion + pMHC. Return wall time."""
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(SEED),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(N_TCR),
-        "--n_cd45", str(N_CD45),
-        "--n_pmhc", str(N_PMHC),
-        "--pmhc_radius", str(PMHC_RADIUS),
-        "--binding_mode", "gaussian",
-        "--mol_repulsion_eps", "2.0",
-        "--mol_repulsion_rcut", "50.0",
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(SEED),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(N_TCR),
+        "--n_cd45",
+        str(N_CD45),
+        "--n_pmhc",
+        str(N_PMHC),
+        "--pmhc_radius",
+        str(PMHC_RADIUS),
+        "--binding_mode",
+        "gaussian",
+        "--mol_repulsion_eps",
+        "2.0",
+        "--mol_repulsion_rcut",
+        "50.0",
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(DUMP_INTERVAL),
+        "--dump-interval",
+        str(DUMP_INTERVAL),
     ]
 
     t0 = time.perf_counter()
@@ -64,12 +81,17 @@ def run_sim(run_dir: Path, rigidity: float) -> float:
 def render_movie(frames_dir: Path, output: Path, rigidity: float):
     """Render movie from frames with pMHC markers shown."""
     cmd = [
-        str(_RENDER_PYTHON), str(_RENDER),
+        str(_RENDER_PYTHON),
+        str(_RENDER),
         str(frames_dir),
-        "-o", str(output),
-        "--fps", "15",
-        "--dpi", "120",
-        "--rigidity", str(rigidity),
+        "-o",
+        str(output),
+        "--fps",
+        "15",
+        "--dpi",
+        "120",
+        "--rigidity",
+        str(rigidity),
         "--show-pmhc",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=_RENDER_ENV)
@@ -106,9 +128,9 @@ def main():
                 if ok:
                     print(f"  Movie: {movie_path}")
                 else:
-                    print(f"  Movie: FAILED")
+                    print("  Movie: FAILED")
             else:
-                print(f"  No frames directory found")
+                print("  No frames directory found")
 
     print(f"\nDone! Movies saved to {_OUTPUT_DIR}/")
 

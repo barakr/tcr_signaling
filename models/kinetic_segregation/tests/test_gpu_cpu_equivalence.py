@@ -10,6 +10,7 @@ F) Substep equivalence (Tier 2 only, when --grid-substeps is available)
 
 Reference values in reference_values.json were recorded BEFORE any optimization.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,8 +30,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -41,9 +45,20 @@ def _load_reference():
         return json.load(f)
 
 
-def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
-         rigidity=20.0, grid_size=64, n_steps=500, n_tcr=125, n_cd45=500,
-         extra_args=None):
+def _run(
+    tmp_path,
+    *,
+    use_gpu=True,
+    label="run",
+    seed=42,
+    time_sec=5.0,
+    rigidity=20.0,
+    grid_size=64,
+    n_steps=500,
+    n_tcr=125,
+    n_cd45=500,
+    extra_args=None,
+):
     """Run the C binary and return parsed JSON output.
 
     Pin old defaults: forced binding, brownian step mode, dt_factor=5.0.
@@ -53,18 +68,30 @@ def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
     rd = tmp_path / label
     cmd = [
         str(_BINARY),
-        "--time_sec", str(time_sec),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(seed),
-        "--n_steps", str(n_steps),
-        "--grid_size", str(grid_size),
-        "--n_tcr", str(n_tcr),
-        "--n_cd45", str(n_cd45),
-        "--run-dir", str(rd),
-        "--binding_mode", "forced",
-        "--step_mode", "brownian",
-        "--dt_factor", "10.0",
-        "--n_pmhc", "-1",
+        "--time_sec",
+        str(time_sec),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(seed),
+        "--n_steps",
+        str(n_steps),
+        "--grid_size",
+        str(grid_size),
+        "--n_tcr",
+        str(n_tcr),
+        "--n_cd45",
+        str(n_cd45),
+        "--run-dir",
+        str(rd),
+        "--binding_mode",
+        "forced",
+        "--step_mode",
+        "brownian",
+        "--dt_factor",
+        "10.0",
+        "--n_pmhc",
+        "-1",
     ]
     if not use_gpu:
         cmd.append("--no-gpu")
@@ -75,9 +102,20 @@ def _run(tmp_path, *, use_gpu=True, label="run", seed=42, time_sec=5.0,
     return json.loads(result.stdout.strip())
 
 
-def _run_with_frames(tmp_path, *, use_gpu=True, label="run", seed=42,
-                     time_sec=5.0, rigidity=20.0, grid_size=64, n_steps=500,
-                     n_tcr=125, n_cd45=500, extra_args=None):
+def _run_with_frames(
+    tmp_path,
+    *,
+    use_gpu=True,
+    label="run",
+    seed=42,
+    time_sec=5.0,
+    rigidity=20.0,
+    grid_size=64,
+    n_steps=500,
+    n_tcr=125,
+    n_cd45=500,
+    extra_args=None,
+):
     """Run with --dump-frames and return (json_output, final_h, tcr_pos, cd45_pos).
 
     Pin old defaults: forced binding, brownian step mode, dt_factor=5.0.
@@ -85,18 +123,30 @@ def _run_with_frames(tmp_path, *, use_gpu=True, label="run", seed=42,
     rd = tmp_path / label
     cmd = [
         str(_BINARY),
-        "--time_sec", str(time_sec),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(seed),
-        "--n_steps", str(n_steps),
-        "--grid_size", str(grid_size),
-        "--n_tcr", str(n_tcr),
-        "--n_cd45", str(n_cd45),
-        "--run-dir", str(rd),
-        "--binding_mode", "forced",
-        "--step_mode", "brownian",
-        "--dt_factor", "10.0",
-        "--n_pmhc", "-1",
+        "--time_sec",
+        str(time_sec),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(seed),
+        "--n_steps",
+        str(n_steps),
+        "--grid_size",
+        str(grid_size),
+        "--n_tcr",
+        str(n_tcr),
+        "--n_cd45",
+        str(n_cd45),
+        "--run-dir",
+        str(rd),
+        "--binding_mode",
+        "forced",
+        "--step_mode",
+        "brownian",
+        "--dt_factor",
+        "10.0",
+        "--n_pmhc",
+        "-1",
         "--dump-frames",
     ]
     if not use_gpu:
@@ -111,8 +161,8 @@ def _run_with_frames(tmp_path, *, use_gpu=True, label="run", seed=42,
     h = np.fromfile(frames_dir / f"h_{n_steps:05d}.bin", dtype=np.float32)
     h = h.reshape(grid_size, grid_size)
     mol = np.fromfile(frames_dir / f"mol_{n_steps:05d}.bin", dtype=np.float64)
-    tcr = mol[:n_tcr * 2].reshape(n_tcr, 2)
-    cd45 = mol[n_tcr * 2:].reshape(n_cd45, 2)
+    tcr = mol[: n_tcr * 2].reshape(n_tcr, 2)
+    cd45 = mol[n_tcr * 2 :].reshape(n_cd45, 2)
     return output, h, tcr, cd45
 
 
@@ -125,6 +175,7 @@ def _mean_radial(pos):
 
 # ─── Fixtures ──────────────────────────────────────────────────────────────
 
+
 @pytest.fixture(autouse=True, scope="module")
 def _build():
     _ensure_binary()
@@ -133,6 +184,7 @@ def _build():
 
 
 # ─── A) GPU Regression ─────────────────────────────────────────────────────
+
 
 class TestGPURegression:
     """GPU after optimization must match GPU baseline from reference_values.json."""
@@ -160,15 +212,18 @@ class TestGPURegression:
         _, _, tcr, cd45 = _run_with_frames(tmp_path, use_gpu=True, label="gpu_rad")
         tcr_r = _mean_radial(tcr)
         cd45_r = _mean_radial(cd45)
-        assert abs(tcr_r - ref["gpu"]["final_tcr_mean_r_nm"]) / ref["gpu"]["final_tcr_mean_r_nm"] < 0.05, (
-            f"GPU TCR radial: {ref['gpu']['final_tcr_mean_r_nm']:.1f} → {tcr_r:.1f}"
-        )
-        assert abs(cd45_r - ref["gpu"]["final_cd45_mean_r_nm"]) / ref["gpu"]["final_cd45_mean_r_nm"] < 0.05, (
-            f"GPU CD45 radial: {ref['gpu']['final_cd45_mean_r_nm']:.1f} → {cd45_r:.1f}"
-        )
+        assert (
+            abs(tcr_r - ref["gpu"]["final_tcr_mean_r_nm"]) / ref["gpu"]["final_tcr_mean_r_nm"]
+            < 0.05
+        ), f"GPU TCR radial: {ref['gpu']['final_tcr_mean_r_nm']:.1f} → {tcr_r:.1f}"
+        assert (
+            abs(cd45_r - ref["gpu"]["final_cd45_mean_r_nm"]) / ref["gpu"]["final_cd45_mean_r_nm"]
+            < 0.05
+        ), f"GPU CD45 radial: {ref['gpu']['final_cd45_mean_r_nm']:.1f} → {cd45_r:.1f}"
 
 
 # ─── B) CPU Regression ─────────────────────────────────────────────────────
+
 
 class TestCPURegression:
     """CPU after optimization must match CPU baseline from reference_values.json."""
@@ -196,15 +251,18 @@ class TestCPURegression:
         _, _, tcr, cd45 = _run_with_frames(tmp_path, use_gpu=False, label="cpu_rad")
         tcr_r = _mean_radial(tcr)
         cd45_r = _mean_radial(cd45)
-        assert abs(tcr_r - ref["cpu"]["final_tcr_mean_r_nm"]) / ref["cpu"]["final_tcr_mean_r_nm"] < 0.05, (
-            f"CPU TCR radial: {ref['cpu']['final_tcr_mean_r_nm']:.1f} → {tcr_r:.1f}"
-        )
-        assert abs(cd45_r - ref["cpu"]["final_cd45_mean_r_nm"]) / ref["cpu"]["final_cd45_mean_r_nm"] < 0.05, (
-            f"CPU CD45 radial: {ref['cpu']['final_cd45_mean_r_nm']:.1f} → {cd45_r:.1f}"
-        )
+        assert (
+            abs(tcr_r - ref["cpu"]["final_tcr_mean_r_nm"]) / ref["cpu"]["final_tcr_mean_r_nm"]
+            < 0.05
+        ), f"CPU TCR radial: {ref['cpu']['final_tcr_mean_r_nm']:.1f} → {tcr_r:.1f}"
+        assert (
+            abs(cd45_r - ref["cpu"]["final_cd45_mean_r_nm"]) / ref["cpu"]["final_cd45_mean_r_nm"]
+            < 0.05
+        ), f"CPU CD45 radial: {ref['cpu']['final_cd45_mean_r_nm']:.1f} → {cd45_r:.1f}"
 
 
 # ─── C) GPU vs CPU Cross-Mode Equivalence ──────────────────────────────────
+
 
 class TestCrossMode:
     """GPU and CPU produce results from the same physics (relaxed thresholds)."""
@@ -243,6 +301,7 @@ class TestCrossMode:
 
 # ─── D) Determinism ────────────────────────────────────────────────────────
 
+
 @pytest.mark.deterministic
 class TestDeterminism:
     """Same seed must produce reproducible output.
@@ -264,9 +323,7 @@ class TestDeterminism:
         )
         ar1 = out1["diagnostics"]["accept_rate"]
         ar2 = out2["diagnostics"]["accept_rate"]
-        assert abs(ar1 - ar2) < 0.01, (
-            f"GPU accept rates too different: {ar1:.6f} vs {ar2:.6f}"
-        )
+        assert abs(ar1 - ar2) < 0.01, f"GPU accept rates too different: {ar1:.6f} vs {ar2:.6f}"
 
     def test_cpu_deterministic(self, tmp_path):
         out1 = _run(tmp_path, use_gpu=False, label="det_cpu1", seed=77)
@@ -274,18 +331,13 @@ class TestDeterminism:
         assert out1 == out2, "CPU not deterministic with same seed"
 
     def test_gpu_frames_deterministic(self, tmp_path):
-        _, h1, tcr1, cd451 = _run_with_frames(
-            tmp_path, use_gpu=True, label="detf_gpu1", seed=77
-        )
-        _, h2, tcr2, cd452 = _run_with_frames(
-            tmp_path, use_gpu=True, label="detf_gpu2", seed=77
-        )
+        _, h1, tcr1, cd451 = _run_with_frames(tmp_path, use_gpu=True, label="detf_gpu1", seed=77)
+        _, h2, tcr2, cd452 = _run_with_frames(tmp_path, use_gpu=True, label="detf_gpu2", seed=77)
         # GPU height fields should be statistically close (not necessarily bit-identical).
         # Metal GPU atomic scheduling can cause ~0.3% of cells to diverge by up to ~30nm.
         # Brownian mode's larger step_size_h widens the divergence envelope.
         np.testing.assert_allclose(
-            h1, h2, rtol=0.25, atol=35.0,
-            err_msg="GPU height fields too different between runs"
+            h1, h2, rtol=0.25, atol=35.0, err_msg="GPU height fields too different between runs"
         )
         # Molecule positions depend on h[] via MC energy, so can diverge more.
         # Check mean radial distance (a bulk statistic) rather than per-molecule.
@@ -301,18 +353,15 @@ class TestDeterminism:
         )
 
     def test_cpu_frames_deterministic(self, tmp_path):
-        _, h1, tcr1, cd451 = _run_with_frames(
-            tmp_path, use_gpu=False, label="detf_cpu1", seed=77
-        )
-        _, h2, tcr2, cd452 = _run_with_frames(
-            tmp_path, use_gpu=False, label="detf_cpu2", seed=77
-        )
+        _, h1, tcr1, cd451 = _run_with_frames(tmp_path, use_gpu=False, label="detf_cpu1", seed=77)
+        _, h2, tcr2, cd452 = _run_with_frames(tmp_path, use_gpu=False, label="detf_cpu2", seed=77)
         np.testing.assert_array_equal(h1, h2, err_msg="CPU height not bit-identical")
         np.testing.assert_array_equal(tcr1, tcr2, err_msg="CPU TCR pos not bit-identical")
         np.testing.assert_array_equal(cd451, cd452, err_msg="CPU CD45 pos not bit-identical")
 
 
 # ─── E) Conservation / Sanity Checks ───────────────────────────────────────
+
 
 class TestConservation:
     """Basic physical constraints that must always hold."""
@@ -344,11 +393,14 @@ class TestConservation:
 
 # ─── F) Substep Equivalence (Tier 2) ───────────────────────────────────────
 
+
 def _binary_supports_substeps():
     """Check if binary supports --grid-substeps flag."""
     result = subprocess.run(
         [str(_BINARY), "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     return "--grid-substeps" in result.stdout or "--grid-substeps" in result.stderr
 
@@ -372,8 +424,13 @@ class TestSubstepEquivalence:
     def test_substep_runs_and_produces_depletion(self, tmp_path, use_gpu):
         """Substep=5 produces positive depletion width (physics working)."""
         mode = "gpu" if use_gpu else "cpu"
-        out = _run(tmp_path, use_gpu=use_gpu, label=f"sub5_{mode}",
-                   n_steps=100, extra_args=["--grid-substeps", "5"])
+        out = _run(
+            tmp_path,
+            use_gpu=use_gpu,
+            label=f"sub5_{mode}",
+            n_steps=100,
+            extra_args=["--grid-substeps", "5"],
+        )
         w = out["depletion_width_nm"]
         assert w > 0, f"{mode.upper()} substep=5 depletion width is 0"
         assert w < 1500, f"{mode.upper()} substep=5 depletion unreasonably large: {w}"
@@ -382,9 +439,12 @@ class TestSubstepEquivalence:
     def test_substep_accept_rate_reasonable(self, tmp_path, use_gpu):
         """Substep=5 accept rate is in a reasonable range."""
         mode = "gpu" if use_gpu else "cpu"
-        out = _run(tmp_path, use_gpu=use_gpu, label=f"subar5_{mode}",
-                   n_steps=100, extra_args=["--grid-substeps", "5"])
-        r = out["diagnostics"]["accept_rate"]
-        assert 0.1 < r < 0.99, (
-            f"{mode.upper()} substep=5 accept rate out of range: {r:.4f}"
+        out = _run(
+            tmp_path,
+            use_gpu=use_gpu,
+            label=f"subar5_{mode}",
+            n_steps=100,
+            extra_args=["--grid-substeps", "5"],
         )
+        r = out["diagnostics"]["accept_rate"]
+        assert 0.1 < r < 0.99, f"{mode.upper()} substep=5 accept rate out of range: {r:.4f}"

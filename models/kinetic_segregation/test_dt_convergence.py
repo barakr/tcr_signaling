@@ -5,11 +5,10 @@ Sweeps dt from 0.005 ms to 0.2 ms (50 log-spaced values).
 Measures fraction of "bound" pMHCs (TCR within 3 nm) using second half of run.
 GPU enabled for speed.  Outputs convergence plot to ~/Downloads/ks_dt_convergence/.
 """
+
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -22,20 +21,20 @@ _OUTPUT_DIR = Path.home() / "Downloads" / "ks_dt_convergence"
 _RENDER_PYTHON = Path.home() / "miniconda3" / "envs" / "py314_bayesmm" / "bin" / "python"
 
 # Simulation parameters
-PATCH_SIZE = 25.0       # nm — tiny box
-GRID_SIZE = 10          # dx = 2.5 nm (coarser grid for small box)
+PATCH_SIZE = 25.0  # nm — tiny box
+GRID_SIZE = 10  # dx = 2.5 nm (coarser grid for small box)
 N_TCR = 10
 N_PMHC = 10
-N_CD45 = 0              # isolate TCR-pMHC interaction
-SIGMA_R = 2.0           # nm
-PMHC_RADIUS = 8.0       # placement disc radius (nm)
-RIGIDITY = 20.0         # kT/nm²
-TIME_SEC = 5.0          # seconds of simulation
+N_CD45 = 0  # isolate TCR-pMHC interaction
+SIGMA_R = 2.0  # nm
+PMHC_RADIUS = 8.0  # placement disc radius (nm)
+RIGIDITY = 20.0  # kT/nm²
+TIME_SEC = 5.0  # seconds of simulation
 SEED = 42
-N_FRAMES = 100          # target number of output frames
+N_FRAMES = 100  # target number of output frames
 
 # Binding criterion: TCR within this distance of a pMHC
-BIND_THRESHOLD = 3.0    # nm
+BIND_THRESHOLD = 3.0  # nm
 
 # dt sweep: 0.005 ms to 0.2 ms (50 log-spaced values)
 # Auto-cal default: target_step = sigma_r/2 = 1nm → dt = 1²/(2·10000) = 5e-5 s = 0.05 ms
@@ -51,26 +50,42 @@ def run_sim(tmp_dir: Path, dt: float) -> Path | None:
 
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(RIGIDITY),
-        "--seed", str(SEED),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(N_TCR),
-        "--n_cd45", str(N_CD45),
-        "--n_pmhc", str(N_PMHC),
-        "--pmhc_radius", str(PMHC_RADIUS),
-        "--binding_mode", "gaussian",
-        "--patch_size", str(PATCH_SIZE),
-        "--sigma_r", str(SIGMA_R),
-        "--dt", str(dt),
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(RIGIDITY),
+        "--seed",
+        str(SEED),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(N_TCR),
+        "--n_cd45",
+        str(N_CD45),
+        "--n_pmhc",
+        str(N_PMHC),
+        "--pmhc_radius",
+        str(PMHC_RADIUS),
+        "--binding_mode",
+        "gaussian",
+        "--patch_size",
+        str(PATCH_SIZE),
+        "--sigma_r",
+        str(SIGMA_R),
+        "--dt",
+        str(dt),
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(dump_interval),
+        "--dump-interval",
+        str(dump_interval),
     ]
 
     step_nm = (2.0 * 1e4 * dt) ** 0.5
-    print(f"  dt={dt*1000:.4f} ms  step={step_nm:.3f} nm  "
-          f"n_steps={n_steps}  dump_every={dump_interval}")
+    print(
+        f"  dt={dt * 1000:.4f} ms  step={step_nm:.3f} nm  "
+        f"n_steps={n_steps}  dump_every={dump_interval}"
+    )
 
     t0 = time.perf_counter()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -149,7 +164,7 @@ def make_plot(results: dict):
         dt = all_dts[idx]
         times, fracs = results[dt]
         step_nm = (2.0 * 1e4 * dt) ** 0.5
-        label = f"dt={dt*1000:.3f} ms (step={step_nm:.2f} nm)"
+        label = f"dt={dt * 1000:.3f} ms (step={step_nm:.2f} nm)"
         ax1.plot(times, fracs, label=label, alpha=0.8, linewidth=1.5)
     # Vertical line at warmup boundary (half-time)
     ax1.axvline(TIME_SEC / 2, color="gray", linestyle=":", alpha=0.5, label="warmup cutoff")
@@ -178,8 +193,7 @@ def make_plot(results: dict):
         eq_stds.append(np.std(fracs[half_idx:]))
 
     dt_ms = [d * 1000 for d in dts]
-    ax2.errorbar(dt_ms, eq_fracs, yerr=eq_stds, fmt="o-", markersize=8,
-                 capsize=5, linewidth=2)
+    ax2.errorbar(dt_ms, eq_fracs, yerr=eq_stds, fmt="o-", markersize=8, capsize=5, linewidth=2)
     ax2.set_xscale("log")
     ax2.set_xlabel("dt (ms)", fontsize=12)
     ax2.set_ylabel("Equilibrium bound fraction", fontsize=12)
@@ -188,16 +202,24 @@ def make_plot(results: dict):
     ax2.grid(True, alpha=0.3)
 
     # Vertical line at auto-calibrated dt
-    ax2.axvline(AUTO_CAL_DT * 1000, color="red", linestyle="--", alpha=0.4,
-                label=f"auto-cal ({AUTO_CAL_DT*1000:.3f} ms)")
+    ax2.axvline(
+        AUTO_CAL_DT * 1000,
+        color="red",
+        linestyle="--",
+        alpha=0.4,
+        label=f"auto-cal ({AUTO_CAL_DT * 1000:.3f} ms)",
+    )
     # Annotate auto-cal point
     auto_idx = np.argmin([abs(d - AUTO_CAL_DT) for d in dts])
     step_auto = (2.0 * 1e4 * AUTO_CAL_DT) ** 0.5
     ax2.annotate(
         f"auto: step={step_auto:.2f} nm",
         (dt_ms[auto_idx], eq_fracs[auto_idx]),
-        textcoords="offset points", xytext=(12, 8),
-        fontsize=9, color="red", fontweight="bold",
+        textcoords="offset points",
+        xytext=(12, 8),
+        fontsize=9,
+        color="red",
+        fontweight="bold",
     )
     ax2.legend(fontsize=9)
 
@@ -211,11 +233,11 @@ def make_plot(results: dict):
 def main():
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(f"Step-size convergence test")
+    print("Step-size convergence test")
     print(f"  Box: {PATCH_SIZE} nm, grid {GRID_SIZE}×{GRID_SIZE}")
     print(f"  Molecules: {N_TCR} TCR, {N_PMHC} pMHC, {N_CD45} CD45")
     print(f"  sigma_r={SIGMA_R} nm, bind threshold={BIND_THRESHOLD} nm")
-    print(f"  Time: {TIME_SEC}s, dt sweep: {[d*1000 for d in DT_VALUES]} ms\n")
+    print(f"  Time: {TIME_SEC}s, dt sweep: {[d * 1000 for d in DT_VALUES]} ms\n")
 
     results = {}
 
@@ -228,9 +250,7 @@ def main():
                 continue
 
             pmhc_pos, tcr_frames = parse_frames(run_dir)
-            fracs = compute_bound_fraction(
-                pmhc_pos, tcr_frames, BIND_THRESHOLD, PATCH_SIZE
-            )
+            fracs = compute_bound_fraction(pmhc_pos, tcr_frames, BIND_THRESHOLD, PATCH_SIZE)
             n_frames = len(fracs)
             times = np.linspace(0, TIME_SEC, n_frames)
             results[dt] = (times, fracs)
@@ -250,8 +270,10 @@ def main():
             _, fracs = results[dt]
             half_idx = len(fracs) // 2
             step = (2.0 * 1e4 * dt) ** 0.5
-            print(f"{dt*1000:>10.4f}  {step:>10.3f}  "
-                  f"{np.mean(fracs[half_idx:]):>10.3f}  {np.std(fracs[half_idx:]):>8.3f}")
+            print(
+                f"{dt * 1000:>10.4f}  {step:>10.3f}  "
+                f"{np.mean(fracs[half_idx:]):>10.3f}  {np.std(fracs[half_idx:]):>8.3f}"
+            )
     else:
         print("No successful runs!")
 

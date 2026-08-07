@@ -3,14 +3,13 @@
 These tests exercise the execution paths introduced when the binary defaults
 changed from forced/paper/n_pmhc=0 to gaussian/brownian/auto-pMHC-from-density.
 """
+
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 _PKG_DIR = Path(__file__).resolve().parents[1]
@@ -26,8 +25,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -67,7 +69,8 @@ class TestGaussianBinding:
     def test_gaussian_binding_positive_depletion(self, tmp_path):
         """Gaussian binding mode should produce positive depletion with enough steps."""
         data, _ = _run(
-            tmp_path, label="gauss_depl",
+            tmp_path,
+            label="gauss_depl",
             binding_mode="gaussian",
             step_mode="paper",
             n_pmhc=50,
@@ -87,7 +90,8 @@ class TestGaussianBinding:
         potential well, so molecules near pMHC can still move.
         """
         data, _ = _run(
-            tmp_path, label="gauss_move",
+            tmp_path,
+            label="gauss_move",
             binding_mode="gaussian",
             step_mode="paper",
             n_pmhc=50,
@@ -114,7 +118,8 @@ class TestBrownianMode:
     def test_brownian_with_auto_pmhc_produces_results(self, tmp_path):
         """Brownian mode with auto-pMHC density should produce reasonable results."""
         data, stderr = _run(
-            tmp_path, label="brown_auto",
+            tmp_path,
+            label="brown_auto",
             binding_mode="gaussian",
             step_mode="brownian",
             # n_pmhc omitted → auto-compute from density
@@ -127,7 +132,8 @@ class TestBrownianMode:
     def test_brownian_step_size_h_not_fixed(self, tmp_path):
         """Brownian mode derives step_size_h from diffusion, not fixed at 1.0 nm."""
         data, _ = _run(
-            tmp_path, label="brown_step",
+            tmp_path,
+            label="brown_step",
             binding_mode="forced",
             step_mode="brownian",
             n_pmhc=-1,
@@ -141,7 +147,8 @@ class TestBrownianMode:
     def test_paper_step_size_h_is_fixed(self, tmp_path):
         """Paper mode has fixed step_size_h = 1.0 nm."""
         data, _ = _run(
-            tmp_path, label="paper_step",
+            tmp_path,
+            label="paper_step",
             binding_mode="forced",
             step_mode="paper",
             n_pmhc=-1,
@@ -155,14 +162,16 @@ class TestBrownianMode:
     def test_brownian_vs_paper_step_h_scaling(self, tmp_path):
         """Brownian step_size_h = sqrt(2*D_h*dt), paper = 1.0 nm."""
         d_paper, _ = _run(
-            tmp_path, label="scale_paper",
+            tmp_path,
+            label="scale_paper",
             binding_mode="forced",
             step_mode="paper",
             n_pmhc=-1,
             n_steps=20,
         )
         d_brown, _ = _run(
-            tmp_path, label="scale_brown",
+            tmp_path,
+            label="scale_brown",
             binding_mode="forced",
             step_mode="brownian",
             n_pmhc=-1,
@@ -191,7 +200,8 @@ class TestAutoPmhc:
         # patch_size = 2000 nm → area = 4e6 nm² = 4.0 µm²
         # density = 300/µm² → n_pmhc = 1200
         data, stderr = _run(
-            tmp_path, label="auto_uni",
+            tmp_path,
+            label="auto_uni",
             binding_mode="gaussian",
             step_mode="brownian",
             pmhc_mode="uniform",
@@ -214,7 +224,8 @@ class TestAutoPmhc:
         assert expected_n == 19, f"Sanity check: expected 19, computed {expected_n}"
 
         data, stderr = _run(
-            tmp_path, label="auto_small",
+            tmp_path,
+            label="auto_small",
             binding_mode="gaussian",
             step_mode="brownian",
             pmhc_mode="uniform",
@@ -230,7 +241,8 @@ class TestAutoPmhc:
     def test_explicit_n_pmhc_overrides_density(self, tmp_path):
         """Explicit --n_pmhc should override auto-computation from density."""
         data, stderr = _run(
-            tmp_path, label="override",
+            tmp_path,
+            label="override",
             binding_mode="gaussian",
             step_mode="brownian",
             n_pmhc=7,

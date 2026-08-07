@@ -6,6 +6,35 @@
 
 ## Decision Log
 
+### 2026-08-07: Own CI, own lint config, own git hooks
+- **CI added in this repo, not the parent's workflow.** The KS model fails for
+  toolchain, Metal and physics reasons that say nothing about the framework;
+  sharing a workflow would turn the framework's status red for our causes.
+  Separate repo means a separate badge and separate notifications.
+  `deterministic` tests are deselected on CI only — CLAUDE.md documents them as
+  platform-specific, and a hosted runner is different hardware (159 of 167 run
+  there; all 167 pass locally).
+- **CI asserts the suite actually ran** (zero skips, floor of 150 passing).
+  Every C++ test skips itself when the binary is missing, so a toolchain
+  regression can yield 150+ skips and still exit 0. This is not hypothetical: a
+  broken system libc++ recently turned 118 of these into skips that read as
+  success.
+- **`ruff.toml` added.** There was no lint config here, so ruff walked up and
+  used the parent framework's — which only works when checked out as a
+  submodule, and the parent now excludes `projects/` anyway. Settings mirror the
+  framework's (line-length 100, `E`/`F`/`I`).
+- **Lint baseline cleared**: 49 findings → 0. 25 auto-fixed, 23 line-length
+  resolved by `ruff format` (26 files reformatted), and one genuine dead local
+  (`seed = 42` in `benchmark/run_benchmark.py::main`, never used — the run seed
+  is set inside `run()` where the argv is built). All 167 tests, including the
+  bit-level determinism baselines, pass unchanged after reformatting.
+- **`githooks/` added and activated** (`core.hooksPath=githooks`), enforcing KS
+  rule 9 and development rule 1, which were previously honour-system. Unlike the
+  parent's hooks these do NOT block commits on `main`, since `main` is this
+  repo's trunk. Hooks use POSIX `grep`, never `rg`: hooks run
+  non-interactively, and a missing command inside an `if` reads as false, which
+  is precisely how the parent's Status.md gate sat dead.
+
 ### 2026-03-10: Consolidate kinetic_segregation modules
 - **Change**: Merged `kinetic_segregation_gpu/` (C + Metal) into `kinetic_segregation/`,
   removing the Python implementation entirely. The C binary is now the single source of

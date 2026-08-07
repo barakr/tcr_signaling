@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Last gate before the KS model CI sees the change. Same suite the workflow
+# runs, so a red build is caught locally rather than on GitHub.
+
+mkdir -p tmp/hook_logs
+log_file="tmp/hook_logs/pre-push.log"
+
+run_pytest() {
+  if command -v pytest >/dev/null 2>&1; then
+    pytest "$@"; return
+  fi
+  fallback="${HOME}/miniconda3/envs/py314_bayesmm/bin/pytest"
+  if [[ -x "$fallback" ]]; then
+    "$fallback" "$@"; return
+  fi
+  echo "pre-push: pytest not found in PATH, and $fallback is missing."
+  return 127
+}
+
+{
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] pre-push start"
+  run_pytest -q -m "not slow"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] pre-push success"
+} >"$log_file" 2>&1

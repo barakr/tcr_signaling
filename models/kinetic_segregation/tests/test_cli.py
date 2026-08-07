@@ -1,4 +1,5 @@
 """Tests for GPU KS model CLI (binary and Python wrapper)."""
+
 from __future__ import annotations
 
 import json
@@ -18,8 +19,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -34,15 +38,25 @@ class TestBinaryCli:
 
     def test_produces_output(self, tmp_path):
         result = subprocess.run(
-            [str(_BINARY),
-             "--time_sec", "10",
-             "--rigidity_kT", "10",
-             "--seed", "42",
-             "--n_steps", "5",
-             "--grid_size", "16",
-             "--no-gpu",
-             "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
+            [
+                str(_BINARY),
+                "--time_sec",
+                "10",
+                "--rigidity_kT",
+                "10",
+                "--seed",
+                "42",
+                "--n_steps",
+                "5",
+                "--grid_size",
+                "16",
+                "--no-gpu",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
 
@@ -56,15 +70,25 @@ class TestBinaryCli:
 
     def test_stdout_is_valid_json(self, tmp_path):
         result = subprocess.run(
-            [str(_BINARY),
-             "--time_sec", "5",
-             "--rigidity_kT", "5",
-             "--seed", "1",
-             "--n_steps", "3",
-             "--grid_size", "16",
-             "--no-gpu",
-             "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
+            [
+                str(_BINARY),
+                "--time_sec",
+                "5",
+                "--rigidity_kT",
+                "5",
+                "--seed",
+                "1",
+                "--n_steps",
+                "3",
+                "--grid_size",
+                "16",
+                "--no-gpu",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout.strip())
@@ -73,7 +97,9 @@ class TestBinaryCli:
     def test_missing_required_args(self, tmp_path):
         result = subprocess.run(
             [str(_BINARY), "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode != 0
 
@@ -84,15 +110,25 @@ class TestBinaryCli:
         for i in range(2):
             rd = tmp_path / f"run{i}"
             result = subprocess.run(
-                [str(_BINARY),
-                 "--time_sec", "10",
-                 "--rigidity_kT", "20",
-                 "--seed", "123",
-                 "--n_steps", "5",
-                 "--grid_size", "16",
-                 "--no-gpu",
-                 "--run-dir", str(rd)],
-                capture_output=True, text=True, timeout=60,
+                [
+                    str(_BINARY),
+                    "--time_sec",
+                    "10",
+                    "--rigidity_kT",
+                    "20",
+                    "--seed",
+                    "123",
+                    "--n_steps",
+                    "5",
+                    "--grid_size",
+                    "16",
+                    "--no-gpu",
+                    "--run-dir",
+                    str(rd),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             assert result.returncode == 0, result.stderr
             runs.append(json.loads(result.stdout.strip()))
@@ -105,14 +141,24 @@ class TestBinaryCli:
         for i in range(2):
             rd = tmp_path / f"gpu_run{i}"
             result = subprocess.run(
-                [str(_BINARY),
-                 "--time_sec", "10",
-                 "--rigidity_kT", "20",
-                 "--seed", "123",
-                 "--n_steps", "5",
-                 "--grid_size", "16",
-                 "--run-dir", str(rd)],
-                capture_output=True, text=True, timeout=60,
+                [
+                    str(_BINARY),
+                    "--time_sec",
+                    "10",
+                    "--rigidity_kT",
+                    "20",
+                    "--seed",
+                    "123",
+                    "--n_steps",
+                    "5",
+                    "--grid_size",
+                    "16",
+                    "--run-dir",
+                    str(rd),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             if "CPU fallback" in result.stderr:
                 pytest.skip("Metal GPU not available")
@@ -122,14 +168,23 @@ class TestBinaryCli:
 
     def test_diagnostics_fields(self, tmp_path):
         result = subprocess.run(
-            [str(_BINARY),
-             "--time_sec", "10",
-             "--rigidity_kT", "10",
-             "--n_steps", "3",
-             "--grid_size", "16",
-             "--no-gpu",
-             "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
+            [
+                str(_BINARY),
+                "--time_sec",
+                "10",
+                "--rigidity_kT",
+                "10",
+                "--n_steps",
+                "3",
+                "--grid_size",
+                "16",
+                "--no-gpu",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout.strip())
@@ -146,15 +201,25 @@ class TestBinaryCli:
     def test_dt_factor_flag(self, tmp_path):
         """--dt_factor is accepted and scales dt."""
         result = subprocess.run(
-            [str(_BINARY),
-             "--time_sec", "10",
-             "--rigidity_kT", "10",
-             "--n_steps", "3",
-             "--grid_size", "16",
-             "--no-gpu",
-             "--dt_factor", "0.5",
-             "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
+            [
+                str(_BINARY),
+                "--time_sec",
+                "10",
+                "--rigidity_kT",
+                "10",
+                "--n_steps",
+                "3",
+                "--grid_size",
+                "16",
+                "--no-gpu",
+                "--dt_factor",
+                "0.5",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout.strip())
@@ -165,16 +230,27 @@ class TestBinaryCli:
     def test_dt_and_dt_factor_mutually_exclusive(self, tmp_path):
         """--dt and --dt_factor together should error."""
         result = subprocess.run(
-            [str(_BINARY),
-             "--time_sec", "10",
-             "--rigidity_kT", "10",
-             "--n_steps", "3",
-             "--grid_size", "16",
-             "--no-gpu",
-             "--dt", "0.001",
-             "--dt_factor", "0.5",
-             "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
+            [
+                str(_BINARY),
+                "--time_sec",
+                "10",
+                "--rigidity_kT",
+                "10",
+                "--n_steps",
+                "3",
+                "--grid_size",
+                "16",
+                "--no-gpu",
+                "--dt",
+                "0.001",
+                "--dt_factor",
+                "0.5",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode != 0
 
@@ -188,14 +264,25 @@ class TestPythonWrapper:
 
     def test_wrapper_produces_output(self, tmp_path):
         result = subprocess.run(
-            [sys.executable, "-m", "models.kinetic_segregation",
-             "--time_sec", "5",
-             "--rigidity_kT", "10",
-             "--n_steps", "3",
-             "--grid_size", "16",
-             "--no-gpu",
-             "--run-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
+            [
+                sys.executable,
+                "-m",
+                "models.kinetic_segregation",
+                "--time_sec",
+                "5",
+                "--rigidity_kT",
+                "10",
+                "--n_steps",
+                "3",
+                "--grid_size",
+                "16",
+                "--no-gpu",
+                "--run-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
             cwd=_SUBMODULE_ROOT,
         )
         assert result.returncode == 0, result.stderr

@@ -7,6 +7,7 @@ These tests verify that the NEW defaults produce expected behavior:
 - pMHC density auto-computed from literature (300/um^2)
 - gaussian vs forced binding produces different dynamics
 """
+
 from __future__ import annotations
 
 import json
@@ -30,8 +31,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -107,7 +111,7 @@ class TestDefaultBrownianMode:
         # Ratio should be sqrt(80/5) = 4.0
         ratio = step_low / step_high
         assert ratio == pytest.approx(math.sqrt(80.0 / 5.0), rel=0.01), (
-            f"step_h ratio {ratio:.2f} != expected {math.sqrt(80.0/5.0):.2f}"
+            f"step_h ratio {ratio:.2f} != expected {math.sqrt(80.0 / 5.0):.2f}"
         )
 
 
@@ -126,13 +130,21 @@ class TestDefaultGaussianBinding:
     def test_default_accept_rate_matches_gaussian(self, tmp_path):
         """Default mode and explicit gaussian should give the same accept rate."""
         d_default, _ = _run(
-            tmp_path, label="def_bind",
-            n_pmhc=30, pmhc_mode="inner_circle", pmhc_seed=1, n_steps=100,
+            tmp_path,
+            label="def_bind",
+            n_pmhc=30,
+            pmhc_mode="inner_circle",
+            pmhc_seed=1,
+            n_steps=100,
         )
         d_gaussian, _ = _run(
-            tmp_path, label="gauss_bind",
+            tmp_path,
+            label="gauss_bind",
             binding_mode="gaussian",
-            n_pmhc=30, pmhc_mode="inner_circle", pmhc_seed=1, n_steps=100,
+            n_pmhc=30,
+            pmhc_mode="inner_circle",
+            pmhc_seed=1,
+            n_steps=100,
         )
         assert d_default["diagnostics"]["accept_rate"] == pytest.approx(
             d_gaussian["diagnostics"]["accept_rate"]
@@ -141,9 +153,12 @@ class TestDefaultGaussianBinding:
     def test_gaussian_bound_tcrs_can_move(self, tmp_path):
         """In gaussian binding, the accept rate should be > 0 (molecules can still move)."""
         data, _ = _run(
-            tmp_path, label="gauss_move",
+            tmp_path,
+            label="gauss_move",
             binding_mode="gaussian",
-            n_pmhc=50, pmhc_mode="inner_circle", pmhc_seed=1,
+            n_pmhc=50,
+            pmhc_mode="inner_circle",
+            pmhc_seed=1,
             n_steps=200,
         )
         rate = data["diagnostics"]["accept_rate"]
@@ -152,10 +167,14 @@ class TestDefaultGaussianBinding:
     def test_gaussian_produces_segregation(self, tmp_path):
         """Gaussian binding should still produce TCR/CD45 segregation."""
         data, _ = _run(
-            tmp_path, label="gauss_seg",
+            tmp_path,
+            label="gauss_seg",
             binding_mode="gaussian",
-            n_pmhc=50, pmhc_mode="inner_circle", pmhc_seed=1,
-            n_steps=200, rigidity_kT=30.0,
+            n_pmhc=50,
+            pmhc_mode="inner_circle",
+            pmhc_seed=1,
+            n_steps=200,
+            rigidity_kT=30.0,
         )
         diag = data["diagnostics"]
         assert diag["final_tcr_mean_r_nm"] < diag["final_cd45_mean_r_nm"], (
@@ -181,8 +200,10 @@ class TestAutoDt:
         products = []
         for kappa in [5.0, 10.0, 20.0, 40.0, 80.0]:
             data, _ = _run(
-                tmp_path, label=f"dtk_{int(kappa)}",
-                rigidity_kT=kappa, n_steps=5,
+                tmp_path,
+                label=f"dtk_{int(kappa)}",
+                rigidity_kT=kappa,
+                n_steps=5,
             )
             dt_auto = data["diagnostics"]["dt_auto_seconds"]
             products.append(kappa * dt_auto)
@@ -196,8 +217,10 @@ class TestAutoDt:
         """Auto-calibrated dt should always be positive."""
         for kappa in [1.0, 20.0, 100.0]:
             data, _ = _run(
-                tmp_path, label=f"dtp_{int(kappa)}",
-                rigidity_kT=kappa, n_steps=5,
+                tmp_path,
+                label=f"dtp_{int(kappa)}",
+                rigidity_kT=kappa,
+                n_steps=5,
             )
             assert data["diagnostics"]["dt_auto_seconds"] > 0
 
@@ -223,8 +246,10 @@ class TestPmhcDensity:
     def test_auto_pmhc_uniform_default_patch(self, tmp_path):
         """Default patch (2000nm), uniform mode: n_pmhc = 300 * 4.0 = 1200."""
         _, stderr = _run(
-            tmp_path, label="pmhc_uni",
-            pmhc_mode="uniform", n_steps=10,
+            tmp_path,
+            label="pmhc_uni",
+            pmhc_mode="uniform",
+            n_steps=10,
         )
         expected = int(PMHC_DENSITY_PER_UM2 * (PATCH_SIZE_DEFAULT / 1000.0) ** 2 + 0.5)
         assert "AUTO-PMHC" in stderr, "Expected auto-pMHC log message"
@@ -233,8 +258,10 @@ class TestPmhcDensity:
     def test_auto_pmhc_inner_circle(self, tmp_path):
         """Inner-circle mode uses pi*r^2 area where r = patch_size/3."""
         _, stderr = _run(
-            tmp_path, label="pmhc_ic",
-            pmhc_mode="inner_circle", n_steps=10,
+            tmp_path,
+            label="pmhc_ic",
+            pmhc_mode="inner_circle",
+            n_steps=10,
         )
         r = PATCH_SIZE_DEFAULT / 3.0
         area = math.pi * r * r
@@ -245,8 +272,11 @@ class TestPmhcDensity:
     def test_explicit_n_pmhc_overrides_auto(self, tmp_path):
         """Explicit --n_pmhc should suppress auto-computation."""
         _, stderr = _run(
-            tmp_path, label="pmhc_explicit",
-            n_pmhc=10, pmhc_mode="uniform", pmhc_seed=1,
+            tmp_path,
+            label="pmhc_explicit",
+            n_pmhc=10,
+            pmhc_mode="uniform",
+            pmhc_seed=1,
             n_steps=10,
         )
         assert "AUTO-PMHC" not in stderr
@@ -255,8 +285,10 @@ class TestPmhcDensity:
         """Both pmhc_mode options should complete successfully."""
         for mode in ["uniform", "inner_circle"]:
             data, _ = _run(
-                tmp_path, label=f"pmhc_{mode}",
-                pmhc_mode=mode, n_steps=50,
+                tmp_path,
+                label=f"pmhc_{mode}",
+                pmhc_mode=mode,
+                n_steps=50,
             )
             assert data["depletion_width_nm"] >= 0
 
@@ -276,16 +308,24 @@ class TestGaussianVsForcedDynamics:
     def test_different_accept_rates(self, tmp_path):
         """Gaussian and forced binding should have noticeably different accept rates."""
         common = dict(
-            n_pmhc=30, pmhc_mode="inner_circle", pmhc_seed=1,
-            n_steps=200, rigidity_kT=20.0, seed=42,
+            n_pmhc=30,
+            pmhc_mode="inner_circle",
+            pmhc_seed=1,
+            n_steps=200,
+            rigidity_kT=20.0,
+            seed=42,
         )
         d_gauss, _ = _run(
-            tmp_path, label="dyn_gauss",
-            binding_mode="gaussian", **common,
+            tmp_path,
+            label="dyn_gauss",
+            binding_mode="gaussian",
+            **common,
         )
         d_forced, _ = _run(
-            tmp_path, label="dyn_forced",
-            binding_mode="forced", **common,
+            tmp_path,
+            label="dyn_forced",
+            binding_mode="forced",
+            **common,
         )
         ar_gauss = d_gauss["diagnostics"]["accept_rate"]
         ar_forced = d_forced["diagnostics"]["accept_rate"]
@@ -299,10 +339,14 @@ class TestGaussianVsForcedDynamics:
         """Both modes should produce meaningful segregation at moderate rigidity."""
         for mode in ["gaussian", "forced"]:
             data, _ = _run(
-                tmp_path, label=f"seg_{mode}",
+                tmp_path,
+                label=f"seg_{mode}",
                 binding_mode=mode,
-                n_pmhc=50, pmhc_mode="inner_circle", pmhc_seed=1,
-                n_steps=200, rigidity_kT=30.0,
+                n_pmhc=50,
+                pmhc_mode="inner_circle",
+                pmhc_seed=1,
+                n_steps=200,
+                rigidity_kT=30.0,
             )
             diag = data["diagnostics"]
             assert diag["final_tcr_mean_r_nm"] < diag["final_cd45_mean_r_nm"], (
@@ -317,8 +361,12 @@ class TestGaussianVsForcedDynamics:
         rates_forced = []
         for seed in range(5):
             common = dict(
-                n_pmhc=30, pmhc_mode="inner_circle", pmhc_seed=seed,
-                n_steps=100, rigidity_kT=20.0, seed=seed,
+                n_pmhc=30,
+                pmhc_mode="inner_circle",
+                pmhc_seed=seed,
+                n_steps=100,
+                rigidity_kT=20.0,
+                seed=seed,
             )
             dg, _ = _run(tmp_path, label=f"cmp_g_{seed}", binding_mode="gaussian", **common)
             df, _ = _run(tmp_path, label=f"cmp_f_{seed}", binding_mode="forced", **common)
@@ -329,6 +377,5 @@ class TestGaussianVsForcedDynamics:
         mean_gauss = np.mean(rates_gauss)
         mean_forced = np.mean(rates_forced)
         assert mean_gauss > mean_forced, (
-            f"Expected gaussian accept rate ({mean_gauss:.4f}) > "
-            f"forced ({mean_forced:.4f})"
+            f"Expected gaussian accept rate ({mean_gauss:.4f}) > forced ({mean_forced:.4f})"
         )

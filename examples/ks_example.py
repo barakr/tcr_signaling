@@ -41,7 +41,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
-
 from bayesian_metamodeling.adapters import resolve_adapter
 from bayesian_metamodeling.designs import plan_points
 from bayesian_metamodeling.runners import LocalProcessRunner
@@ -84,7 +83,10 @@ def execute_design_point(spec, point_index, point, run_token):
 
     try:
         materialization = adapter.materialize_inputs(
-            spec=spec, point=point, run_dir=temp_run_dir, repo_root=REPO_ROOT,
+            spec=spec,
+            point=point,
+            run_dir=temp_run_dir,
+            repo_root=REPO_ROOT,
         )
         run_result = runner.run(materialization=materialization, run_dir=temp_run_dir)
         returncode = run_result.returncode
@@ -167,7 +169,10 @@ def run_sweep(profile: str):
 
     # Step 4: Persist the sweep to the centralized store (full provenance)
     stored = persist_sweep(
-        spec_payload=payload, spec=spec, point_results=results, execution_mode="serial",
+        spec_payload=payload,
+        spec=spec,
+        point_results=results,
+        execution_mode="serial",
     )
     sweep_csv = stored.run_dir / "sweep_rows.csv"
     sweep_manifest = stored.run_dir / "sweep_manifest.json"
@@ -194,12 +199,14 @@ def copy_and_plot(stored, profile: str):
 
     # Load and plot
     from plot_sweep import load_sweep_csv
+
     times, rigidities, depletions = load_sweep_csv(sweep_csv)
     time_vals, rig_vals, grid = pivot_to_grid(times, rigidities, depletions)
 
     png_path = ARTIFACTS_DIR / f"ks_sweep_{profile}.png"
-    plot_heatmap(time_vals, rig_vals, grid, png_path,
-                 title=f"KS depletion width ({profile} profile)")
+    plot_heatmap(
+        time_vals, rig_vals, grid, png_path, title=f"KS depletion width ({profile} profile)"
+    )
     print(f"  Heatmap: {png_path}")
 
     return time_vals, rig_vals, grid
@@ -234,6 +241,7 @@ def try_surrogate(profile: str, sweep_time, sweep_rig, sweep_grid):
         # Use the low-level backend API for dense prediction (eval_surrogate expects
         # pre-stored artifacts and JSON input format; here we want numpy arrays)
         from plot_sweep import load_sweep_csv
+
         csv_path = Path(spec.dataset_ref) / "sweeps"
         csv_files = sorted(csv_path.rglob("sweep_rows.csv"))
         if not csv_files:
@@ -245,9 +253,13 @@ def try_surrogate(profile: str, sweep_time, sweep_rig, sweep_grid):
         y = deps
 
         model = fit_backend_model(
-            backend=spec.backend, x=X, y=y,
-            input_names=spec.inputs, output_name=spec.outputs[0],
-            backend_config=spec.backend_config, seed=spec.seed,
+            backend=spec.backend,
+            x=X,
+            y=y,
+            input_names=spec.inputs,
+            output_name=spec.outputs[0],
+            backend_config=spec.backend_config,
+            seed=spec.seed,
         )
 
         # Train RMSE
@@ -274,9 +286,15 @@ def try_surrogate(profile: str, sweep_time, sweep_rig, sweep_grid):
 
         png_path = ARTIFACTS_DIR / f"ks_surrogate_{backend_name}_{profile}.png"
         plot_sweep_and_surrogate(
-            sweep_time, sweep_rig, sweep_grid,
-            time_dense, rig_dense, mean_grid, std_grid,
-            png_path, backend=backend_name,
+            sweep_time,
+            sweep_rig,
+            sweep_grid,
+            time_dense,
+            rig_dense,
+            mean_grid,
+            std_grid,
+            png_path,
+            backend=backend_name,
         )
         print(f"  3-panel heatmap: {png_path}")
         return  # fit one backend only
@@ -287,11 +305,14 @@ def main():
         description="KS example using the bayesian_metamodeling framework API"
     )
     parser.add_argument(
-        "--profile", choices=["fast", "regular", "extensive"],
-        default="fast", help="Simulation profile (default: fast)",
+        "--profile",
+        choices=["fast", "regular", "extensive"],
+        default="fast",
+        help="Simulation profile (default: fast)",
     )
     parser.add_argument(
-        "--with-surrogate", action="store_true",
+        "--with-surrogate",
+        action="store_true",
         help="Fit a surrogate after sweep (requires PyMC or SBI conda env)",
     )
     args = parser.parse_args()

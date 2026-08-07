@@ -11,11 +11,10 @@ Parameters match the rigidity sweep movies:
 
 GPU enabled for speed. Outputs to ~/Downloads/ks_rigidity_convergence/.
 """
+
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -37,12 +36,12 @@ SIGMA_R = 2.0
 PMHC_RADIUS = 21
 MOL_REPULSION_EPS = 2.0
 MOL_REPULSION_RCUT = 10.0
-TIME_SEC = 0.1          # short runs — convergence check only
+TIME_SEC = 0.1  # short runs — convergence check only
 SEED = 42
-N_FRAMES = 100          # target output frames per run
+N_FRAMES = 100  # target output frames per run
 
 # Binding criterion
-BIND_THRESHOLD = 3.0    # nm
+BIND_THRESHOLD = 3.0  # nm
 
 # Rigidity values to test
 RIGIDITY_VALUES = [50.0, 75.0, 100.0]
@@ -59,28 +58,46 @@ def run_sim(tmp_dir: Path, dt: float, rigidity: float) -> Path | None:
 
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(SEED),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(N_TCR),
-        "--n_cd45", str(N_CD45),
-        "--n_pmhc", str(N_PMHC),
-        "--pmhc_radius", str(PMHC_RADIUS),
-        "--binding_mode", "gaussian",
-        "--patch_size", str(PATCH_SIZE),
-        "--sigma_r", str(SIGMA_R),
-        "--dt", str(dt),
-        "--mol_repulsion_eps", str(MOL_REPULSION_EPS),
-        "--mol_repulsion_rcut", str(MOL_REPULSION_RCUT),
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(SEED),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(N_TCR),
+        "--n_cd45",
+        str(N_CD45),
+        "--n_pmhc",
+        str(N_PMHC),
+        "--pmhc_radius",
+        str(PMHC_RADIUS),
+        "--binding_mode",
+        "gaussian",
+        "--patch_size",
+        str(PATCH_SIZE),
+        "--sigma_r",
+        str(SIGMA_R),
+        "--dt",
+        str(dt),
+        "--mol_repulsion_eps",
+        str(MOL_REPULSION_EPS),
+        "--mol_repulsion_rcut",
+        str(MOL_REPULSION_RCUT),
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(dump_interval),
+        "--dump-interval",
+        str(dump_interval),
     ]
 
     step_nm = (2.0 * 1e4 * dt) ** 0.5
-    print(f"  dt={dt*1000:.4f} ms  step={step_nm:.3f} nm  "
-          f"n_steps={n_steps}  dump_every={dump_interval}")
+    print(
+        f"  dt={dt * 1000:.4f} ms  step={step_nm:.3f} nm  "
+        f"n_steps={n_steps}  dump_every={dump_interval}"
+    )
 
     t0 = time.perf_counter()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
@@ -166,8 +183,13 @@ def make_plot(results: dict):
         dt_ms = [d * 1000 for d in dts]
         color = colors.get(rigidity, "tab:gray")
         ax.errorbar(
-            dt_ms, eq_fracs, yerr=eq_stds,
-            fmt="o-", markersize=7, capsize=4, linewidth=2,
+            dt_ms,
+            eq_fracs,
+            yerr=eq_stds,
+            fmt="o-",
+            markersize=7,
+            capsize=4,
+            linewidth=2,
             color=color,
             label=f"κ = {rigidity:.0f} kT",
         )
@@ -197,14 +219,16 @@ def main():
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     total_runs = len(RIGIDITY_VALUES) * len(DT_VALUES)
-    print(f"Rigidity convergence test")
+    print("Rigidity convergence test")
     print(f"  Patch: {PATCH_SIZE} nm, grid {GRID_SIZE}×{GRID_SIZE}")
     print(f"  Molecules: {N_TCR} TCR, {N_PMHC} pMHC, {N_CD45} CD45")
     print(f"  sigma_r={SIGMA_R} nm, bind threshold={BIND_THRESHOLD} nm")
     print(f"  Time: {TIME_SEC}s per run")
     print(f"  Rigidities: {RIGIDITY_VALUES} kT")
-    print(f"  dt values: {len(DT_VALUES)} log-spaced from "
-          f"{DT_VALUES[0]*1000:.4f} to {DT_VALUES[-1]*1000:.4f} ms")
+    print(
+        f"  dt values: {len(DT_VALUES)} log-spaced from "
+        f"{DT_VALUES[0] * 1000:.4f} to {DT_VALUES[-1] * 1000:.4f} ms"
+    )
     print(f"  Total runs: {total_runs}\n")
 
     # results[rigidity][dt] = fractions array
@@ -216,22 +240,20 @@ def main():
 
         for rigidity in RIGIDITY_VALUES:
             results[rigidity] = {}
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Rigidity = {rigidity:.0f} kT")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             for dt in DT_VALUES:
                 run_num += 1
-                print(f"\n[{run_num}/{total_runs}] rig={rigidity:.0f} kT, dt={dt*1000:.4f} ms")
+                print(f"\n[{run_num}/{total_runs}] rig={rigidity:.0f} kT, dt={dt * 1000:.4f} ms")
 
                 run_dir = run_sim(tmp_path, dt, rigidity)
                 if run_dir is None:
                     continue
 
                 pmhc_pos, tcr_frames = parse_frames(run_dir)
-                fracs = compute_bound_fraction(
-                    pmhc_pos, tcr_frames, BIND_THRESHOLD, PATCH_SIZE
-                )
+                fracs = compute_bound_fraction(pmhc_pos, tcr_frames, BIND_THRESHOLD, PATCH_SIZE)
                 results[rigidity][dt] = fracs
 
                 half_idx = len(fracs) // 2
@@ -244,11 +266,12 @@ def main():
         make_plot(results)
 
         # Print summary table
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("Summary")
-        print(f"{'='*60}")
-        print(f"{'rigidity':>10}  {'dt (ms)':>10}  {'step (nm)':>10}  "
-              f"{'eq. bound':>10}  {'std':>8}")
+        print(f"{'=' * 60}")
+        print(
+            f"{'rigidity':>10}  {'dt (ms)':>10}  {'step (nm)':>10}  {'eq. bound':>10}  {'std':>8}"
+        )
         print("-" * 56)
         for rigidity in sorted(results.keys()):
             for dt in sorted(results[rigidity].keys()):
@@ -257,8 +280,10 @@ def main():
                 step = (2.0 * 1e4 * dt) ** 0.5
                 eq_mean = np.mean(fracs[half_idx:])
                 eq_std = np.std(fracs[half_idx:])
-                print(f"{rigidity:>10.0f}  {dt*1000:>10.4f}  {step:>10.3f}  "
-                      f"{eq_mean:>10.3f}  {eq_std:>8.3f}")
+                print(
+                    f"{rigidity:>10.0f}  {dt * 1000:>10.4f}  {step:>10.3f}  "
+                    f"{eq_mean:>10.3f}  {eq_std:>8.3f}"
+                )
     else:
         print("No successful runs!")
 

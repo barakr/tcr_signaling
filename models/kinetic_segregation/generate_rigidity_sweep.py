@@ -7,6 +7,7 @@ GPU only.  Movies saved to ~/Downloads/ks_adjust_gaussian/.
 
 Uses --patch_size 250 and --sigma_r 2.0 (runtime params, no rebuild needed).
 """
+
 from __future__ import annotations
 
 import os
@@ -28,13 +29,13 @@ _RENDER_ENV = {
 
 # Fixed parameters
 GRID_SIZE = 50
-TIME_SEC = 10       # 10s simulation
+TIME_SEC = 10  # 10s simulation
 N_TCR = 30
 N_CD45 = 30
 SEED = 42
 
 # Step size: dt=1e-5 → step_mol = sqrt(2*10000*1e-5) ≈ 0.45 nm
-DT = 1e-5           # fine step for accurate binding dynamics
+DT = 1e-5  # fine step for accurate binding dynamics
 N_STEPS_TOTAL = int(TIME_SEC / DT)  # 400,000
 DUMP_INTERVAL = N_STEPS_TOTAL // 200  # ~200 frames → ~13s movie at 15fps
 
@@ -59,23 +60,39 @@ def run_sim(run_dir: Path, rigidity: float) -> float:
     """Run GPU simulation with gaussian binding + repulsion. Return wall time."""
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(SEED),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(N_TCR),
-        "--n_cd45", str(N_CD45),
-        "--n_pmhc", str(N_TCR),  # n_pmhc matches n_tcr
-        "--pmhc_radius", str(PMHC_RADIUS),
-        "--binding_mode", "gaussian",
-        "--dt", str(DT),
-        "--mol_repulsion_eps", str(MOL_REPULSION_EPS),
-        "--mol_repulsion_rcut", str(MOL_REPULSION_RCUT),
-        "--patch_size", str(PATCH_SIZE),
-        "--sigma_r", str(SIGMA_R),
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(SEED),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(N_TCR),
+        "--n_cd45",
+        str(N_CD45),
+        "--n_pmhc",
+        str(N_TCR),  # n_pmhc matches n_tcr
+        "--pmhc_radius",
+        str(PMHC_RADIUS),
+        "--binding_mode",
+        "gaussian",
+        "--dt",
+        str(DT),
+        "--mol_repulsion_eps",
+        str(MOL_REPULSION_EPS),
+        "--mol_repulsion_rcut",
+        str(MOL_REPULSION_RCUT),
+        "--patch_size",
+        str(PATCH_SIZE),
+        "--sigma_r",
+        str(SIGMA_R),
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(DUMP_INTERVAL),
+        "--dump-interval",
+        str(DUMP_INTERVAL),
     ]
 
     t0 = time.perf_counter()
@@ -96,16 +113,20 @@ def run_sim(run_dir: Path, rigidity: float) -> float:
 def render_movie(frames_dir: Path, output: Path, rigidity: float):
     """Render movie from frames with pMHC markers shown."""
     cmd = [
-        str(_RENDER_PYTHON), str(_RENDER),
+        str(_RENDER_PYTHON),
+        str(_RENDER),
         str(frames_dir),
-        "-o", str(output),
-        "--fps", "15",
-        "--dpi", "120",
-        "--rigidity", str(rigidity),
+        "-o",
+        str(output),
+        "--fps",
+        "15",
+        "--dpi",
+        "120",
+        "--rigidity",
+        str(rigidity),
         "--show-pmhc",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
-                            env=_RENDER_ENV)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=_RENDER_ENV)
     if result.returncode != 0:
         print(f"  Render failed: {result.stderr[:500]}", file=sys.stderr)
         return False
@@ -121,8 +142,10 @@ def main():
 
         for i, rigidity in enumerate(RIGIDITY_VALUES, 1):
             tag = f"rig{rigidity:.0f}"
-            print(f"\n[{i}/{total}] rigidity={rigidity} kT/nm² "
-                  f"(grid={GRID_SIZE}, n_tcr={N_TCR}, n_cd45={N_CD45}, {TIME_SEC}s)")
+            print(
+                f"\n[{i}/{total}] rigidity={rigidity} kT/nm² "
+                f"(grid={GRID_SIZE}, n_tcr={N_TCR}, n_cd45={N_CD45}, {TIME_SEC}s)"
+            )
 
             # Run simulation
             sim_dir = tmp_path / tag

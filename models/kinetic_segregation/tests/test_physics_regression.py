@@ -5,6 +5,7 @@ C binary (CPU mode) and validate that core physics behavior is preserved:
 depletion, segregation, determinism, acceptance rates, pMHC modes, binding
 modes, step modes, and molecule conservation.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,8 +24,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -143,8 +147,11 @@ class TestPmhcModes:
 
     def test_inner_circle_produces_segregation(self, tmp_path):
         data = _run(
-            tmp_path, label="pmhc_ic",
-            n_pmhc=50, pmhc_mode="inner_circle", pmhc_seed=1,
+            tmp_path,
+            label="pmhc_ic",
+            n_pmhc=50,
+            pmhc_mode="inner_circle",
+            pmhc_seed=1,
             n_steps=100,
         )
         assert data["depletion_width_nm"] > 0
@@ -152,8 +159,11 @@ class TestPmhcModes:
     def test_uniform_runs_successfully(self, tmp_path):
         """Uniform pMHC mode runs without error; segregation not guaranteed."""
         data = _run(
-            tmp_path, label="pmhc_uni",
-            n_pmhc=50, pmhc_mode="uniform", pmhc_seed=1,
+            tmp_path,
+            label="pmhc_uni",
+            n_pmhc=50,
+            pmhc_mode="uniform",
+            pmhc_seed=1,
             n_steps=100,
         )
         assert data["depletion_width_nm"] >= 0
@@ -204,12 +214,14 @@ class TestStepModes:
         d_paper = _run(tmp_path, label="pmode", step_mode="paper", n_steps=20)
         d_brown = _run(tmp_path, label="bmode", step_mode="brownian", n_steps=20)
         # Same physics → same auto-calibrated dt
-        assert (d_paper["diagnostics"]["dt_seconds"]
-                == pytest.approx(d_brown["diagnostics"]["dt_seconds"]))
+        assert d_paper["diagnostics"]["dt_seconds"] == pytest.approx(
+            d_brown["diagnostics"]["dt_seconds"]
+        )
         # But different step_size_h: paper=1.0 nm fixed, brownian=derived
         assert d_paper["diagnostics"]["step_size_h_nm"] == pytest.approx(1.0)
         assert d_paper["diagnostics"]["step_size_h_nm"] != pytest.approx(
-            d_brown["diagnostics"]["step_size_h_nm"], abs=0.01)
+            d_brown["diagnostics"]["step_size_h_nm"], abs=0.01
+        )
 
     def test_dt_factor(self, tmp_path):
         """--dt_factor scales auto-calibrated dt."""
@@ -238,8 +250,10 @@ class TestMolRepulsion:
 
     def test_with_repulsion(self, tmp_path):
         data = _run(
-            tmp_path, label="rep",
-            mol_repulsion_eps=2.0, mol_repulsion_rcut=50.0,
+            tmp_path,
+            label="rep",
+            mol_repulsion_eps=2.0,
+            mol_repulsion_rcut=50.0,
             n_steps=50,
         )
         assert data["depletion_width_nm"] >= 0
@@ -278,12 +292,30 @@ class TestBoundaryConditions:
         n_tcr, n_cd45 = 125, 500
         rd = tmp_path / "bounds"
         cmd = [
-            str(_BINARY), "--run-dir", str(rd), "--no-gpu",
-            "--time_sec", "10", "--rigidity_kT", "20",
-            "--seed", "42", "--n_steps", "50", "--grid_size", "32",
-            "--n_tcr", str(n_tcr), "--n_cd45", str(n_cd45),
-            "--binding_mode", "forced", "--step_mode", "paper",
-            "--n_pmhc", "-1",
+            str(_BINARY),
+            "--run-dir",
+            str(rd),
+            "--no-gpu",
+            "--time_sec",
+            "10",
+            "--rigidity_kT",
+            "20",
+            "--seed",
+            "42",
+            "--n_steps",
+            "50",
+            "--grid_size",
+            "32",
+            "--n_tcr",
+            str(n_tcr),
+            "--n_cd45",
+            str(n_cd45),
+            "--binding_mode",
+            "forced",
+            "--step_mode",
+            "paper",
+            "--n_pmhc",
+            "-1",
             "--dump-frames",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -326,8 +358,13 @@ class TestStatisticalBasicPhysics:
         """Depletion width should be positive and stable across seeds."""
         widths = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_dw_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID)
+            data = _run(
+                tmp_path,
+                label=f"stat_dw_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+            )
             widths.append(data["depletion_width_nm"])
         widths = np.array(widths)
         assert np.all(widths > 0), f"Non-positive depletion widths: {widths}"
@@ -339,8 +376,13 @@ class TestStatisticalBasicPhysics:
         """Accept rate should stay in [0.5, 0.95] across seeds."""
         rates = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_ar_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID)
+            data = _run(
+                tmp_path,
+                label=f"stat_ar_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+            )
             rates.append(data["diagnostics"]["accept_rate"])
         rates = np.array(rates)
         assert np.all(rates > 0.3), f"Accept rate too low: {rates}"
@@ -351,9 +393,14 @@ class TestStatisticalBasicPhysics:
     def test_segregation_consistent(self, tmp_path):
         """TCR should be closer to center than CD45 across all seeds."""
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_seg_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        rigidity_kT=30.0)
+            data = _run(
+                tmp_path,
+                label=f"stat_seg_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                rigidity_kT=30.0,
+            )
             diag = data["diagnostics"]
             assert diag["final_tcr_mean_r_nm"] < diag["final_cd45_mean_r_nm"], (
                 f"seed={seed}: TCR ({diag['final_tcr_mean_r_nm']:.1f}) "
@@ -374,21 +421,35 @@ class TestStatisticalPmhcModes:
         """Inner-circle pMHC should produce positive depletion across seeds."""
         widths = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_pmhc_ic_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        n_pmhc=50, pmhc_mode="inner_circle", pmhc_seed=seed)
+            data = _run(
+                tmp_path,
+                label=f"stat_pmhc_ic_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                n_pmhc=50,
+                pmhc_mode="inner_circle",
+                pmhc_seed=seed,
+            )
             widths.append(data["depletion_width_nm"])
         widths = np.array(widths)
         assert np.all(widths >= 0), f"Negative depletion with pMHC: {widths}"
-        assert np.mean(widths) > 0, f"No segregation with inner_circle pMHC"
+        assert np.mean(widths) > 0, "No segregation with inner_circle pMHC"
 
     def test_uniform_pmhc_runs_consistently(self, tmp_path):
         """Uniform pMHC should run without error across seeds."""
         rates = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_pmhc_uni_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        n_pmhc=50, pmhc_mode="uniform", pmhc_seed=seed)
+            data = _run(
+                tmp_path,
+                label=f"stat_pmhc_uni_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                n_pmhc=50,
+                pmhc_mode="uniform",
+                pmhc_seed=seed,
+            )
             rates.append(data["diagnostics"]["accept_rate"])
         rates = np.array(rates)
         assert np.all(rates > 0.3), f"Accept rate too low with uniform pMHC: {rates}"
@@ -407,9 +468,14 @@ class TestStatisticalBindingModes:
         """Forced binding should produce stable accept rates across seeds."""
         rates = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_forced_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        binding_mode="forced")
+            data = _run(
+                tmp_path,
+                label=f"stat_forced_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                binding_mode="forced",
+            )
             rates.append(data["diagnostics"]["accept_rate"])
         rates = np.array(rates)
         assert np.all(rates > 0.3), f"Forced binding accept rate too low: {rates}"
@@ -419,9 +485,14 @@ class TestStatisticalBindingModes:
         """Gaussian binding should produce stable depletion across seeds."""
         widths = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_gauss_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        binding_mode="gaussian")
+            data = _run(
+                tmp_path,
+                label=f"stat_gauss_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                binding_mode="gaussian",
+            )
             widths.append(data["depletion_width_nm"])
         widths = np.array(widths)
         assert np.all(widths >= 0), f"Negative depletion with gaussian: {widths}"
@@ -441,9 +512,14 @@ class TestStatisticalStepModes:
         widths = []
         rates = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_paper_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        step_mode="paper")
+            data = _run(
+                tmp_path,
+                label=f"stat_paper_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                step_mode="paper",
+            )
             widths.append(data["depletion_width_nm"])
             rates.append(data["diagnostics"]["accept_rate"])
         widths = np.array(widths)
@@ -457,9 +533,14 @@ class TestStatisticalStepModes:
         widths = []
         rates = []
         for seed in range(N_STAT_SEEDS):
-            data = _run(tmp_path, label=f"stat_brown_{seed}", seed=seed,
-                        n_steps=STAT_N_STEPS, grid_size=STAT_GRID,
-                        step_mode="brownian")
+            data = _run(
+                tmp_path,
+                label=f"stat_brown_{seed}",
+                seed=seed,
+                n_steps=STAT_N_STEPS,
+                grid_size=STAT_GRID,
+                step_mode="brownian",
+            )
             widths.append(data["depletion_width_nm"])
             rates.append(data["diagnostics"]["accept_rate"])
         widths = np.array(widths)

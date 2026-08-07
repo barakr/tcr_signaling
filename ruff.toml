@@ -1,0 +1,11 @@
+# Lint config for this repo standing alone. Previously there was none, so ruff
+# walked up and picked the parent framework's pyproject.toml — which only works
+# when this is checked out as a submodule, and the parent now excludes
+# `projects/` anyway. Settings mirror the framework's so the two stay legible
+# to the same eyes.
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*.ipynb", "*.md", "Methods"]
+
+[lint]
+select = ["E", "F", "I"]

@@ -3,6 +3,7 @@
 Times GPU vs CPU for each run and produces a summary table.
 Movies saved to ~/Downloads/ks_y/.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,10 @@ _BINARY = _PKG_DIR / "ks_gpu"
 _RENDER = _PKG_DIR / "render_movie.py"
 _OUTPUT_DIR = Path.home() / "Downloads" / "ks_y"
 # Ensure the running Python's bin dir is on PATH so ffmpeg is found.
-_RENDER_ENV = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")}
+_RENDER_ENV = {
+    **os.environ,
+    "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+}
 
 # 10 log-spaced rigidity values from 1 to 100 kT/nm².
 RIGIDITIES = np.logspace(0, 2, 10)
@@ -29,14 +33,30 @@ RIGIDITIES = np.logspace(0, 2, 10)
 CONFIGS = {
     "gauss": [],
     "forced": [
-        "--binding_mode", "forced", "--n_pmhc", "125", "--pmhc_radius", "333",
+        "--binding_mode",
+        "forced",
+        "--n_pmhc",
+        "125",
+        "--pmhc_radius",
+        "333",
     ],
     "gauss_repul": [
-        "--mol_repulsion_eps", "2.0", "--mol_repulsion_rcut", "50.0",
+        "--mol_repulsion_eps",
+        "2.0",
+        "--mol_repulsion_rcut",
+        "50.0",
     ],
     "forced_repul": [
-        "--mol_repulsion_eps", "2.0", "--mol_repulsion_rcut", "50.0",
-        "--binding_mode", "forced", "--n_pmhc", "125", "--pmhc_radius", "333",
+        "--mol_repulsion_eps",
+        "2.0",
+        "--mol_repulsion_rcut",
+        "50.0",
+        "--binding_mode",
+        "forced",
+        "--n_pmhc",
+        "125",
+        "--pmhc_radius",
+        "333",
     ],
 }
 
@@ -53,16 +73,25 @@ def run_sim(run_dir: Path, rigidity: float, config_name: str, use_gpu: bool) -> 
     """Run simulation and return wall-clock time in seconds."""
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(SEED),
-        "--n_steps", str(N_STEPS),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(N_TCR),
-        "--n_cd45", str(N_CD45),
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(SEED),
+        "--n_steps",
+        str(N_STEPS),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(N_TCR),
+        "--n_cd45",
+        str(N_CD45),
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(DUMP_INTERVAL),
+        "--dump-interval",
+        str(DUMP_INTERVAL),
     ] + CONFIGS[config_name]
     if not use_gpu:
         cmd.append("--no-gpu")
@@ -79,12 +108,17 @@ def run_sim(run_dir: Path, rigidity: float, config_name: str, use_gpu: bool) -> 
 def render_movie(frames_dir: Path, output: Path, rigidity: float):
     """Render movie from frames."""
     cmd = [
-        sys.executable, str(_RENDER),
+        sys.executable,
+        str(_RENDER),
         str(frames_dir),
-        "-o", str(output),
-        "--fps", "15",
-        "--dpi", "120",
-        "--rigidity", str(rigidity),
+        "-o",
+        str(output),
+        "--fps",
+        "15",
+        "--dpi",
+        "120",
+        "--rigidity",
+        str(rigidity),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=_RENDER_ENV)
     if result.returncode != 0:
@@ -122,13 +156,15 @@ def main():
                 speedup = t_cpu / t_gpu if t_gpu > 0 else 0
                 print(f"  Speedup: {speedup:.1f}x")
 
-                results.append({
-                    "config": cfg_name,
-                    "rigidity": round(rig, 1),
-                    "gpu_sec": round(t_gpu, 2),
-                    "cpu_sec": round(t_cpu, 2),
-                    "speedup": round(speedup, 1),
-                })
+                results.append(
+                    {
+                        "config": cfg_name,
+                        "rigidity": round(rig, 1),
+                        "gpu_sec": round(t_gpu, 2),
+                        "cpu_sec": round(t_cpu, 2),
+                        "speedup": round(speedup, 1),
+                    }
+                )
 
                 # --- Render movie from GPU run ---
                 frames_dir = gpu_dir / "frames"
@@ -139,9 +175,9 @@ def main():
                     if ok:
                         print(f"  Movie: {movie_path.name}")
                     else:
-                        print(f"  Movie: FAILED")
+                        print("  Movie: FAILED")
                 else:
-                    print(f"  No frames directory found")
+                    print("  No frames directory found")
 
     # --- Summary table ---
     print("\n\n" + "=" * 85)
@@ -150,9 +186,11 @@ def main():
     print(f"{'Config':<14} {'Rigidity':>8} {'CPU (s)':>9} {'GPU (s)':>9} {'Speedup':>8}")
     print("-" * 85)
     for r in results:
-        sp = f"{r['speedup']:.1f}x" if r['speedup'] > 0 else "N/A"
-        print(f"{r['config']:<14} {r['rigidity']:>8.1f} {r['cpu_sec']:>9.2f} "
-              f"{r['gpu_sec']:>9.2f} {sp:>8}")
+        sp = f"{r['speedup']:.1f}x" if r["speedup"] > 0 else "N/A"
+        print(
+            f"{r['config']:<14} {r['rigidity']:>8.1f} {r['cpu_sec']:>9.2f} "
+            f"{r['gpu_sec']:>9.2f} {sp:>8}"
+        )
 
     # Per-config averages.
     print("-" * 85)
@@ -161,8 +199,7 @@ def main():
         avg_cpu = np.mean([r["cpu_sec"] for r in rows])
         avg_gpu = np.mean([r["gpu_sec"] for r in rows])
         avg_sp = avg_cpu / avg_gpu if avg_gpu > 0 else 0
-        print(f"{cfg + ' (avg)':<14} {'':>8} {avg_cpu:>9.2f} {avg_gpu:>9.2f} "
-              f"{avg_sp:>7.1f}x")
+        print(f"{cfg + ' (avg)':<14} {'':>8} {avg_cpu:>9.2f} {avg_gpu:>9.2f} {avg_sp:>7.1f}x")
 
     # Save JSON.
     out_json = _OUTPUT_DIR / "timing_results.json"

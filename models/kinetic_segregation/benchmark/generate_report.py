@@ -1,10 +1,12 @@
 """Generate benchmark comparison plots."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -83,14 +85,16 @@ def main():
         gpu_su = r["python_sec"] / r["c_gpu_sec"] if r["c_gpu_sec"] else "N/A"
         if isinstance(gpu_su, float):
             gpu_su = f"{gpu_su:.1f}x"
-        table_data.append([
-            str(r["grid_size"]),
-            f"{r['python_sec']:.2f}s",
-            f"{r['c_cpu_sec']:.2f}s",
-            f"{r['c_gpu_sec']:.2f}s" if r["c_gpu_sec"] else "N/A",
-            f"{cpu_su:.1f}x",
-            gpu_su,
-        ])
+        table_data.append(
+            [
+                str(r["grid_size"]),
+                f"{r['python_sec']:.2f}s",
+                f"{r['c_cpu_sec']:.2f}s",
+                f"{r['c_gpu_sec']:.2f}s" if r["c_gpu_sec"] else "N/A",
+                f"{cpu_su:.1f}x",
+                gpu_su,
+            ]
+        )
     table = ax.table(
         cellText=table_data,
         colLabels=["Grid", "Python", "C(CPU)", "C(GPU)", "CPU speedup", "GPU speedup"],

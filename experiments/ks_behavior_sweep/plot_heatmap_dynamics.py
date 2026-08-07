@@ -11,16 +11,17 @@ Usage
     conda activate py312_bayesmm_sbi
     python experiments/ks_behavior_sweep/plot_heatmap_dynamics.py
 """
+
 from __future__ import annotations
 
 import csv
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-
 from bayesian_metamodeling.surrogates.backends import load_backend_model
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ K_RANGE = (1.0, 40.0)
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 def load_sim_data():
     """Load simulation results at DT_FIXED, average over seeds.
 
@@ -88,8 +90,7 @@ def load_sim_data():
         for ki, k in enumerate(k_vals):
             for ti, t in enumerate(t_vals):
                 recs = groups.get((k, t), [])
-                vals = [float(r[mkey]) for r in recs
-                        if r.get(mkey, "") != ""]
+                vals = [float(r[mkey]) for r in recs if r.get(mkey, "") != ""]
                 if vals:
                     grid[ki, ti] = np.mean(vals)
         grids[mkey] = grid
@@ -124,12 +125,13 @@ def _log_edges(centers):
     edges[1:-1] = 0.5 * (log_c[:-1] + log_c[1:])
     edges[0] = log_c[0] - (edges[1] - log_c[0])
     edges[-1] = log_c[-1] + (log_c[-1] - edges[-2])
-    return 10 ** edges
+    return 10**edges
 
 
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
+
 
 def plot_all(sim_grids, surr_grids, t_sim, k_sim, t_dense, k_dense, out_path):
     n_rows = len(METRIC_NAMES)
@@ -154,16 +156,20 @@ def plot_all(sim_grids, surr_grids, t_sim, k_sim, t_dense, k_dense, out_path):
         # --- Left: simulation (sparse) ---
         ax_sim = axes[ri, 0]
         if sim_grid is not None:
-            im = ax_sim.imshow(sim_grid, aspect="auto", origin="lower",
-                               vmin=vmin, vmax=vmax, cmap="viridis",
-                               extent=[t_sim[0], t_sim[-1],
-                                       0, len(k_sim) - 1])
+            im = ax_sim.imshow(
+                sim_grid,
+                aspect="auto",
+                origin="lower",
+                vmin=vmin,
+                vmax=vmax,
+                cmap="viridis",
+                extent=[t_sim[0], t_sim[-1], 0, len(k_sim) - 1],
+            )
             ax_sim.set_yticks(range(len(k_sim)))
             ax_sim.set_yticklabels([f"{k:.1f}" for k in k_sim], fontsize=6)
             fig.colorbar(im, ax=ax_sim, fraction=0.046, pad=0.04)
         else:
-            ax_sim.text(0.5, 0.5, "No data", ha="center", va="center",
-                        transform=ax_sim.transAxes)
+            ax_sim.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax_sim.transAxes)
         if ri == n_rows - 1:
             ax_sim.set_xlabel("time (s)", fontsize=10)
         ax_sim.set_ylabel("K (kT)", fontsize=9)
@@ -179,27 +185,30 @@ def plot_all(sim_grids, surr_grids, t_sim, k_sim, t_dense, k_dense, out_path):
             t_edges[0] = t_dense[0] - (t_edges[1] - t_dense[0])
             t_edges[-1] = t_dense[-1] + (t_dense[-1] - t_edges[-2])
 
-            pcm = ax_surr.pcolormesh(t_edges, k_edges, surr_grid,
-                                     vmin=vmin, vmax=vmax, cmap="viridis",
-                                     shading="flat")
+            pcm = ax_surr.pcolormesh(
+                t_edges, k_edges, surr_grid, vmin=vmin, vmax=vmax, cmap="viridis", shading="flat"
+            )
             ax_surr.set_yscale("log")
             # Overlay training points
             tt, kk = np.meshgrid(t_sim[::10], k_sim, indexing="ij")
-            ax_surr.scatter(tt.ravel(), kk.ravel(), c="white", s=6,
-                            edgecolors="black", linewidths=0.3, zorder=5)
+            ax_surr.scatter(
+                tt.ravel(), kk.ravel(), c="white", s=6, edgecolors="black", linewidths=0.3, zorder=5
+            )
             fig.colorbar(pcm, ax=ax_surr, fraction=0.046, pad=0.04)
         else:
-            ax_surr.text(0.5, 0.5, "No model", ha="center", va="center",
-                         transform=ax_surr.transAxes)
+            ax_surr.text(
+                0.5, 0.5, "No model", ha="center", va="center", transform=ax_surr.transAxes
+            )
         if ri == n_rows - 1:
             ax_surr.set_xlabel("time (s)", fontsize=10)
         ax_surr.set_ylabel("K (kT)", fontsize=9)
-        ax_surr.set_title(f"{mname}\nSurrogate ({N_T_DENSE}×{N_K_DENSE} dense)",
-                          fontsize=9)
+        ax_surr.set_title(f"{mname}\nSurrogate ({N_T_DENSE}×{N_K_DENSE} dense)", fontsize=9)
 
-    fig.suptitle(f"KS Metric Dynamics (dt = {DT_FIXED*1e6:.2f} µs): "
-                 f"Simulation vs Surrogate",
-                 fontsize=13, y=1.005)
+    fig.suptitle(
+        f"KS Metric Dynamics (dt = {DT_FIXED * 1e6:.2f} µs): Simulation vs Surrogate",
+        fontsize=13,
+        y=1.005,
+    )
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close()
@@ -210,8 +219,9 @@ def plot_all(sim_grids, surr_grids, t_sim, k_sim, t_dense, k_dense, out_path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
-    print(f"Loading simulation data (dt={DT_FIXED*1e6:.2f} µs) from {RESULTS_CSV}")
+    print(f"Loading simulation data (dt={DT_FIXED * 1e6:.2f} µs) from {RESULTS_CSV}")
     t_sim, k_sim, sim_grids = load_sim_data()
     print(f"  Sim grid: {len(k_sim)} K × {len(t_sim)} t")
 
@@ -220,9 +230,9 @@ def main():
     for mkey, mname in METRIC_NAMES:
         path = SURROGATE_DIR / f"surrogate_{mkey}.json"
         if path.exists():
-            models[mkey] = load_backend_model(BACKEND, path,
-                                              expected_inputs=INPUT_NAMES,
-                                              expected_output=mkey)
+            models[mkey] = load_backend_model(
+                BACKEND, path, expected_inputs=INPUT_NAMES, expected_output=mkey
+            )
             print(f"  Loaded surrogate: {mname}")
         else:
             print(f"  Missing surrogate: {mname} ({path})")
@@ -230,8 +240,10 @@ def main():
     # Dense grid
     t_dense = np.linspace(*T_RANGE, N_T_DENSE)
     k_dense = np.geomspace(*K_RANGE, N_K_DENSE)
-    print(f"Dense grid: {N_T_DENSE} t × {N_K_DENSE} K "
-          f"(t: {T_RANGE[0]}-{T_RANGE[1]}s, K: {K_RANGE[0]}-{K_RANGE[1]} kT)")
+    print(
+        f"Dense grid: {N_T_DENSE} t × {N_K_DENSE} K "
+        f"(t: {T_RANGE[0]}-{T_RANGE[1]}s, K: {K_RANGE[0]}-{K_RANGE[1]} kT)"
+    )
 
     print("Generating dense surrogate predictions (8 metrics)...")
     surr_grids = predict_dense(models, t_dense, k_dense)

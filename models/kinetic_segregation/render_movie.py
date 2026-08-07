@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 """Render a movie from KS simulation frame dumps (2-panel: molecules + height)."""
+
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
-import matplotlib
-import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.patches import Annulus
+import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Annulus
 
 # ── Physical constants (fallbacks when not in meta.json) ─────────────
 PATCH_SIZE_NM = 2000.0
 INIT_HEIGHT_NM = 70.0
 
 # ── Paul Tol bright palette (colorblind-safe) ────────────────────────
-COLOR_TCR = "#EE6677"       # rose — warm, prominent
-COLOR_CD45 = "#4477AA"      # blue — cool, easily separated from rose
-COLOR_PMHC = "#228833"      # green — distinct from rose TCR and blue CD45
+COLOR_TCR = "#EE6677"  # rose — warm, prominent
+COLOR_CD45 = "#4477AA"  # blue — cool, easily separated from rose
+COLOR_PMHC = "#228833"  # green — distinct from rose TCR and blue CD45
 COLOR_DEPLETION = "#CCBB44"  # muted gold — annotation (partial separation)
 COLOR_DEPL_GOOD = "#228833"  # green — well separated (overlap < 0.1)
 COLOR_DEPL_POOR = "#CC3311"  # red — poor separation / overlap (overlap >= 0.4)
@@ -87,7 +86,7 @@ def _compute_depletion_metrics(tcr_pos, cd45_pos, patch_size):
         hi = len(nn_arr) - 1 - len(nn_arr) // 10
         if lo > hi:
             lo, hi = 0, len(nn_arr) - 1
-        frontier_nn = float(np.median(np.sort(nn_arr)[lo:hi + 1]))
+        frontier_nn = float(np.median(np.sort(nn_arr)[lo : hi + 1]))
 
     return {
         "median_diff_nm": median_diff,
@@ -99,8 +98,7 @@ def _compute_depletion_metrics(tcr_pos, cd45_pos, patch_size):
     }
 
 
-def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size,
-                           bind_threshold=3.0):
+def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size, bind_threshold=3.0):
     """Compute P10 cross-NN distances for bound TCRs.
 
     Returns (bound_mask, tcr_cd45_p10_nm, cd45_tcr_p10_nm).
@@ -118,10 +116,8 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size,
         for t in range(n_tcr):
             dx = tcr_pos[t, 0] - pmhc_pos[:, 0]
             dy = tcr_pos[t, 1] - pmhc_pos[:, 1]
-            dx = np.where(dx > half, dx - patch_size,
-                          np.where(dx < -half, dx + patch_size, dx))
-            dy = np.where(dy > half, dy - patch_size,
-                          np.where(dy < -half, dy + patch_size, dy))
+            dx = np.where(dx > half, dx - patch_size, np.where(dx < -half, dx + patch_size, dx))
+            dy = np.where(dy > half, dy - patch_size, np.where(dy < -half, dy + patch_size, dy))
             if np.any(dx * dx + dy * dy < thr2):
                 bound_mask[t] = True
 
@@ -136,10 +132,8 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size,
     for i in range(n_bound):
         dx = bound_tcr[i, 0] - cd45_pos[:, 0]
         dy = bound_tcr[i, 1] - cd45_pos[:, 1]
-        dx = np.where(dx > half, dx - patch_size,
-                      np.where(dx < -half, dx + patch_size, dx))
-        dy = np.where(dy > half, dy - patch_size,
-                      np.where(dy < -half, dy + patch_size, dy))
+        dx = np.where(dx > half, dx - patch_size, np.where(dx < -half, dx + patch_size, dx))
+        dy = np.where(dy > half, dy - patch_size, np.where(dy < -half, dy + patch_size, dy))
         nn_tcr_cd45[i] = np.min(np.sqrt(dx * dx + dy * dy))
     nn_tcr_cd45.sort()
     tcr_cd45_p10 = float(nn_tcr_cd45[n_bound // 10])
@@ -149,10 +143,8 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size,
     for j in range(n_cd45):
         dx = cd45_pos[j, 0] - bound_tcr[:, 0]
         dy = cd45_pos[j, 1] - bound_tcr[:, 1]
-        dx = np.where(dx > half, dx - patch_size,
-                      np.where(dx < -half, dx + patch_size, dx))
-        dy = np.where(dy > half, dy - patch_size,
-                      np.where(dy < -half, dy + patch_size, dy))
+        dx = np.where(dx > half, dx - patch_size, np.where(dx < -half, dx + patch_size, dx))
+        dy = np.where(dy > half, dy - patch_size, np.where(dy < -half, dy + patch_size, dy))
         nn_cd45_tcr[j] = np.min(np.sqrt(dx * dx + dy * dy))
     nn_cd45_tcr.sort()
     cd45_tcr_p10 = float(nn_cd45_tcr[n_cd45 // 10])
@@ -163,20 +155,40 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size,
 def main():
     parser = argparse.ArgumentParser(description="Render KS simulation movie")
     parser.add_argument("frames_dir", type=str, help="Path to frames directory")
-    parser.add_argument("-o", "--output", type=str, default="ks_movie.mp4",
-                        help="Output file (default: ks_movie.mp4)")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="ks_movie.mp4",
+        help="Output file (default: ks_movie.mp4)",
+    )
     parser.add_argument("--fps", type=int, default=15, help="Frames per second")
     parser.add_argument("--dpi", type=int, default=150, help="Resolution")
     parser.add_argument("--skip", type=int, default=1, help="Frame skip (use every Nth frame)")
-    parser.add_argument("--rigidity", type=float, default=None,
-                        help="Override rigidity label (kT/nm2), otherwise read from meta.json")
-    parser.add_argument("--show-pmhc", action=argparse.BooleanOptionalAction,
-                        default=True, help="Show/hide static pMHC markers (default: show)")
-    parser.add_argument("--show-separation", action=argparse.BooleanOptionalAction,
-                        default=True,
-                        help="Show P10 cross-NN separation circles for bound TCRs (default: show)")
-    parser.add_argument("--bind-threshold", type=float, default=3.0,
-                        help="Distance threshold (nm) for TCR-pMHC binding (default: 3.0)")
+    parser.add_argument(
+        "--rigidity",
+        type=float,
+        default=None,
+        help="Override rigidity label (kT/nm2), otherwise read from meta.json",
+    )
+    parser.add_argument(
+        "--show-pmhc",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show/hide static pMHC markers (default: show)",
+    )
+    parser.add_argument(
+        "--show-separation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show P10 cross-NN separation circles for bound TCRs (default: show)",
+    )
+    parser.add_argument(
+        "--bind-threshold",
+        type=float,
+        default=3.0,
+        help="Distance threshold (nm) for TCR-pMHC binding (default: 3.0)",
+    )
     args = parser.parse_args()
 
     frames_dir = Path(args.frames_dir)
@@ -190,11 +202,15 @@ def main():
     dt = meta.get("dt", 0.0)
     h_vmax = meta.get("init_height", INIT_HEIGHT_NM)
 
-    rigidity = args.rigidity if args.rigidity is not None else meta.get("rigidity_kT", meta.get("rigidity_kT_nm2"))
+    rigidity = (
+        args.rigidity
+        if args.rigidity is not None
+        else meta.get("rigidity_kT", meta.get("rigidity_kT_nm2"))
+    )
     n_pmhc = meta.get("n_pmhc", 0)
     n_frames = meta.get("n_frames", n_steps)
     all_frames = list(range(0, n_frames + 1))
-    steps = all_frames[::args.skip]
+    steps = all_frames[:: args.skip]
 
     # Load static pMHC positions if present and requested
     pmhc_pos = None
@@ -202,27 +218,31 @@ def main():
     if args.show_pmhc and n_pmhc > 0 and pmhc_path.exists():
         pmhc_pos = np.fromfile(pmhc_path, dtype=np.float64).reshape(n_pmhc, 2)
 
-    print(f"Rendering {len(steps)} frames (grid={grid_size}, n_steps={n_steps}, "
-          f"dump_interval={dump_interval}, skip={args.skip}, n_pmhc={n_pmhc})")
+    print(
+        f"Rendering {len(steps)} frames (grid={grid_size}, n_steps={n_steps}, "
+        f"dump_interval={dump_interval}, skip={args.skip}, n_pmhc={n_pmhc})"
+    )
 
     # Load first frame
     h0, tcr0, cd450 = load_frame(frames_dir, 0, grid_size, n_tcr, n_cd45)
 
     # ── Matplotlib style ─────────────────────────────────────────────
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.size": 11,
-        "axes.linewidth": 0.8,
-        "axes.grid": False,
-        "xtick.direction": "out",
-        "ytick.direction": "out",
-        "xtick.major.width": 0.8,
-        "ytick.major.width": 0.8,
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-        "legend.framealpha": 0.9,
-        "legend.edgecolor": "0.8",
-    })
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.size": 11,
+            "axes.linewidth": 0.8,
+            "axes.grid": False,
+            "xtick.direction": "out",
+            "ytick.direction": "out",
+            "xtick.major.width": 0.8,
+            "ytick.major.width": 0.8,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "legend.framealpha": 0.9,
+            "legend.edgecolor": "0.8",
+        }
+    )
 
     center = patch_nm / 2.0
     extent_um = [0, patch_nm / 1000, 0, patch_nm / 1000]
@@ -231,15 +251,13 @@ def main():
     # Use figsize that produces even pixel counts at the target DPI.
     fig_w, fig_h = _even_figsize(13, 6, args.dpi)
     fig, (ax_mol, ax_h) = plt.subplots(1, 2, figsize=(fig_w, fig_h))
-    fig.set_layout_engine('none')
+    fig.set_layout_engine("none")
 
     # Fixed layout — never use tight_layout (causes per-frame jitter in animations)
     if rigidity is not None:
-        fig.subplots_adjust(left=0.06, right=0.95, bottom=0.10, top=0.88,
-                            wspace=0.28)
+        fig.subplots_adjust(left=0.06, right=0.95, bottom=0.10, top=0.88, wspace=0.28)
     else:
-        fig.subplots_adjust(left=0.06, right=0.95, bottom=0.10, top=0.93,
-                            wspace=0.28)
+        fig.subplots_adjust(left=0.06, right=0.95, bottom=0.10, top=0.93, wspace=0.28)
 
     # ── Left panel: molecules with depletion zone ────────────────────
     ax_mol.set_xlim(0, patch_nm / 1000)
@@ -251,49 +269,80 @@ def main():
     # Draw pMHC first (background), then CD45, then TCR on top
     if pmhc_pos is not None:
         pmhc_um = pmhc_pos / 1000.0
-        ax_mol.scatter(pmhc_um[:, 0], pmhc_um[:, 1], c=COLOR_PMHC, marker="x",
-                       s=30, alpha=0.7, label="pMHC", zorder=1, linewidths=1.0)
+        ax_mol.scatter(
+            pmhc_um[:, 0],
+            pmhc_um[:, 1],
+            c=COLOR_PMHC,
+            marker="x",
+            s=30,
+            alpha=0.7,
+            label="pMHC",
+            zorder=1,
+            linewidths=1.0,
+        )
 
-    cd45_scat = ax_mol.scatter([], [], c=COLOR_CD45, s=12, alpha=0.5,
-                               label="CD45", zorder=2)
-    tcr_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=20, alpha=0.7,
-                              label="TCR", zorder=3)
+    cd45_scat = ax_mol.scatter([], [], c=COLOR_CD45, s=12, alpha=0.5, label="CD45", zorder=2)
+    tcr_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=20, alpha=0.7, label="TCR", zorder=3)
     # Bound TCR highlight (filled, brighter)
-    bound_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=40, alpha=0.9,
-                                edgecolors="white", linewidths=0.8,
-                                zorder=5) if args.show_separation else None
+    bound_scat = (
+        ax_mol.scatter(
+            [], [], c=COLOR_TCR, s=40, alpha=0.9, edgecolors="white", linewidths=0.8, zorder=5
+        )
+        if args.show_separation
+        else None
+    )
     # P10 separation circle (drawn as a single circle at patch center for legend)
     sep_circles = []  # will be re-created each frame
 
     c_um = center / 1000.0
     depl_annulus = Annulus(
-        (c_um, c_um), r=0.001, width=0.001,
-        facecolor=COLOR_DEPLETION, alpha=0.12,
-        edgecolor=COLOR_DEPLETION, linewidth=1.0,
+        (c_um, c_um),
+        r=0.001,
+        width=0.001,
+        facecolor=COLOR_DEPLETION,
+        alpha=0.12,
+        edgecolor=COLOR_DEPLETION,
+        linewidth=1.0,
         zorder=4,
     )
     ax_mol.add_patch(depl_annulus)
     ax_mol.legend(loc="upper right", fontsize=9)
     title_text = ax_mol.set_title("", fontsize=11, pad=8)
-    ax_mol.text(0.02, 0.97, "(a)", transform=ax_mol.transAxes,
-                fontsize=13, fontweight="bold", va="top", ha="left")
+    ax_mol.text(
+        0.02,
+        0.97,
+        "(a)",
+        transform=ax_mol.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        va="top",
+        ha="left",
+    )
 
     # ── Right panel: membrane height ─────────────────────────────────
-    im = ax_h.imshow(h0.T, cmap="viridis", origin="lower", extent=extent_um,
-                     vmin=0, vmax=h_vmax, aspect="equal")
+    im = ax_h.imshow(
+        h0.T, cmap="viridis", origin="lower", extent=extent_um, vmin=0, vmax=h_vmax, aspect="equal"
+    )
     ax_h.set_xlabel("x (\u00b5m)")
     ax_h.set_ylabel("y (\u00b5m)")
     ax_h.set_title("Membrane height (nm)", fontsize=11, pad=8)
     cbar = fig.colorbar(im, ax=ax_h, label="h (nm)", shrink=0.82, pad=0.02)
     cbar.ax.tick_params(labelsize=9)
     cbar.outline.set_linewidth(0.5)
-    ax_h.text(0.02, 0.97, "(b)", transform=ax_h.transAxes,
-              fontsize=13, fontweight="bold", va="top", ha="left")
+    ax_h.text(
+        0.02,
+        0.97,
+        "(b)",
+        transform=ax_h.transAxes,
+        fontsize=13,
+        fontweight="bold",
+        va="top",
+        ha="left",
+    )
 
     # ── Suptitle and progress bar ────────────────────────────────────
     if rigidity is not None:
-        fig.suptitle(f"Membrane rigidity: {rigidity:g} kT/nm\u00b2",
-                     fontsize=13, fontweight="bold")
+        fig.suptitle(f"Membrane rigidity: {rigidity:g} kT/nm\u00b2", fontsize=13, fontweight="bold")
 
     # Thin progress track at the bottom of the figure
     ax_prog = fig.add_axes([0.05, 0.012, 0.9, 0.012])
@@ -301,16 +350,28 @@ def main():
     ax_prog.set_ylim(0, 1)
     ax_prog.axis("off")
     ax_prog.axhline(0.5, color="0.85", linewidth=3, solid_capstyle="round")
-    progress_line, = ax_prog.plot([0], [0.5], color=COLOR_TCR, linewidth=3,
-                                  solid_capstyle="round")
+    (progress_line,) = ax_prog.plot(
+        [0], [0.5], color=COLOR_TCR, linewidth=3, solid_capstyle="round"
+    )
 
     # Separation info text (bottom-left of molecule panel)
-    sep_text = ax_mol.text(0.02, 0.02, "", transform=ax_mol.transAxes,
-                           fontsize=8, va="bottom", ha="left",
-                           color="0.3", fontstyle="italic",
-                           bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7,
-                                     ec="0.8", lw=0.5),
-                           zorder=10) if args.show_separation else None
+    sep_text = (
+        ax_mol.text(
+            0.02,
+            0.02,
+            "",
+            transform=ax_mol.transAxes,
+            fontsize=8,
+            va="bottom",
+            ha="left",
+            color="0.3",
+            fontstyle="italic",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7, ec="0.8", lw=0.5),
+            zorder=10,
+        )
+        if args.show_separation
+        else None
+    )
 
     def update(frame_idx):
         fidx = steps[frame_idx]
@@ -364,7 +425,8 @@ def main():
 
         if args.show_separation and pmhc_pos is not None:
             bound_mask, tcr_cd45_p10, cd45_tcr_p10 = _compute_cross_nn_p10(
-                tcr, cd45, pmhc_pos, patch_nm, args.bind_threshold)
+                tcr, cd45, pmhc_pos, patch_nm, args.bind_threshold
+            )
             n_bound = int(np.sum(bound_mask))
 
             # Highlight bound TCRs
@@ -378,16 +440,23 @@ def main():
                 r_um = tcr_cd45_p10 / 1000.0
                 for bi in np.where(bound_mask)[0]:
                     circ = plt.Circle(
-                        (tcr_um[bi, 0], tcr_um[bi, 1]), r_um,
-                        fill=False, edgecolor=COLOR_CD45, linewidth=0.6,
-                        alpha=0.4, linestyle=":", zorder=4)
+                        (tcr_um[bi, 0], tcr_um[bi, 1]),
+                        r_um,
+                        fill=False,
+                        edgecolor=COLOR_CD45,
+                        linewidth=0.6,
+                        alpha=0.4,
+                        linestyle=":",
+                        zorder=4,
+                    )
                     ax_mol.add_patch(circ)
                     sep_circles.append(circ)
 
                 sep_text.set_text(
                     f"bound: {n_bound}/{n_tcr}  |  "
                     f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  |  "
-                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm")
+                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm"
+                )
             else:
                 sep_text.set_text(f"bound: 0/{n_tcr}")
 
@@ -403,7 +472,8 @@ def main():
             if tcr_cd45_p10 is not None:
                 title_parts.append(
                     f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  "
-                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm")
+                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm"
+                )
             else:
                 title_parts.append("no bound TCR")
         title_text.set_text("   |   ".join(title_parts))
@@ -414,8 +484,9 @@ def main():
 
         return tcr_scat, cd45_scat, im, title_text, progress_line
 
-    ani = animation.FuncAnimation(fig, update, frames=len(steps),
-                                  interval=1000 // args.fps, blit=False)
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(steps), interval=1000 // args.fps, blit=False
+    )
 
     output = args.output
     print(f"Saving to {output} ...")

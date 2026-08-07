@@ -4,6 +4,7 @@ GPU, gaussian binding + repulsion + pMHC, 300s physical time.
 Movies saved to ~/Downloads/ks_depletion_metrics/.
 Also writes a summary JSON with all metrics for each rigidity.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,20 +40,33 @@ PMHC_RADIUS = 333
 def run_sim(run_dir: Path, rigidity: float) -> float:
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(rigidity),
-        "--seed", str(SEED),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(N_TCR),
-        "--n_cd45", str(N_CD45),
-        "--n_pmhc", str(N_PMHC),
-        "--pmhc_radius", str(PMHC_RADIUS),
-        "--binding_mode", "gaussian",
-        "--mol_repulsion_eps", "2.0",
-        "--mol_repulsion_rcut", "50.0",
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(rigidity),
+        "--seed",
+        str(SEED),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(N_TCR),
+        "--n_cd45",
+        str(N_CD45),
+        "--n_pmhc",
+        str(N_PMHC),
+        "--pmhc_radius",
+        str(PMHC_RADIUS),
+        "--binding_mode",
+        "gaussian",
+        "--mol_repulsion_eps",
+        "2.0",
+        "--mol_repulsion_rcut",
+        "50.0",
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(DUMP_INTERVAL),
+        "--dump-interval",
+        str(DUMP_INTERVAL),
     ]
     t0 = time.perf_counter()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
@@ -65,17 +79,20 @@ def run_sim(run_dir: Path, rigidity: float) -> float:
 
 def render_movie(frames_dir: Path, output: Path, rigidity: float):
     cmd = [
-        str(_RENDER_PYTHON), str(_RENDER),
+        str(_RENDER_PYTHON),
+        str(_RENDER),
         str(frames_dir),
-        "-o", str(output),
-        "--fps", "15",
-        "--dpi", "120",
-        "--rigidity", str(rigidity),
+        "-o",
+        str(output),
+        "--fps",
+        "15",
+        "--dpi",
+        "120",
+        "--rigidity",
+        str(rigidity),
         "--show-pmhc",
     ]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=300, env=_RENDER_ENV
-    )
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=_RENDER_ENV)
     if result.returncode != 0:
         print(f"  Render failed: {result.stderr[:300]}", file=sys.stderr)
         return False
@@ -112,11 +129,13 @@ def main():
                     "frontier_nn": diag.get("depletion_frontier_nn_gap_nm"),
                     "cross_nn": diag.get("depletion_cross_nn_median_nm"),
                 }
-                print(f"  Metrics: median_diff={data['depletion_width_nm']:.0f} "
-                      f"pct_gap={diag.get('depletion_percentile_gap_nm', 0):.0f} "
-                      f"overlap={diag.get('depletion_overlap_coeff', 0):.2f} "
-                      f"frontier_nn={diag.get('depletion_frontier_nn_gap_nm', 0):.0f} "
-                      f"cross_nn={diag.get('depletion_cross_nn_median_nm', 0):.0f}")
+                print(
+                    f"  Metrics: median_diff={data['depletion_width_nm']:.0f} "
+                    f"pct_gap={diag.get('depletion_percentile_gap_nm', 0):.0f} "
+                    f"overlap={diag.get('depletion_overlap_coeff', 0):.2f} "
+                    f"frontier_nn={diag.get('depletion_frontier_nn_gap_nm', 0):.0f} "
+                    f"cross_nn={diag.get('depletion_cross_nn_median_nm', 0):.0f}"
+                )
 
             # Render movie.
             frames_dir = sim_dir / "frames"
@@ -132,16 +151,20 @@ def main():
     print(f"Movies saved to {_OUTPUT_DIR}/")
 
     # Print table.
-    print(f"\n{'Rig':>6} {'median':>8} {'pct_gap':>8} {'overlap':>8} "
-          f"{'KS':>6} {'front_nn':>9} {'cross_nn':>9}")
+    print(
+        f"\n{'Rig':>6} {'median':>8} {'pct_gap':>8} {'overlap':>8} "
+        f"{'KS':>6} {'front_nn':>9} {'cross_nn':>9}"
+    )
     print("-" * 60)
     for rig in RIGIDITIES:
         key = f"rigidity_{rig}"
         if key in results:
             r = results[key]
-            print(f"{rig:>6} {r['median_diff']:>8.0f} {r['pct_gap']:>8.0f} "
-                  f"{r['overlap']:>8.2f} {r['ks_stat']:>6.2f} "
-                  f"{r['frontier_nn']:>9.0f} {r['cross_nn']:>9.0f}")
+            print(
+                f"{rig:>6} {r['median_diff']:>8.0f} {r['pct_gap']:>8.0f} "
+                f"{r['overlap']:>8.2f} {r['ks_stat']:>6.2f} "
+                f"{r['frontier_nn']:>9.0f} {r['cross_nn']:>9.0f}"
+            )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Tests for C potential functions via ctypes, validated against analytical formulas."""
+
 from __future__ import annotations
 
 import ctypes
@@ -19,8 +20,11 @@ def _build_testlib():
     if _LIB_PATH.exists():
         return
     result = subprocess.run(
-        ["make", "testlib"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=30,
+        ["make", "testlib"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build test library: {result.stderr}")
@@ -35,7 +39,12 @@ def lib():
 
     # tcr_pmhc_potential(double h, double h0_tcr, double u_assoc, double sigma_bind) -> double
     lib.tcr_pmhc_potential.restype = ctypes.c_double
-    lib.tcr_pmhc_potential.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+    lib.tcr_pmhc_potential.argtypes = [
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+    ]
 
     # cd45_repulsion(double h, double cd45_height, double k_rep) -> double
     lib.cd45_repulsion.restype = ctypes.c_double
@@ -45,18 +54,26 @@ def lib():
     #                      int gi, int gj, double old_val, double new_val) -> double
     lib.bending_energy_delta.restype = ctypes.c_double
     lib.bending_energy_delta.argtypes = [
-        ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-        ctypes.c_double, ctypes.c_double,
-        ctypes.c_int, ctypes.c_int,
-        ctypes.c_double, ctypes.c_double,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_double,
     ]
 
     # mol_repulsion(pos, idx, all_pos, n_mol, eps, r_cut, patch_size) -> double
     lib.mol_repulsion.restype = ctypes.c_double
     lib.mol_repulsion.argtypes = [
-        ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-        ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-        ctypes.c_double, ctypes.c_double, ctypes.c_double,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_int,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
     ]
 
     return lib
@@ -95,7 +112,7 @@ class TestTcrPotentialC:
         """At h=0 with h0_tcr=13, binding should be very weak."""
         h0_tcr = 13.0
         e = lib.tcr_pmhc_potential(0.0, h0_tcr, 20.0, 3.0)
-        expected = -20.0 * math.exp(-h0_tcr ** 2 / (2.0 * 3.0 ** 2))
+        expected = -20.0 * math.exp(-(h0_tcr**2) / (2.0 * 3.0**2))
         assert e == pytest.approx(expected, abs=1e-12)
         assert abs(e) < 0.01  # negligible binding at h=0
 
@@ -105,7 +122,7 @@ class TestTcrPotentialC:
         for h in [0.0, 10.0, 13.0, 16.0, 35.0, 70.0]:
             c_val = lib.tcr_pmhc_potential(h, h0_tcr, u_assoc, sigma)
             dh = h - h0_tcr
-            expected = -u_assoc * math.exp(-dh ** 2 / (2.0 * sigma ** 2))
+            expected = -u_assoc * math.exp(-(dh**2) / (2.0 * sigma**2))
             assert c_val == pytest.approx(expected, abs=1e-12), f"Mismatch at h={h}"
 
     def test_h0_tcr_zero_recovers_old(self, lib):
@@ -113,7 +130,7 @@ class TestTcrPotentialC:
         u_assoc, sigma = 20.0, 3.0
         for h in [0.0, 3.0, 10.0]:
             c_val = lib.tcr_pmhc_potential(h, 0.0, u_assoc, sigma)
-            expected = -u_assoc * math.exp(-h ** 2 / (2.0 * sigma ** 2))
+            expected = -u_assoc * math.exp(-(h**2) / (2.0 * sigma**2))
             assert c_val == pytest.approx(expected, abs=1e-12)
 
 
@@ -129,7 +146,7 @@ class TestCd45RepulsionC:
 
     def test_zero_height(self, lib):
         e = lib.cd45_repulsion(0.0, 35.0, 1.0)
-        expected = 0.5 * 35.0 ** 2
+        expected = 0.5 * 35.0**2
         assert e == pytest.approx(expected)
 
     def test_matches_analytical(self, lib):
@@ -183,11 +200,13 @@ class TestBendingEnergyDeltaC:
 
 # ── Cell-list accelerated repulsion tests ──────────────────────────────
 
+
 class _CellListCtypes:
     """Wrapper for CellList ctypes bindings."""
 
     def __init__(self, lib):
         import numpy as np
+
         self.lib = lib
         self.np = np
 
@@ -207,37 +226,50 @@ class _CellListCtypes:
 
         lib.cell_list_init.restype = None
         lib.cell_list_init.argtypes = [
-            ctypes.POINTER(CellListStruct), ctypes.c_int,
-            ctypes.c_double, ctypes.c_double,
+            ctypes.POINTER(CellListStruct),
+            ctypes.c_int,
+            ctypes.c_double,
+            ctypes.c_double,
         ]
         lib.cell_list_build.restype = None
         lib.cell_list_build.argtypes = [
             ctypes.POINTER(CellListStruct),
-            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_int,
         ]
         lib.cell_list_free.restype = None
         lib.cell_list_free.argtypes = [ctypes.POINTER(CellListStruct)]
 
         lib.mol_repulsion.restype = ctypes.c_double
         lib.mol_repulsion.argtypes = [
-            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-            ctypes.c_double, ctypes.c_double, ctypes.c_double,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_int,
+            ctypes.c_double,
+            ctypes.c_double,
+            ctypes.c_double,
         ]
         lib.mol_repulsion_cell.restype = ctypes.c_double
         lib.mol_repulsion_cell.argtypes = [
-            ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-            ctypes.POINTER(CellListStruct),
             ctypes.POINTER(ctypes.c_double),
-            ctypes.c_double, ctypes.c_double, ctypes.c_double,
-        ]
-        lib.mol_repulsion_delta.restype = ctypes.c_double
-        lib.mol_repulsion_delta.argtypes = [
-            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
             ctypes.c_int,
             ctypes.POINTER(CellListStruct),
             ctypes.POINTER(ctypes.c_double),
-            ctypes.c_double, ctypes.c_double, ctypes.c_double,
+            ctypes.c_double,
+            ctypes.c_double,
+            ctypes.c_double,
+        ]
+        lib.mol_repulsion_delta.restype = ctypes.c_double
+        lib.mol_repulsion_delta.argtypes = [
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_int,
+            ctypes.POINTER(CellListStruct),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_double,
+            ctypes.c_double,
+            ctypes.c_double,
         ]
 
     def make_positions(self, n_mol, patch_size, rng):
@@ -258,6 +290,7 @@ class TestMolRepulsionCell:
 
     def test_matches_brute_force(self, lib):
         import numpy as np
+
         rng = np.random.default_rng(123)
         w = _CellListCtypes(lib)
         patch = 2000.0
@@ -271,8 +304,7 @@ class TestMolRepulsionCell:
         for idx in range(0, n_mol, 10):
             p = (ctypes.c_double * 2)(pos[idx, 0], pos[idx, 1])
             brute = lib.mol_repulsion(p, idx, c_pos, n_mol, eps, r_cut, patch)
-            cell = lib.mol_repulsion_cell(p, idx, ctypes.byref(cl), c_pos,
-                                          eps, r_cut, patch)
+            cell = lib.mol_repulsion_cell(p, idx, ctypes.byref(cl), c_pos, eps, r_cut, patch)
             assert cell == pytest.approx(brute, abs=1e-12), (
                 f"Mismatch at idx={idx}: brute={brute}, cell={cell}"
             )
@@ -282,6 +314,7 @@ class TestMolRepulsionCell:
     def test_periodic_boundary(self, lib):
         """Molecules near patch edges should interact across boundary."""
         import numpy as np
+
         w = _CellListCtypes(lib)
         patch = 2000.0
         r_cut = 50.0
@@ -294,8 +327,7 @@ class TestMolRepulsionCell:
 
         p0 = (ctypes.c_double * 2)(pos[0, 0], pos[0, 1])
         brute = lib.mol_repulsion(p0, 0, c_pos, 2, eps, r_cut, patch)
-        cell = lib.mol_repulsion_cell(p0, 0, ctypes.byref(cl), c_pos,
-                                      eps, r_cut, patch)
+        cell = lib.mol_repulsion_cell(p0, 0, ctypes.byref(cl), c_pos, eps, r_cut, patch)
         assert brute > 0.0, "Brute force should detect periodic interaction"
         assert cell == pytest.approx(brute, abs=1e-12)
 
@@ -304,6 +336,7 @@ class TestMolRepulsionCell:
     def test_delta_matches_two_calls(self, lib):
         """mol_repulsion_delta should equal new_e - old_e."""
         import numpy as np
+
         rng = np.random.default_rng(456)
         w = _CellListCtypes(lib)
         patch = 2000.0
@@ -320,13 +353,11 @@ class TestMolRepulsionCell:
             new_xy = rng.uniform(0, patch, 2)
             new_p = (ctypes.c_double * 2)(new_xy[0], new_xy[1])
 
-            old_e = lib.mol_repulsion_cell(old_p, idx, ctypes.byref(cl),
-                                           c_pos, eps, r_cut, patch)
-            new_e = lib.mol_repulsion_cell(new_p, idx, ctypes.byref(cl),
-                                           c_pos, eps, r_cut, patch)
-            delta = lib.mol_repulsion_delta(old_p, new_p, idx,
-                                            ctypes.byref(cl), c_pos,
-                                            eps, r_cut, patch)
+            old_e = lib.mol_repulsion_cell(old_p, idx, ctypes.byref(cl), c_pos, eps, r_cut, patch)
+            new_e = lib.mol_repulsion_cell(new_p, idx, ctypes.byref(cl), c_pos, eps, r_cut, patch)
+            delta = lib.mol_repulsion_delta(
+                old_p, new_p, idx, ctypes.byref(cl), c_pos, eps, r_cut, patch
+            )
             expected = new_e - old_e
             assert delta == pytest.approx(expected, abs=1e-10), (
                 f"Delta mismatch at idx={idx}: delta={delta}, expected={expected}"
@@ -336,6 +367,7 @@ class TestMolRepulsionCell:
 
 
 # ── Additional mol_repulsion brute-force tests ──────────────────────────
+
 
 class TestMolRepulsionBruteForce:
     """Unit tests for the brute-force mol_repulsion function."""
@@ -390,12 +422,14 @@ class TestMolRepulsionBruteForce:
 
 # ── Cell-list incremental move tests ────────────────────────────────────
 
+
 class TestCellListMove:
     """Unit tests for cell_list_move (incremental linked-list update)."""
 
     def test_move_matches_rebuild(self, lib):
         """After cell_list_move, repulsion should match a full rebuild."""
         import numpy as np
+
         w = _CellListCtypes(lib)
         rng = np.random.default_rng(789)
         patch, r_cut = 2000.0, 50.0
@@ -406,8 +440,10 @@ class TestCellListMove:
 
         lib.cell_list_move.restype = None
         lib.cell_list_move.argtypes = [
-            ctypes.POINTER(w.CellListStruct), ctypes.c_int,
-            ctypes.c_int, ctypes.c_int,
+            ctypes.POINTER(w.CellListStruct),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
         ]
 
         idx = 10
@@ -429,10 +465,10 @@ class TestCellListMove:
 
         for test_idx in [0, idx, n_mol - 1]:
             p = (ctypes.c_double * 2)(c_pos[2 * test_idx], c_pos[2 * test_idx + 1])
-            e_inc = lib.mol_repulsion_cell(p, test_idx, ctypes.byref(cl),
-                                            c_pos, 2.0, r_cut, patch)
-            e_rebuild = lib.mol_repulsion_cell(p, test_idx, ctypes.byref(cl2),
-                                                c_pos, 2.0, r_cut, patch)
+            e_inc = lib.mol_repulsion_cell(p, test_idx, ctypes.byref(cl), c_pos, 2.0, r_cut, patch)
+            e_rebuild = lib.mol_repulsion_cell(
+                p, test_idx, ctypes.byref(cl2), c_pos, 2.0, r_cut, patch
+            )
             assert e_inc == pytest.approx(e_rebuild, abs=1e-12), (
                 f"Move vs rebuild mismatch at idx={test_idx}"
             )
@@ -448,8 +484,10 @@ class TestCellListMove:
 
         lib.cell_list_move.restype = None
         lib.cell_list_move.argtypes = [
-            ctypes.POINTER(w.CellListStruct), ctypes.c_int,
-            ctypes.c_int, ctypes.c_int,
+            ctypes.POINTER(w.CellListStruct),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
         ]
         nc = cl.nc
         ci = max(0, min(int(25.0 * cl.inv_cell_size), nc - 1))
@@ -468,18 +506,20 @@ class TestCellListMove:
 
 # ── Bending energy delta edge cases ─────────────────────────────────────
 
+
 class TestBendingEnergyDeltaEdgeCases:
     """Test bending energy delta at boundaries and special cases."""
 
     def test_corner_cell(self, lib):
         """Delta computation at grid corners uses periodic wrapping."""
         import numpy as np
+
         rng = np.random.default_rng(111)
         n = 8
         kappa, dx = 10.0, 50.0
         h_np = rng.uniform(30, 70, (n, n))
 
-        for gi, gj in [(0, 0), (0, n-1), (n-1, 0), (n-1, n-1)]:
+        for gi, gj in [(0, 0), (0, n - 1), (n - 1, 0), (n - 1, n - 1)]:
             old_val = h_np[gi, gj]
             new_val = old_val + 5.0
             h_tmp = h_np.copy()
@@ -492,6 +532,7 @@ class TestBendingEnergyDeltaEdgeCases:
     def test_symmetric_perturbation(self, lib):
         """+dh and -dh on a flat membrane should give equal energy deltas."""
         import numpy as np
+
         n, kappa, dx, h0, dh = 16, 10.0, 50.0, 50.0, 3.0
         gi, gj = 8, 8
 
@@ -510,6 +551,7 @@ class TestBendingEnergyDeltaEdgeCases:
     def test_scales_with_kappa(self, lib):
         """Bending energy should scale linearly with kappa."""
         import numpy as np
+
         rng = np.random.default_rng(222)
         n, dx = 16, 50.0
         h_np = rng.uniform(30, 70, (n, n))
@@ -528,6 +570,7 @@ class TestBendingEnergyDeltaEdgeCases:
     def test_matches_numerical_finite_difference(self, lib):
         """Compare C delta against full-grid bending energy finite difference."""
         import numpy as np
+
         rng = np.random.default_rng(333)
         n, kappa, dx = 8, 10.0, 50.0
         h_np = rng.uniform(30, 70, (n, n))
@@ -540,9 +583,14 @@ class TestBendingEnergyDeltaEdgeCases:
             E = 0.0
             for i in range(n):
                 for j in range(n):
-                    lap = (h[(i-1)%n, j] + h[(i+1)%n, j] +
-                           h[i, (j-1)%n] + h[i, (j+1)%n] - 4*h[i, j]) / dx2
-                    E += lap ** 2
+                    lap = (
+                        h[(i - 1) % n, j]
+                        + h[(i + 1) % n, j]
+                        + h[i, (j - 1) % n]
+                        + h[i, (j + 1) % n]
+                        - 4 * h[i, j]
+                    ) / dx2
+                    E += lap**2
             return 0.5 * kappa * E * dx2
 
         E_old = _total_bending_energy(h_np, n, kappa, dx)

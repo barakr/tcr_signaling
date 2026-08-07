@@ -5,6 +5,7 @@ GPU only.  Movies saved to ~/Downloads/ks_small_patch_screen/.
 
 Uses --patch_size 250 and --sigma_r 2.0 (runtime params, no rebuild needed).
 """
+
 from __future__ import annotations
 
 import os
@@ -28,8 +29,8 @@ _RENDER_ENV = {
 # Screen parameters
 GRID_SIZE = 50
 TIME_SEC = 200
-RIGIDITY = 20.0        # kT/nm² (paper default)
-DUMP_INTERVAL = 100    # 20000 steps / 100 = 200 frames → ~13s movie at 15fps
+RIGIDITY = 20.0  # kT/nm² (paper default)
+DUMP_INTERVAL = 100  # 20000 steps / 100 = 200 frames → ~13s movie at 15fps
 SEED = 42
 
 # Molecule counts to screen
@@ -54,22 +55,37 @@ def run_sim(run_dir: Path, n_tcr: int, n_cd45: int) -> float:
     """Run GPU simulation with gaussian binding + repulsion. Return wall time."""
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(RIGIDITY),
-        "--seed", str(SEED),
-        "--grid_size", str(GRID_SIZE),
-        "--n_tcr", str(n_tcr),
-        "--n_cd45", str(n_cd45),
-        "--n_pmhc", str(n_tcr),  # n_pmhc matches n_tcr
-        "--pmhc_radius", str(PMHC_RADIUS),
-        "--binding_mode", "gaussian",
-        "--mol_repulsion_eps", str(MOL_REPULSION_EPS),
-        "--mol_repulsion_rcut", str(MOL_REPULSION_RCUT),
-        "--patch_size", str(PATCH_SIZE),
-        "--sigma_r", str(SIGMA_R),
-        "--run-dir", str(run_dir),
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(RIGIDITY),
+        "--seed",
+        str(SEED),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--n_tcr",
+        str(n_tcr),
+        "--n_cd45",
+        str(n_cd45),
+        "--n_pmhc",
+        str(n_tcr),  # n_pmhc matches n_tcr
+        "--pmhc_radius",
+        str(PMHC_RADIUS),
+        "--binding_mode",
+        "gaussian",
+        "--mol_repulsion_eps",
+        str(MOL_REPULSION_EPS),
+        "--mol_repulsion_rcut",
+        str(MOL_REPULSION_RCUT),
+        "--patch_size",
+        str(PATCH_SIZE),
+        "--sigma_r",
+        str(SIGMA_R),
+        "--run-dir",
+        str(run_dir),
         "--dump-frames",
-        "--dump-interval", str(DUMP_INTERVAL),
+        "--dump-interval",
+        str(DUMP_INTERVAL),
     ]
 
     t0 = time.perf_counter()
@@ -86,16 +102,20 @@ def run_sim(run_dir: Path, n_tcr: int, n_cd45: int) -> float:
 def render_movie(frames_dir: Path, output: Path):
     """Render movie from frames with pMHC markers shown."""
     cmd = [
-        str(_RENDER_PYTHON), str(_RENDER),
+        str(_RENDER_PYTHON),
+        str(_RENDER),
         str(frames_dir),
-        "-o", str(output),
-        "--fps", "15",
-        "--dpi", "120",
-        "--rigidity", str(RIGIDITY),
+        "-o",
+        str(output),
+        "--fps",
+        "15",
+        "--dpi",
+        "120",
+        "--rigidity",
+        str(RIGIDITY),
         "--show-pmhc",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
-                            env=_RENDER_ENV)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=_RENDER_ENV)
     if result.returncode != 0:
         print(f"  Render failed: {result.stderr[:500]}", file=sys.stderr)
         return False
@@ -104,11 +124,7 @@ def render_movie(frames_dir: Path, output: Path):
 
 def main():
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    conditions = [
-        (nt, nc)
-        for nt in N_TCR_PMHC_VALUES
-        for nc in N_CD45_VALUES
-    ]
+    conditions = [(nt, nc) for nt in N_TCR_PMHC_VALUES for nc in N_CD45_VALUES]
     total = len(conditions)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -116,8 +132,10 @@ def main():
 
         for i, (n_tcr, n_cd45) in enumerate(conditions, 1):
             tag = f"tcr{n_tcr}_cd45{n_cd45}"
-            print(f"\n[{i}/{total}] n_tcr=n_pmhc={n_tcr}, n_cd45={n_cd45} "
-                  f"(grid={GRID_SIZE}, {TIME_SEC}s, rig={RIGIDITY})")
+            print(
+                f"\n[{i}/{total}] n_tcr=n_pmhc={n_tcr}, n_cd45={n_cd45} "
+                f"(grid={GRID_SIZE}, {TIME_SEC}s, rig={RIGIDITY})"
+            )
 
             # Run simulation
             sim_dir = tmp_path / tag

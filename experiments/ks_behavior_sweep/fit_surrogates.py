@@ -21,6 +21,7 @@ Usage
     #   --no-average      Use all 20k rows (don't average over seeds)
     #   --results-csv     Override path to results CSV
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-
 from bayesian_metamodeling.surrogates.backends import (
     fit_backend_model,
     save_backend_payload,
@@ -78,7 +78,10 @@ PYMC_CONFIG = {
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_and_prepare(csv_path: Path, average_seeds: bool) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+
+def load_and_prepare(
+    csv_path: Path, average_seeds: bool
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Load CSV, filter, optionally average over seeds.
 
     Returns (X, metrics_dict) where:
@@ -112,15 +115,16 @@ def load_and_prepare(csv_path: Path, average_seeds: bool) -> tuple[np.ndarray, d
                 vals = [float(r[mkey]) for r in group if r[mkey] != ""]
                 avg[mkey] = np.mean(vals) if vals else np.nan
             avg_rows.append(avg)
-        print(f"Averaged over seeds: {len(avg_rows)} training points "
-              f"(from {len(rows)} raw rows)")
+        print(f"Averaged over seeds: {len(avg_rows)} training points (from {len(rows)} raw rows)")
         rows = avg_rows
 
-    X = np.column_stack([
-        [float(r["rigidity_kT"]) for r in rows],
-        [float(r["dt_sec"]) for r in rows],
-        [float(r["time_sec"]) for r in rows],
-    ])
+    X = np.column_stack(
+        [
+            [float(r["rigidity_kT"]) for r in rows],
+            [float(r["dt_sec"]) for r in rows],
+            [float(r["time_sec"]) for r in rows],
+        ]
+    )
 
     metrics = {}
     for mkey in METRIC_KEYS:
@@ -133,10 +137,12 @@ def load_and_prepare(csv_path: Path, average_seeds: bool) -> tuple[np.ndarray, d
 # Plotting
 # ---------------------------------------------------------------------------
 
+
 def plot_diagnostics(X: np.ndarray, metrics: dict, models: dict, out_path: Path):
     """2×4 predicted-vs-actual scatter plot."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
@@ -188,6 +194,7 @@ def plot_dynamics(X: np.ndarray, models: dict, out_path: Path):
     """2×4 dynamics plot: t on x-axis, lines per (K, dt)."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
@@ -221,10 +228,8 @@ def plot_dynamics(X: np.ndarray, models: dict, out_path: Path):
                 }
                 summary = model.summary(inputs)
                 mean = np.array(summary["mean"])
-                label = (f"K={k_val:.1f} dt={dt_val * 1e6:.1f}us"
-                         if idx == 0 and dt_i == 0 else None)
-                ax.plot(t_vals, mean, ls, color=colors[ki], alpha=0.7,
-                        linewidth=1.2, label=label)
+                label = f"K={k_val:.1f} dt={dt_val * 1e6:.1f}us" if idx == 0 and dt_i == 0 else None
+                ax.plot(t_vals, mean, ls, color=colors[ki], alpha=0.7, linewidth=1.2, label=label)
 
         ax.set_xlabel("time (s)")
         ax.set_title(mname, fontsize=10)
@@ -242,14 +247,19 @@ def plot_dynamics(X: np.ndarray, models: dict, out_path: Path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="Fit surrogates on KS sweep data")
-    parser.add_argument("--backend", choices=["sbi_npe", "pymc_gp"],
-                        default="sbi_npe", help="Surrogate backend (default: sbi_npe)")
-    parser.add_argument("--no-average", action="store_true",
-                        help="Use all rows (don't average over seeds)")
-    parser.add_argument("--results-csv", type=Path, default=DEFAULT_CSV,
-                        help="Path to results CSV")
+    parser.add_argument(
+        "--backend",
+        choices=["sbi_npe", "pymc_gp"],
+        default="sbi_npe",
+        help="Surrogate backend (default: sbi_npe)",
+    )
+    parser.add_argument(
+        "--no-average", action="store_true", help="Use all rows (don't average over seeds)"
+    )
+    parser.add_argument("--results-csv", type=Path, default=DEFAULT_CSV, help="Path to results CSV")
     args = parser.parse_args()
 
     if not args.results_csv.exists():
@@ -292,11 +302,13 @@ def main():
         models[mkey] = model
 
         # Train error
-        train_summary = model.summary({
-            "rigidity_kT": X[valid, 0],
-            "dt_sec": X[valid, 1],
-            "time_sec": X[valid, 2],
-        })
+        train_summary = model.summary(
+            {
+                "rigidity_kT": X[valid, 0],
+                "dt_sec": X[valid, 1],
+                "time_sec": X[valid, 2],
+            }
+        )
         y_pred = np.array(train_summary["mean"])
         rmse = float(np.sqrt(np.mean((y_pred - y[valid]) ** 2)))
         ss_res = np.sum((y_pred - y[valid]) ** 2)
@@ -336,8 +348,10 @@ def main():
     for mkey, mname in METRIC_NAMES:
         if mkey in summary_data:
             s = summary_data[mkey]
-            print(f"{mname:<30s} {s['train_rmse']:10.4f} {s['train_r2']:8.4f} "
-                  f"{s['fit_time_sec']:7.1f}s")
+            print(
+                f"{mname:<30s} {s['train_rmse']:10.4f} {s['train_r2']:8.4f} "
+                f"{s['fit_time_sec']:7.1f}s"
+            )
         else:
             print(f"{mname:<30s} {'SKIPPED':>10s}")
     print(f"\nAll artifacts saved to: {OUT_DIR}")

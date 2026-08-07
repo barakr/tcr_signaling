@@ -3,13 +3,13 @@
 Validates that the six metrics are present, in correct ranges, monotonic
 with rigidity, and deterministic.
 """
+
 from __future__ import annotations
 
 import json
 import subprocess
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 _PKG_DIR = Path(__file__).resolve().parents[1]
@@ -20,8 +20,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -105,47 +108,55 @@ class TestMetricPhysics:
     def test_percentile_gap_positive_at_high_rigidity(self, tmp_path):
         # Use paper mode + explicit dt so n_steps gives consistent physical time.
         # Paper mode's fixed step_size_h=1nm equilibrates faster at extreme κ.
-        data = _run(tmp_path, label="pct_high", rigidity_kT=80.0, n_steps=5000,
-                    dt=0.01, step_mode="paper")
+        data = _run(
+            tmp_path, label="pct_high", rigidity_kT=80.0, n_steps=5000, dt=0.01, step_mode="paper"
+        )
         gap = data["diagnostics"]["depletion_percentile_gap_nm"]
         assert gap > -50, f"Percentile gap too negative at rig=80: {gap}"
 
     def test_overlap_low_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="ovl_high", rigidity_kT=80.0, n_steps=5000,
-                    dt=0.01, step_mode="paper")
+        data = _run(
+            tmp_path, label="ovl_high", rigidity_kT=80.0, n_steps=5000, dt=0.01, step_mode="paper"
+        )
         ovl = data["diagnostics"]["depletion_overlap_coeff"]
         assert ovl < 0.6, f"Overlap too high at rig=80: {ovl}"
 
     def test_ks_high_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="ks_high", rigidity_kT=80.0, n_steps=5000,
-                    dt=0.01, step_mode="paper")
+        data = _run(
+            tmp_path, label="ks_high", rigidity_kT=80.0, n_steps=5000, dt=0.01, step_mode="paper"
+        )
         ks = data["diagnostics"]["depletion_ks_statistic"]
         assert ks > 0.2, f"KS too low at rig=80: {ks}"
 
     def test_frontier_nn_positive_at_high_rigidity(self, tmp_path):
-        data = _run(tmp_path, label="fnn_high", rigidity_kT=30.0, n_steps=5000,
-                    dt=0.01, step_mode="paper")
+        data = _run(
+            tmp_path, label="fnn_high", rigidity_kT=30.0, n_steps=5000, dt=0.01, step_mode="paper"
+        )
         fnn = data["diagnostics"]["depletion_frontier_nn_gap_nm"]
         assert fnn > 20, f"Frontier NN too small at rig=30: {fnn}"
 
     def test_metrics_monotonic_with_rigidity(self, tmp_path):
         # Use paper mode + explicit dt to ensure both runs get the same physical time.
-        d_low = _run(tmp_path, label="mono_low", rigidity_kT=1.0, n_steps=5000,
-                     dt=0.01, step_mode="paper")
-        d_high = _run(tmp_path, label="mono_high", rigidity_kT=100.0, n_steps=5000,
-                      dt=0.01, step_mode="paper")
+        d_low = _run(
+            tmp_path, label="mono_low", rigidity_kT=1.0, n_steps=5000, dt=0.01, step_mode="paper"
+        )
+        d_high = _run(
+            tmp_path, label="mono_high", rigidity_kT=100.0, n_steps=5000, dt=0.01, step_mode="paper"
+        )
 
         # Frontier NN should be larger at higher rigidity (better separation).
         fnn_low = d_low["diagnostics"]["depletion_frontier_nn_gap_nm"]
         fnn_high = d_high["diagnostics"]["depletion_frontier_nn_gap_nm"]
-        assert fnn_high >= fnn_low * 0.8, \
+        assert fnn_high >= fnn_low * 0.8, (
             f"Frontier NN not monotonic: rig=1 → {fnn_low:.1f}, rig=100 → {fnn_high:.1f}"
+        )
 
         # Cross NN should be larger at higher rigidity.
         cnn_low = d_low["diagnostics"]["depletion_cross_nn_median_nm"]
         cnn_high = d_high["diagnostics"]["depletion_cross_nn_median_nm"]
-        assert cnn_high >= cnn_low * 0.8, \
+        assert cnn_high >= cnn_low * 0.8, (
             f"Cross NN not monotonic: rig=1 → {cnn_low:.1f}, rig=100 → {cnn_high:.1f}"
+        )
 
 
 class TestMetricDeterminism:
@@ -164,5 +175,6 @@ class TestMetricDeterminism:
             "depletion_frontier_nn_gap_nm",
             "depletion_cross_nn_median_nm",
         ]:
-            assert d1["diagnostics"][key] == d2["diagnostics"][key], \
+            assert d1["diagnostics"][key] == d2["diagnostics"][key], (
                 f"{key} not deterministic: {d1['diagnostics'][key]} vs {d2['diagnostics'][key]}"
+            )

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Enforces CLAUDE.md KS rule 9 ("All KS tests must pass before committing") and
+# development rule 1 (Status.md lives in THIS repo). Activate with:
+#   git config core.hooksPath githooks
+#
+# Deliberately does NOT block commits on `main`: unlike the parent framework
+# (whose trunk is `develop`), `main` IS this repo's working trunk.
+
+mkdir -p tmp/hook_logs
+log_file="tmp/hook_logs/pre-commit.log"
+
+# Hooks run non-interactively: no shell functions, no user PATH additions.
+# Resolve tools explicitly and fail loudly if neither location has them.
+run_tool() {
+  tool="$1"; shift
+  if command -v "$tool" >/dev/null 2>&1; then
+    "$tool" "$@"; return
+  fi
+  fallback="${HOME}/miniconda3/envs/py314_bayesmm/bin/${tool}"
+  if [[ -x "$fallback" ]]; then
+    "$fallback" "$@"; return
+  fi
+  echo "pre-commit: '$tool' not found in PATH, and $fallback is missing."
+  echo "            create it with: conda env create -f environment.yml   (parent repo)"
+  return 127
+}
+
+{
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] pre-commit start"
+
+  run_tool ruff format .
+  run_tool ruff check .
+  # Full fast suite, determinism tests included: this runs on a developer
+  # machine, where the bit-level baselines are expected to hold. CI drops
+  # `deterministic` because a hosted runner is different hardware.
+  run_tool pytest -q -m "not slow"
+
+  # Status.md accompanies model changes. POSIX grep, never `rg`: a missing tool
+  # inside an `if` condition reads as false and would silently disable this.
+  changed_staged="$(git diff --cached --name-only || true)"
+  if echo "$changed_staged" | grep -qE '^models/'; then
+    if ! echo "$changed_staged" | grep -qE '^Status\.md$'; then
+      echo "pre-commit: Status.md must be staged when models/ changes (CLAUDE.md rule 1)."
+      exit 1
+    fi
+  fi
+
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] pre-commit success"
+} >"$log_file" 2>&1

@@ -1,4 +1,5 @@
 """Physics consistency tests: compare C CPU and C GPU height fields."""
+
 from __future__ import annotations
 
 import json
@@ -24,8 +25,11 @@ def _ensure_binary():
     if _BINARY.exists():
         return
     result = subprocess.run(
-        ["make"], cwd=str(_PKG_DIR),
-        capture_output=True, text=True, timeout=60,
+        ["make"],
+        cwd=str(_PKG_DIR),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to build binary: {result.stderr}")
@@ -41,16 +45,26 @@ def _run_c(tmp_path, seed, use_gpu=False, label="c"):
     rd = tmp_path / f"{label}_seed{seed}"
     cmd = [
         str(_BINARY),
-        "--time_sec", str(TIME_SEC),
-        "--rigidity_kT", str(RIGIDITY),
-        "--seed", str(seed),
-        "--n_steps", str(N_STEPS),
-        "--grid_size", str(GRID_SIZE),
-        "--run-dir", str(rd),
-        "--binding_mode", "forced",
-        "--step_mode", "brownian",
-        "--dt_factor", "10.0",
-        "--n_pmhc", "-1",
+        "--time_sec",
+        str(TIME_SEC),
+        "--rigidity_kT",
+        str(RIGIDITY),
+        "--seed",
+        str(seed),
+        "--n_steps",
+        str(N_STEPS),
+        "--grid_size",
+        str(GRID_SIZE),
+        "--run-dir",
+        str(rd),
+        "--binding_mode",
+        "forced",
+        "--step_mode",
+        "brownian",
+        "--dt_factor",
+        "10.0",
+        "--n_pmhc",
+        "-1",
         "--dump-frames",
     ]
     if not use_gpu:
@@ -59,10 +73,12 @@ def _run_c(tmp_path, seed, use_gpu=False, label="c"):
     assert result.returncode == 0, result.stderr
 
     frames_dir = rd / "frames"
-    h = np.fromfile(frames_dir / f"h_{N_STEPS:05d}.bin", dtype=np.float32).reshape(GRID_SIZE, GRID_SIZE)
+    h = np.fromfile(frames_dir / f"h_{N_STEPS:05d}.bin", dtype=np.float32).reshape(
+        GRID_SIZE, GRID_SIZE
+    )
     mol = np.fromfile(frames_dir / f"mol_{N_STEPS:05d}.bin", dtype=np.float64)
     tcr = mol[: N_TCR * 2].reshape(N_TCR, 2)
-    cd45 = mol[N_TCR * 2:].reshape(N_CD45, 2)
+    cd45 = mol[N_TCR * 2 :].reshape(N_CD45, 2)
 
     output = json.loads(result.stdout.strip())
     return h, tcr, cd45, output
@@ -74,7 +90,7 @@ def _center_edge_means(h):
     c = n // 2
     r = n // 8
     Y, X = np.ogrid[:n, :n]
-    mask = ((X - c) ** 2 + (Y - c) ** 2) <= r ** 2
+    mask = ((X - c) ** 2 + (Y - c) ** 2) <= r**2
     return float(h[mask].mean()), float(h[~mask].mean())
 
 
@@ -119,7 +135,7 @@ class TestHeightFieldStatistics:
         c = n // 2
         r = n // 4  # exclude wider center region
         Y, X = np.ogrid[:n, :n]
-        edge_mask = ((X - c) ** 2 + (Y - c) ** 2) > r ** 2
+        edge_mask = ((X - c) ** 2 + (Y - c) ** 2) > r**2
 
         for name, h in [("C CPU", cpu_h), ("C GPU", gpu_h)]:
             edge_std = h[edge_mask].std()
@@ -204,16 +220,26 @@ class TestAcceptRateGap:
         rd = tmp_path / f"gap_{label}_{n_steps}_{seed}"
         cmd = [
             str(binary),
-            "--time_sec", "10.0",
-            "--rigidity_kT", "20.0",
-            "--seed", str(seed),
-            "--n_steps", str(n_steps),
-            "--grid_size", str(grid_size),
-            "--run-dir", str(rd),
-            "--binding_mode", "forced",
-            "--step_mode", "brownian",
-            "--dt_factor", "10.0",
-            "--n_pmhc", "-1",
+            "--time_sec",
+            "10.0",
+            "--rigidity_kT",
+            "20.0",
+            "--seed",
+            str(seed),
+            "--n_steps",
+            str(n_steps),
+            "--grid_size",
+            str(grid_size),
+            "--run-dir",
+            str(rd),
+            "--binding_mode",
+            "forced",
+            "--step_mode",
+            "brownian",
+            "--dt_factor",
+            "10.0",
+            "--n_pmhc",
+            "-1",
         ]
         if not use_gpu:
             cmd.append("--no-gpu")
@@ -275,15 +301,24 @@ class TestGridConvergence:
                 rd = tmp_path / f"{label}_seed{seed}"
                 cmd = [
                     str(_BINARY),
-                    "--time_sec", "10.0",
-                    "--rigidity_kT", "30.0",
-                    "--seed", str(seed),
-                    "--grid_size", str(grid),
-                    "--run-dir", str(rd),
-                    "--binding_mode", "forced",
-                    "--step_mode", "brownian",
-                    "--dt_factor", "10.0",
-                    "--n_pmhc", "-1",
+                    "--time_sec",
+                    "10.0",
+                    "--rigidity_kT",
+                    "30.0",
+                    "--seed",
+                    str(seed),
+                    "--grid_size",
+                    str(grid),
+                    "--run-dir",
+                    str(rd),
+                    "--binding_mode",
+                    "forced",
+                    "--step_mode",
+                    "brownian",
+                    "--dt_factor",
+                    "10.0",
+                    "--n_pmhc",
+                    "-1",
                     "--no-gpu",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -298,5 +333,3 @@ class TestGridConvergence:
             f"Grid 32: {[f'{x:.1f}' for x in widths_32]}\n"
             f"Grid 64: {[f'{x:.1f}' for x in widths_64]}"
         )
-
-

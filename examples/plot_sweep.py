@@ -151,9 +151,13 @@ def fit_and_plot_surrogate(
 
     print(f"Fitting surrogate ({spec.backend}) on {len(y)} points...")
     model = fit_backend_model(
-        backend=spec.backend, x=X, y=y,
-        input_names=spec.inputs, output_name=spec.outputs[0],
-        backend_config=spec.backend_config, seed=spec.seed,
+        backend=spec.backend,
+        x=X,
+        y=y,
+        input_names=spec.inputs,
+        output_name=spec.outputs[0],
+        backend_config=spec.backend_config,
+        seed=spec.seed,
     )
 
     # Train RMSE
@@ -180,9 +184,15 @@ def fit_and_plot_surrogate(
 
     png_path = output_dir / f"ks_surrogate_{spec.backend}_heatmap.png"
     plot_sweep_and_surrogate(
-        time_vals, rig_vals, sweep_grid,
-        time_dense, rig_dense, mean_grid, std_grid,
-        png_path, backend=spec.backend,
+        time_vals,
+        rig_vals,
+        sweep_grid,
+        time_dense,
+        rig_dense,
+        mean_grid,
+        std_grid,
+        png_path,
+        backend=spec.backend,
     )
     print(f"  Saved 3-panel heatmap to {png_path}")
     return png_path
