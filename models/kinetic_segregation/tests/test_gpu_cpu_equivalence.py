@@ -186,6 +186,7 @@ def _build():
 # ─── A) GPU Regression ─────────────────────────────────────────────────────
 
 
+@pytest.mark.requires_metal
 class TestGPURegression:
     """GPU after optimization must match GPU baseline from reference_values.json."""
 
@@ -264,6 +265,7 @@ class TestCPURegression:
 # ─── C) GPU vs CPU Cross-Mode Equivalence ──────────────────────────────────
 
 
+@pytest.mark.requires_metal
 class TestCrossMode:
     """GPU and CPU produce results from the same physics (relaxed thresholds)."""
 
@@ -311,6 +313,7 @@ class TestDeterminism:
     so we check statistical agreement (depletion width within 5%, accept rate within 1%).
     """
 
+    @pytest.mark.requires_metal
     def test_gpu_deterministic(self, tmp_path):
         out1 = _run(tmp_path, use_gpu=True, label="det_gpu1", seed=77)
         out2 = _run(tmp_path, use_gpu=True, label="det_gpu2", seed=77)
@@ -330,6 +333,7 @@ class TestDeterminism:
         out2 = _run(tmp_path, use_gpu=False, label="det_cpu2", seed=77)
         assert out1 == out2, "CPU not deterministic with same seed"
 
+    @pytest.mark.requires_metal
     def test_gpu_frames_deterministic(self, tmp_path):
         _, h1, tcr1, cd451 = _run_with_frames(tmp_path, use_gpu=True, label="detf_gpu1", seed=77)
         _, h2, tcr2, cd452 = _run_with_frames(tmp_path, use_gpu=True, label="detf_gpu2", seed=77)

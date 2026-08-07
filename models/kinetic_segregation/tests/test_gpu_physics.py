@@ -94,6 +94,7 @@ def _center_edge_means(h):
     return float(h[mask].mean()), float(h[~mask].mean())
 
 
+@pytest.mark.requires_metal
 class TestHeightFieldStatistics:
     """Verify that CPU, GPU, and Python produce physically consistent height fields."""
 
@@ -142,6 +143,7 @@ class TestHeightFieldStatistics:
             assert edge_std > 0.5, f"{name}: edge std too low ({edge_std:.2f}) — membrane frozen?"
 
 
+@pytest.mark.requires_metal
 class TestCpuGpuConsistency:
     """Statistical tests that CPU and GPU produce distributions from the same physics."""
 

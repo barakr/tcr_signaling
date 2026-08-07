@@ -34,6 +34,26 @@
   repo's trunk. Hooks use POSIX `grep`, never `rg`: hooks run
   non-interactively, and a missing command inside an `if` reads as false, which
   is precisely how the parent's Status.md gate sat dead.
+- **CI extended to Linux (`ubuntu-latest`) alongside macOS.** macOS exercises
+  the Metal backend; Linux exercises the `gpu_stub.c` CPU-fallback path, which
+  is what non-Apple users actually run. Both build the same C99 core, so a
+  portability regression now surfaces.
+- **`requires_metal` marker added — narrow, and with a stated reason.** Off
+  Apple, CMake builds `gpu_stub.c` whose `gpu_engine_create()` returns NULL, so
+  `--gpu` silently falls back to CPU. A CPU-vs-GPU assertion would then compare
+  CPU against itself and pass: a *false green*, worse than an honest skip. Only
+  the 13 tests that actually drive `use_gpu=True` are marked (4 whole classes
+  plus 2 methods of the mixed `TestDeterminism`); the other 14 tests in those
+  same two files are CPU-only and run everywhere. Under the CI selector this is
+  11 skips on Linux (2 of the 13 are also `deterministic`, already deselected),
+  so Linux runs 148 and macOS runs all 159.
+- **CI now rejects unjustified skips.** The guard fails unless every skip
+  carries the sanctioned Metal reason, and requires zero skips on macOS where
+  Metal is present. Skipping is therefore never a blank cheque — a test that
+  starts skipping for an unvetted reason turns the job red.
+- **Windows deliberately not in the matrix.** `CMakeLists.txt` has no
+  WIN32/MSVC branch, so the model does not build there; a Windows job would
+  skip everything and report a meaningless green.
 
 ### 2026-03-10: Consolidate kinetic_segregation modules
 - **Change**: Merged `kinetic_segregation_gpu/` (C + Metal) into `kinetic_segregation/`,

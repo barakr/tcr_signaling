@@ -8,12 +8,14 @@ name: KS model CI
 # (toolchain, Metal, physics regressions). Running it as a job inside the
 # framework's workflow would make the framework's status red for submodule
 # reasons — the cry-wolf problem. Separate repo, separate workflow, separate
-# badge and notifications: framework red means the framework is broken, and
-# this being red means the KS model is broken. It also matches the submodule
-# boundary in the parent CLAUDE.md ("Separate test runs").
+# badge and notifications.
 #
 # These tests import no framework code at all — only numpy/scipy/matplotlib —
 # so nothing needs to be installed from the parent repo.
+#
+# Windows is absent on purpose: CMakeLists.txt has no WIN32/MSVC branch, so the
+# model does not build there. A Windows job would skip everything and report a
+# green that means nothing. If Windows support lands, add it here.
 
 on:
   push:
@@ -27,11 +29,15 @@ on:
 
 jobs:
   ks-model:
-    name: macos-latest / KS model
-    # macOS only: the CMakeLists enables Objective-C for the Metal backend and
-    # links `-framework Metal`. Linux would take the CPU-fallback path and so
-    # would not exercise what this project actually ships.
-    runs-on: macos-latest
+    name: ${{ matrix.os }} / KS model
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS exercises the Metal backend; Linux exercises the gpu_stub.c CPU
+        # fallback path, which is what non-Apple users actually run. Both build
+        # the same C99 core, so a portability regression shows up on Linux.
+        os: [macos-latest, ubuntu-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -41,48 +47,77 @@ jobs:
           python-version: "3.12"
 
       - name: Toolchain info
-        # Printed rather than installed: the macOS runner image ships cmake and
-        # the Xcode command line tools. If that ever stops being true this step
-        # fails loudly here instead of somewhere inside the build.
         run: |
           cmake --version
-          clang++ --version
-          xcrun --show-sdk-path
+          c++ --version
+          if [ "$RUNNER_OS" = "macOS" ]; then xcrun --show-sdk-path; fi
 
       - name: Install test dependencies
         run: python -m pip install --upgrade pip && python -m pip install numpy scipy matplotlib pytest
 
-      - name: Build KS model (CMake + Metal)
+      - name: Build KS model
         working-directory: models/kinetic_segregation
         run: make
 
       - name: Run fast test suite
-        # `deterministic` is deselected: those are bit-level reproducibility
-        # tests that CLAUDE.md documents as platform-specific and expected to
-        # differ on new hardware, which a hosted runner is. Locally this is
-        # 159 tests; with `deterministic` included it is 167.
+        # `deterministic` is deselected: bit-level reproducibility baselines that
+        # CLAUDE.md documents as platform-specific, and a hosted runner is
+        # different hardware. Metal-only tests are NOT deselected here — they
+        # skip themselves via conftest with a stated reason, and the guard below
+        # checks that reason.
         run: python -m pytest -q -m "not slow and not deterministic" --junit-xml=results.xml
 
-      - name: Assert the suite actually ran
-        # Guard against a green light that tested nothing. Every C++ test skips
-        # itself when the binary is missing ("Failed to build binary: ..."), so
-        # a toolchain regression can yield 150+ skips and still exit 0.
+      - name: Assert the suite ran, and that every skip is justified
+        # Two failure modes this catches:
+        #  1. A silent collapse — every C++ test skips itself when the binary is
+        #     missing, so a toolchain regression can yield 150+ skips and exit 0.
+        #     A broken libc++ recently turned 118 of these into skips reading as
+        #     success.
+        #  2. Skip creep — a test quietly skipping for an unvetted reason. Only
+        #     the Metal gate is allowed to skip, and only off macOS. Anything
+        #     else fails, so skipping is never a blank cheque.
         if: always()
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
         run: |
           python - <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          FLOOR = 150  # 159 pass locally; leaves headroom without hiding a collapse
+          import os, sys, xml.etree.ElementTree as ET
+
+          ALLOWED_SKIP = "requires Metal GPU backend"
+          TOTAL_FLOOR = 155        # 159 collected today; headroom without hiding a collapse
           root = ET.parse("results.xml").getroot()
-          s = root.find("testsuite")
-          if s is None:
-              s = root
-          total = int(s.get("tests", 0)); skipped = int(s.get("skipped", 0))
-          failures = int(s.get("failures", 0)); errors = int(s.get("errors", 0))
+          suite = root.find("testsuite")
+          if suite is None:
+              suite = root
+
+          total = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+          failures = int(suite.get("failures", 0))
+          errors = int(suite.get("errors", 0))
           passed = total - skipped - failures - errors
-          print(f"total={total} passed={passed} skipped={skipped} failed={failures} errors={errors}")
-          if skipped:
-              sys.exit(f"FAIL: {skipped} test(s) skipped — expected none on this runner.")
-          if passed < FLOOR:
-              sys.exit(f"FAIL: only {passed} tests passed, floor is {FLOOR}.")
-          print("OK: suite ran in full.")
+          is_macos = os.environ.get("RUNNER_OS_NAME") == "macOS"
+          print(f"os={os.environ.get('RUNNER_OS_NAME')} total={total} passed={passed} "
+                f"skipped={skipped} failed={failures} errors={errors}")
+
+          problems = []
+          if total < TOTAL_FLOOR:
+              problems.append(f"only {total} tests collected, floor is {TOTAL_FLOOR}")
+
+          # Every skip must carry the one sanctioned reason.
+          unjustified = []
+          for case in suite.iter("testcase"):
+              for sk in case.findall("skipped"):
+                  reason = (sk.get("message") or "") + (sk.text or "")
+                  if ALLOWED_SKIP not in reason:
+                      unjustified.append(f"{case.get('classname')}::{case.get('name')} -> {reason[:120]}")
+          if unjustified:
+              problems.append("skips without a sanctioned reason:\n    " + "\n    ".join(unjustified))
+
+          # On macOS the Metal backend is present, so nothing may skip at all.
+          if is_macos and skipped:
+              problems.append(f"{skipped} test(s) skipped on macOS, where Metal is available — expected 0")
+
+          if problems:
+              sys.exit("FAIL: " + "; ".join(problems))
+          print(f"OK: {passed} passed, {skipped} justified skip(s).")
           PY
