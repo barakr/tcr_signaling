@@ -61,4 +61,28 @@ jobs:
         # tests that CLAUDE.md documents as platform-specific and expected to
         # differ on new hardware, which a hosted runner is. Locally this is
         # 159 tests; with `deterministic` included it is 167.
-        run: python -m pytest -q -m "not slow and not deterministic"
+        run: python -m pytest -q -m "not slow and not deterministic" --junit-xml=results.xml
+
+      - name: Assert the suite actually ran
+        # Guard against a green light that tested nothing. Every C++ test skips
+        # itself when the binary is missing ("Failed to build binary: ..."), so
+        # a toolchain regression can yield 150+ skips and still exit 0.
+        if: always()
+        run: |
+          python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          FLOOR = 150  # 159 pass locally; leaves headroom without hiding a collapse
+          root = ET.parse("results.xml").getroot()
+          s = root.find("testsuite")
+          if s is None:
+              s = root
+          total = int(s.get("tests", 0)); skipped = int(s.get("skipped", 0))
+          failures = int(s.get("failures", 0)); errors = int(s.get("errors", 0))
+          passed = total - skipped - failures - errors
+          print(f"total={total} passed={passed} skipped={skipped} failed={failures} errors={errors}")
+          if skipped:
+              sys.exit(f"FAIL: {skipped} test(s) skipped — expected none on this runner.")
+          if passed < FLOOR:
+              sys.exit(f"FAIL: only {passed} tests passed, floor is {FLOOR}.")
+          print("OK: suite ran in full.")
+          PY
