@@ -6,6 +6,58 @@
 
 ## Decision Log
 
+### 2026-08-07: KS tutorial series — and two model findings it surfaced
+
+**New**: `notebooks/models/kinetic_segregation/KS_1..KS_5` plus a shared
+`ks_tutorial.py` helper. The series teaches the biology, then the energy model, then
+running it, then parameter effects, then how to read the observables honestly. Energy
+curves are read out of the compiled C via `ctypes` (reusing the loader in
+`tests/test_potentials.py`) rather than re-typed in numpy, so they cannot drift from
+`ks_physics.h` (KS rule 1). The notebooks depend on numpy/scipy/matplotlib and the
+binary only — no framework — which is what makes them cheap to execute in this repo's
+own CI.
+
+Two findings emerged while writing them. Both are about the *model as configured*, not
+about the tutorials:
+
+- **Grid resolution silently disables the TCR attraction.** In `gaussian` binding mode
+  the TCR well is scaled by a pMHC influence field of lateral range `sigma_r` (default
+  **2 nm**), evaluated at cell centres with a hard `3*sigma_r` cutoff. When
+  `dx = patch_size/grid_size` is much larger than `sigma_r`, no cell centre falls inside
+  the cutoff, the weight is **exactly zero**, and the attractive term is absent. A
+  seeded contact then just relaxes: measured at fixed physical time, the contact disc
+  ends at 63.6 nm for dx = 41.7 nm versus 20.2 nm for dx = 7.8 nm.
+  `experiments/ks_behavior_sweep/run.py` already overrides to
+  `--patch_size 500 --grid_size 100` with the comment *"keeps dx=5nm"*, so the
+  constraint was known — but **every checked-in spec sits in the degenerate regime**:
+  `specs/model.kinetic_segregation.json` and the sweep's own `spec.json` give
+  dx = 31.2 nm (15.6x sigma_r), `examples/specs/...regular` 62.5 nm, `...fast` 125 nm
+  (62x). Flagged, not changed — reconciling the specs is a separate decision.
+- **`depletion_width_nm` is saturated by the initial condition in short runs.** TCRs are
+  seeded on top of pMHC, so with `pmhc_mode=inner_circle` the radial distributions are
+  already separated at step 0; the metric starts near its final value and barely moves.
+  Sweeping `u_assoc` from 1 to 2000 kT against it gives a flat line, which reads as "the
+  model ignores binding energy". Measured instead as CD45 retention inside the contact
+  disc (normalised by its own starting value), the same runs show a clear monotonic
+  effect: retention 0.862 -> 0.643. The insensitivity was in the ruler, not the model.
+  KS 4 teaches this explicitly.
+
+Also confirmed and taught, each demonstrated in-notebook rather than asserted:
+`dt_auto * kappa` is constant to 0.000%; a typo in `--binding_mode` silently selects the
+*other* mode (`gausian` produced output identical to `forced`); a `--params` file
+overrides an explicit CLI flag for the three mode options; `--dump-frames` zeroes
+`binding_timeseries` (401 samples -> 0); and the C's "median" is `sorted[n/2]`, so
+`np.median` reconstructions of `depletion_width_nm` disagree (by 0.39 nm in the worked
+example) while `sorted[n//2]` matches to 1e-13.
+
+**Guard**: `models/kinetic_segregation/tests/test_notebooks.py` executes all five via
+`nbclient` and requires each notebook's `[KS_N self-check OK]` beacon, so a notebook
+that runs but does nothing still fails — the failure mode Status.md already records
+from the tutorial post-mortem. Marked `slow` (50 s for the set) to keep the pre-commit
+hook fast; CI runs it in a dedicated step. Verified in both directions: deliberately
+breaking KS_1's self-check turns it red, restoring it turns it green.
+`TOTAL_FLOOR` in the CI skip guard raised 155 -> 156 (160 tests now collected).
+
 ### 2026-08-07: Own CI, own lint config, own git hooks
 - **CI added in this repo, not the parent's workflow.** The KS model fails for
   toolchain, Metal and physics reasons that say nothing about the framework;

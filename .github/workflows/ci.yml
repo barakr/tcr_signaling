@@ -69,7 +69,11 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then xcrun --show-sdk-path; fi
 
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install numpy scipy matplotlib pytest
+        # nbclient/nbformat are for the tutorial-notebook step below; the notebooks
+        # themselves import nothing beyond numpy/matplotlib, so no framework here.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib pytest nbclient nbformat ipykernel
 
       - name: Build KS model
         working-directory: models/kinetic_segregation
@@ -100,7 +104,7 @@ jobs:
           import os, sys, xml.etree.ElementTree as ET
 
           ALLOWED_SKIP = "requires Metal GPU backend"
-          TOTAL_FLOOR = 155        # 159 collected today; headroom without hiding a collapse
+          TOTAL_FLOOR = 156        # 160 collected today; headroom without hiding a collapse
           root = ET.parse("results.xml").getroot()
           suite = root.find("testsuite")
           if suite is None:
@@ -137,3 +141,11 @@ jobs:
               sys.exit("FAIL: " + "; ".join(problems))
           print(f"OK: {passed} passed, {skipped} justified skip(s).")
           PY
+
+      - name: Execute the KS tutorial notebooks
+        # Marked `slow` so they stay out of the pre-commit hook, but they run here:
+        # nothing else executes them, which is exactly how 01_explore_models.ipynb
+        # came to sit broken for months. Each notebook asserts its own scientific
+        # claims and prints a beacon; the test requires that beacon, so a notebook
+        # that runs but does nothing still fails.
+        run: python -m pytest -q -m slow models/kinetic_segregation/tests/test_notebooks.py
