@@ -99,10 +99,10 @@ functional forms, and default parameter values.
     TCR--pMHC binding &
       $\displaystyle E_\text{TCR}(h)
         = -U_\text{assoc}\,
-          \exp\!\Bigl(-\frac{h^2}{2\sigma_\text{bind}^2}\Bigr)$ &
+          \exp\!\Bigl(-\frac{(h-h_0^\text{TCR})^2}{2\sigma_\text{bind}^2}\Bigr)$ &
       $U_\text{assoc}=20\;k_BT$; \newline
       $\sigma_\text{bind}=3$~nm &
-      Gaussian attractive well centred at tight contact ($h=0$) \\[6pt]
+      Gaussian attractive well centred at the bond length $h_0^\text{TCR}$ \\[6pt]
     CD45 steric repulsion &
       $\displaystyle E_\text{CD45}(h)
         = \begin{cases}
@@ -152,12 +152,14 @@ full bending energy is then:
 TCR molecules are attracted to regions of low membrane height
 (tight contact between the T-cell and antigen-presenting cell),
 modelling TCR--pMHC engagement.  The potential is a Gaussian well
-centred at $h=0$:
+centred at the resting TCR--pMHC bond length $h_0^\text{TCR}=13$~nm---%
+\emph{not} at $h=0$.  A bound TCR is equally disfavoured when the membranes
+are too far apart and when they are squeezed closer than the bond allows:
 
 \begin{equation}
   \label{eq:tcr}
   E_\text{TCR}(h) \;=\; -U_\text{assoc}\,
-    \exp\!\left(-\frac{h^2}{2\,\sigma_\text{bind}^2}\right)
+    \exp\!\left(-\frac{(h-h_0^\text{TCR})^2}{2\,\sigma_\text{bind}^2}\right)
 \end{equation}
 
 \noindent
@@ -268,7 +270,12 @@ time step $\Delta t$ is computed as
 \begin{equation}
   \Delta t = \frac{\Delta x^2}{2\,D_h\,\kappa}\;\alpha_\text{safety}
 \end{equation}
-with safety factor $\alpha_\text{safety}=0.5$.  The molecular and
+with $\alpha_\text{safety}=0.05$ (\texttt{MAX\_BENDING\_DE\_PER\_STEP}), the
+maximum typical bending $\Delta E$ per grid point per step.  A second reduction
+then applies: $\Delta t \leftarrow \min(\Delta t,\;\ell^2/(8 D_\text{mol}))$,
+where $\ell$ is the smallest resolved length among $\Delta x$, $\sigma_r$
+(gaussian binding with pMHC present) and the molecular repulsion cutoff.  This
+keeps a proposed lateral move small relative to every feature it must resolve.  The molecular and
 membrane height step sizes are then
 \begin{equation}
   \sigma_\text{step} = \sqrt{2\,D_\text{mol}\,\Delta t},
@@ -326,7 +333,9 @@ given colour are dispatched in parallel.
     $h_0^\text{TCR}=13$~nm to seed a tight-contact zone.
   \item pMHC ligands are placed on the APC surface---either uniformly
     across the patch, or within a centred disc of radius $L/3$
-    (``inner-circle'' mode, default).  They remain static throughout
+    (``inner-circle'' mode).  Uniform placement is the default; note that
+    inner-circle is required for the centre-referenced depletion metrics to be
+    meaningful.  They remain static throughout
     the simulation.
   \item TCR molecules are co-located with randomly chosen pMHC
     positions, with a small Gaussian jitter ($\sigma_\text{bind}$),
@@ -373,10 +382,12 @@ values from Supplementary Table~S1 of the reference.
     \midrule
     Patch size          & $L$                   & 2000~nm ($2\;\mu$m) \\
     Grid resolution     & $N_\text{grid}$       & 64 \\
-    Grid spacing        & $\Delta x$            & $L / N_\text{grid} \approx 31.25$~nm \\
-    Number of TCR       & $N_\text{TCR}$        & 50 \\
-    Number of CD45      & $N_\text{CD45}$       & 100 \\
-    Number of pMHC      & $N_\text{pMHC}$       & 200 \\
+    Grid spacing        & $\Delta x$            & $L / N_\text{grid} \approx 31.25$~nm
+                                                  (but see \S\ref{sec:resolution}) \\
+    Number of TCR       & $N_\text{TCR}$        & 125 \\
+    Number of CD45      & $N_\text{CD45}$       & 500 \\
+    Number of pMHC      & $N_\text{pMHC}$       & auto: $300/\mu$m$^2$ over the
+                                                  placement area \\
     Association energy  & $U_\text{assoc}$      & $20\;k_BT$ \\
     Binding well width  & $\sigma_\text{bind}$  & 3~nm \\
     CD45 ectodomain     & $h_\text{CD45}$       & 50~nm \\
@@ -385,7 +396,7 @@ values from Supplementary Table~S1 of the reference.
     TCR contact height  & $h_0^\text{TCR}$      & 13~nm \\
     Mol.\ diffusion     & $D_\text{mol}$        & $10^4$~nm$^2$/s \\
     Height diffusion    & $D_h$                 & $5\times10^4$~nm$^2$/s \\
-    Safety factor       & $\alpha_\text{safety}$ & 0.5 \\
+    Safety factor       & $\alpha_\text{safety}$ & 0.05 \\
     Bending rigidity    & $\kappa$              & Swept (input parameter, $k_BT$) \\
     Simulation time     & $t$                   & Swept (input parameter) \\
     Random seed         & ---                   & 42 (per-point FNV-1a hash derived) \\
@@ -395,6 +406,23 @@ values from Supplementary Table~S1 of the reference.
 
 
 %% ----------------------------------------------------------------
+\subsection{Grid resolution and the pMHC influence field}
+\label{sec:resolution}
+
+In \texttt{gaussian} binding mode the TCR well at each cell is scaled by a pMHC
+influence weight $W=\min\!\bigl(1,\sum_k \exp(-r_k^2/2\sigma_r^2)\bigr)$, summed
+over pMHC within $3\sigma_r$ of the cell centre, with $\sigma_r=2$~nm by default.
+
+This makes $\Delta x$ a physical parameter rather than a discretisation choice.
+When $\Delta x \gg \sigma_r$ no cell centre lies within the cutoff, $W$ is
+identically zero, and the attractive term vanishes---so a seeded contact simply
+relaxes to $h_\text{init}$.  Measured at fixed physical time, the mean height
+inside the contact disc ends at 63.6~nm for $\Delta x=41.7$~nm versus 20.2~nm for
+$\Delta x=7.8$~nm.  Configurations intended to exercise binding should therefore
+keep $\Delta x$ within roughly a factor of a few of $\sigma_r$; the behaviour
+sweep in \texttt{experiments/ks\_behavior\_sweep/} uses $L=500$~nm with
+$N_\text{grid}=100$ ($\Delta x=5$~nm) for this reason.
+
 \section{Implementation}
 \label{sec:implementation}
 

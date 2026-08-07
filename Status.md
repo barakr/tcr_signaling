@@ -63,6 +63,16 @@ kinetic-segregation cell had been passing `--contact_fraction` and
 arguments" -- it now runs. `01` and `04` execute in ~3 s each; `02`/`03` need PyMC and
 are verified from the parent repo, where the framework lives.
 
+**`Methods/methods.tex` synced** (KS rule 5), four drifts corrected plus one addition:
+the TCR well is now written centred at $h_0^{TCR}$ rather than $h=0$ (Eq. 6 and the
+prose both said $h=0$; the code has centred it at 13 nm since 2026-03-09); Table 2
+populations corrected 50/100/200 -> 125/500/auto-at-300 per um^2; the step-size safety
+factor corrected 0.5 -> 0.05 with the second `calibrate_dt` force-field reduction now
+documented; `pmhc_mode` default corrected from inner-circle to uniform. Added a
+subsection documenting the dx vs sigma_r constraint, since it is a physical parameter
+rather than a discretisation choice. Recompiled with tectonic (installed into
+py314_bayesmm; it was absent).
+
 **Guard**: `models/kinetic_segregation/tests/test_notebooks.py` executes all five via
 `nbclient` and requires each notebook's `[KS_N self-check OK]` beacon, so a notebook
 that runs but does nothing still fails — the failure mode Status.md already records
