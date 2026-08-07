@@ -1,0 +1,64 @@
+name: KS model CI
+
+# CI for the TCR signaling case study, deliberately kept in THIS repo rather
+# than in the parent framework (metamodeler_codex_scaffold_docs).
+#
+# Rationale: this project has a native CMake/Metal build and its own pytest
+# config, and it fails for reasons that have nothing to do with the framework
+# (toolchain, Metal, physics regressions). Running it as a job inside the
+# framework's workflow would make the framework's status red for submodule
+# reasons — the cry-wolf problem. Separate repo, separate workflow, separate
+# badge and notifications: framework red means the framework is broken, and
+# this being red means the KS model is broken. It also matches the submodule
+# boundary in the parent CLAUDE.md ("Separate test runs").
+#
+# These tests import no framework code at all — only numpy/scipy/matplotlib —
+# so nothing needs to be installed from the parent repo.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  # Weekly, offset one hour from the framework's schedule so the two runs are
+  # easy to tell apart in notifications.
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+jobs:
+  ks-model:
+    name: macos-latest / KS model
+    # macOS only: the CMakeLists enables Objective-C for the Metal backend and
+    # links `-framework Metal`. Linux would take the CPU-fallback path and so
+    # would not exercise what this project actually ships.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Toolchain info
+        # Printed rather than installed: the macOS runner image ships cmake and
+        # the Xcode command line tools. If that ever stops being true this step
+        # fails loudly here instead of somewhere inside the build.
+        run: |
+          cmake --version
+          clang++ --version
+          xcrun --show-sdk-path
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install numpy scipy matplotlib pytest
+
+      - name: Build KS model (CMake + Metal)
+        working-directory: models/kinetic_segregation
+        run: make
+
+      - name: Run fast test suite
+        # `deterministic` is deselected: those are bit-level reproducibility
+        # tests that CLAUDE.md documents as platform-specific and expected to
+        # differ on new hardware, which a hosted runner is. Locally this is
+        # 159 tests; with `deterministic` included it is 167.
+        run: python -m pytest -q -m "not slow and not deterministic"
