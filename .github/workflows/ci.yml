@@ -13,9 +13,25 @@ name: KS model CI
 # These tests import no framework code at all — only numpy/scipy/matplotlib —
 # so nothing needs to be installed from the parent repo.
 #
-# Windows is absent on purpose: CMakeLists.txt has no WIN32/MSVC branch, so the
-# model does not build there. A Windows job would skip everything and report a
-# green that means nothing. If Windows support lands, add it here.
+# Windows is absent on purpose (decided 2026-08-07), not overlooked.
+#
+# CMakeLists.txt has no WIN32/MSVC branch, so the model does not build there; a
+# Windows job today would skip everything and report a meaningless green.
+#
+# Both ways of fixing that were costed and rejected:
+#   * MSYS2/UCRT64 (~2h) compiles the same `gpu_stub.c` non-Apple path with GCC
+#     that the ubuntu job already builds — a third GCC build of covered code,
+#     so almost no new signal for permanent upkeep.
+#   * Native MSVC (~1 day) WOULD add signal (different compiler, CRT and C11
+#     conformance), but the cost is real: `M_PI` needs _USE_MATH_DEFINES, 15
+#     test files hardcode the `ks_gpu` binary name (Windows adds `.exe`), 8
+#     shell out to `make`, and libks_potentials needs WINDOWS_EXPORT_ALL_SYMBOLS
+#     plus a config-subdir path for ctypes.
+#
+# Neither serves a known user: the framework already covers Windows for the
+# pure-Python layer, which is what most users touch, and no one runs the native
+# KS simulation there. Revisit when an actual Windows user for the C model
+# appears — then do native MSVC, since MSYS2 would not prove what they need.
 
 on:
   push:
