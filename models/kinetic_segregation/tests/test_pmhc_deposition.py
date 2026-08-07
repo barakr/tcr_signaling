@@ -169,7 +169,13 @@ class TestFlagValidation:
             timeout=120,
         )
         assert proc.returncode != 0, "a misspelled deposition mode must fail loudly"
-        assert "must be 'point' or 'area'" in proc.stderr
+        assert "must be 'point'/'0' or 'area'/'1'" in proc.stderr
+
+    def test_numeric_aliases_work(self, tmp_path):
+        """A ModelSpec DOE grid is float-only, so a spec can only send "1.0"."""
+        for value, expected in (("0", "point"), ("1", "area"), ("1.0", "area")):
+            d, _ = _run(tmp_path, patch=500, grid=64, deposition=value, label=f"n{value}")
+            assert d["pmhc_deposition"] == expected, f"{value!r} should mean {expected}"
 
     def test_wrapper_forwards_the_flag(self, tmp_path):
         """The Python wrapper must expose it, or specs cannot opt in."""

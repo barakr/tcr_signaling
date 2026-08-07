@@ -35,11 +35,6 @@ _MAX_DX_OVER_SIGMA_R = 4.0
 
 # Specs known to be under-resolved, each with the reason it has not been changed.
 # Removing an entry from here is how you certify a spec has been fixed.
-_PRODUCTION = (
-    "production spec feeding the metamodel; changing patch_size/grid_size changes the "
-    "modelled system and would invalidate fitted surrogates. Pending a scientific "
-    "decision -- see Status.md 2026-08-07."
-)
 _DEMO = (
     "speed-first demo fixture; kept coarse deliberately because it demonstrates the "
     "workflow rather than the physics."
@@ -50,7 +45,6 @@ _SWEEP = (
 )
 
 KNOWN_UNRESOLVED = {
-    "specs/model.kinetic_segregation.json": _PRODUCTION,
     "examples/specs/model.kinetic_segregation.fast.json": _DEMO,
     "examples/specs/model.kinetic_segregation.regular.json": _DEMO,
     "examples/specs/model.kinetic_segregation.extensive.json": _DEMO,
@@ -85,6 +79,15 @@ def _dx_of(path: Path) -> float:
     return patch / n
 
 
+def _uses_area_deposition(path: Path) -> bool:
+    """Area deposition is mesh-independent, so it resolves the problem without a
+    finer grid. The DOE grid is float-only, hence the 1.0 encoding."""
+    spec = json.loads(path.read_text(encoding="utf-8"))
+    grid = spec.get("design", {}).get("grid", {}) or {}
+    val = _first(grid, "pmhc_deposition", None)
+    return val is not None and float(val) == 1.0
+
+
 def test_specs_were_found():
     """Guard the guard -- an empty glob would make the audit vacuous."""
     assert _spec_paths(), "no KS specs found; the audit globs are wrong"
@@ -94,11 +97,12 @@ def test_specs_were_found():
 def test_spec_is_resolved_or_declared(spec: Path):
     rel = spec.relative_to(_REPO).as_posix()
     ratio = _dx_of(spec) / _SIGMA_R
-    resolved = ratio <= _MAX_DX_OVER_SIGMA_R
+    resolved = ratio <= _MAX_DX_OVER_SIGMA_R or _uses_area_deposition(spec)
 
     if resolved:
         assert rel not in KNOWN_UNRESOLVED, (
-            f"{rel} is now resolved (dx/sigma_r = {ratio:.1f}); remove it from "
+            f"{rel} is now resolved (dx/sigma_r = {ratio:.1f}, "
+            f"area_deposition={_uses_area_deposition(spec)}); remove it from "
             "KNOWN_UNRESOLVED so the audit keeps its teeth."
         )
         return

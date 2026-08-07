@@ -29,6 +29,26 @@ def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:
             setattr(args, key, val)
 
 
+def _deposition(value: str) -> str:
+    """Accept the canonical names and their numeric aliases, reject anything else.
+
+    A ModelSpec DOE grid is typed float-only, so a spec reaching this flag can only
+    send "1.0". Mirrors the C CLI, which accepts the same set.
+    """
+    table = {
+        "point": "point",
+        "0": "point",
+        "0.0": "point",
+        "area": "area",
+        "1": "area",
+        "1.0": "area",
+    }
+    key = str(value).strip()
+    if key not in table:
+        raise argparse.ArgumentTypeError(f"must be 'point'/'0' or 'area'/'1', got {value!r}")
+    return table[key]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Kinetic segregation model (CPU/GPU)")
     parser.add_argument("--params", type=str, default=None, help="JSON parameter file")
@@ -91,11 +111,11 @@ def main() -> int:
     # because a spec cannot otherwise opt into the mesh-independent deposition.
     parser.add_argument(
         "--pmhc_deposition",
-        type=str,
+        type=_deposition,
         default=None,
-        choices=["point", "area"],
-        help="Phase-2 pMHC deposition: 'point' (default, cell-centre sample) or "
-        "'area' (exact cell average; mesh-independent)",
+        help="Phase-2 pMHC deposition: 'point'/'0' (default, cell-centre sample) or "
+        "'area'/'1' (exact cell average; mesh-independent). Numeric aliases exist "
+        "because a ModelSpec DOE grid is float-only.",
     )
     parser.add_argument("--h0_tcr", type=float, default=None, help="TCR-pMHC bond length (nm)")
     parser.add_argument(

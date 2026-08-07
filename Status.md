@@ -6,6 +6,57 @@
 
 ## Decision Log
 
+### 2026-08-07: Production spec switched to area deposition + inner_circle pMHC
+
+Ran `specs/model.kinetic_segregation.json` both ways before deciding. Two findings
+made the decision easy, and one of them was more serious than the deposition question.
+
+**1. There is nothing to invalidate.** All four surrogate artifacts
+`specs/metamodel.tcr_signaling.json` references are **missing**, `store/` holds only
+`.gitkeep`, and no sweep output is tracked in git. No production sweep result exists on
+disk, so switching cannot conflict with anything previously computed.
+
+**2. The spec's declared output was mostly zero.** It never set `pmhc_mode`, so it
+inherited `uniform`. Uniform ligands give no centred contact, and `depletion_width_nm`
+is measured from the patch centre -- so it returned exactly `0.000` for 3 of 4 sampled
+points (the fourth, 82.09, is noise). A surrogate fitted to that data would have been
+fitting zeros. This was the real defect; the deposition scheme was secondary.
+
+**3. The deposition change itself is small.** At the spec's own configuration
+(dx = 31.25 nm), 3 paired seeds at kappa = 1 with everything else held fixed:
+point 220.5 +/- 14.2 nm, area 213.7 +/- 11.8 nm. The mode difference (-3.1%) is
+**smaller than the seed-to-seed spread (+/-6.5%)**, so on this observable it is not a
+distinguishable effect. What area deposition changes is that the membrane coupling
+exists at all -- the deposited weight goes from a fraction of the target to the full
+target -- not the value of this particular summary statistic.
+
+**Spec now sets**, as single-valued DOE entries (the same trick `examples/specs`
+profiles already use): `pmhc_mode=1` (inner_circle), `pmhc_radius=666.67`,
+`n_pmhc=419`, `pmhc_deposition=1` (area). Verified end to end through
+`bayesmm run`: 2/2 points succeed and produce **227.8 nm (kappa=1)** and
+**263.4 nm (kappa=5)**, where the old configuration produced `0.000`.
+
+`--pmhc_deposition` now also accepts `0`/`1` (and `0.0`/`1.0`) alongside the canonical
+names, in both the C CLI and the Python wrapper, because a `ModelSpec` DOE grid is
+typed `dict[str, list[float]]` -- a spec cannot send a string. Mirrors `--pmhc_mode`,
+which already accepts `0`/`1`. Anything outside the accepted set is still an error, not
+a silent fallback.
+
+`test_spec_resolution.py` now treats `pmhc_deposition = area` as resolving the mesh
+problem (it is mesh-independent by construction), so the production spec is no longer
+in `KNOWN_UNRESOLVED`; the three demo fixtures and the sweep DOE remain declared.
+`TOTAL_FLOOR` 172 -> 173 (178 collected). One assertion in
+`test_pmhc_deposition.py` was updated to match the widened error message -- the
+behaviour it guards (typo rejected, non-zero exit) is unchanged, and numeric-alias
+coverage was added alongside it.
+
+**Scientific expectation for anyone re-running:** results will NOT match previous
+runs, because previously there were effectively none -- the old configuration returned
+zero for most of the grid. This is the first configuration of this spec that produces a
+non-degenerate `depletion_width_nm`. Treat any earlier KS numbers as void rather than
+as a baseline to compare against.
+
+
 ### 2026-08-07: Fix the pMHC deposition defect (opt-in), make it undetectable-proof
 
 The under-resolution flagged earlier the same day turned out to be a genuine defect with

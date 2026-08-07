@@ -5,39 +5,166 @@
     "version": "0.2.0",
     "artifact": {
       "type": "local",
-      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.kinetic_segregation"]
+      "entrypoint": [
+        "python",
+        "-m",
+        "projects.tcr_signaling.models.kinetic_segregation"
+      ]
     }
   },
   "runner": {
     "mode": "local_process",
-    "resources": { "cpus": 1, "mem_gb": 2, "walltime_min": 5 }
+    "resources": {
+      "cpus": 1,
+      "mem_gb": 2,
+      "walltime_min": 5
+    }
   },
   "io_schema": {
     "inputs": [
-      { "name": "time_sec", "type": "float", "units": "sec", "support": [0.0, 100.0] },
-      { "name": "rigidity_kT_nm2", "type": "float", "units": "kT", "support": [0.0, 100.0] }
+      {
+        "name": "time_sec",
+        "type": "float",
+        "units": "sec",
+        "support": [
+          0.0,
+          100.0
+        ]
+      },
+      {
+        "name": "rigidity_kT_nm2",
+        "type": "float",
+        "units": "kT",
+        "support": [
+          0.0,
+          100.0
+        ]
+      },
+      {
+        "name": "pmhc_mode",
+        "type": "float",
+        "units": "mode"
+      },
+      {
+        "name": "pmhc_radius",
+        "type": "float",
+        "units": "nm"
+      },
+      {
+        "name": "n_pmhc",
+        "type": "float",
+        "units": "count"
+      },
+      {
+        "name": "pmhc_deposition",
+        "type": "float",
+        "units": "mode"
+      }
     ],
     "outputs": [
-      { "name": "depletion_width_nm", "type": "float", "units": "nm" }
+      {
+        "name": "depletion_width_nm",
+        "type": "float",
+        "units": "nm"
+      }
     ]
   },
   "design": {
     "strategy": "grid",
     "grid": {
-      "time_sec": [5.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0],
-      "rigidity_kT_nm2": [1.0, 5.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0]
+      "time_sec": [
+        5.0,
+        10.0,
+        20.0,
+        30.0,
+        50.0,
+        70.0,
+        100.0
+      ],
+      "rigidity_kT_nm2": [
+        1.0,
+        5.0,
+        10.0,
+        20.0,
+        30.0,
+        50.0,
+        70.0,
+        100.0
+      ],
+      "pmhc_mode": [
+        1.0
+      ],
+      "pmhc_radius": [
+        666.67
+      ],
+      "n_pmhc": [
+        419.0
+      ],
+      "pmhc_deposition": [
+        1.0
+      ]
     }
   },
   "adapter": {
     "id": "python_cli_adapter_v1",
     "input_mapping": [
-      { "var": "time_sec", "to": { "kind": "cli_arg", "key": "--time_sec" } },
-      { "var": "rigidity_kT_nm2", "to": { "kind": "cli_arg", "key": "--rigidity_kT_nm2" } }
+      {
+        "var": "time_sec",
+        "to": {
+          "kind": "cli_arg",
+          "key": "--time_sec"
+        }
+      },
+      {
+        "var": "rigidity_kT_nm2",
+        "to": {
+          "kind": "cli_arg",
+          "key": "--rigidity_kT_nm2"
+        }
+      },
+      {
+        "var": "pmhc_mode",
+        "to": {
+          "kind": "cli_arg",
+          "key": "--pmhc_mode"
+        }
+      },
+      {
+        "var": "pmhc_radius",
+        "to": {
+          "kind": "cli_arg",
+          "key": "--pmhc_radius"
+        }
+      },
+      {
+        "var": "n_pmhc",
+        "to": {
+          "kind": "cli_arg",
+          "key": "--n_pmhc"
+        }
+      },
+      {
+        "var": "pmhc_deposition",
+        "to": {
+          "kind": "cli_arg",
+          "key": "--pmhc_deposition"
+        }
+      }
     ],
     "output_mapping": [
-      { "var": "depletion_width_nm", "from": { "kind": "file", "path": "out/segregation.json" } }
+      {
+        "var": "depletion_width_nm",
+        "from": {
+          "kind": "file",
+          "path": "out/segregation.json"
+        }
+      }
     ]
   },
-  "reproducibility": { "seed": 42 },
-  "storage": { "root": "projects/tcr_signaling/store" }
+  "reproducibility": {
+    "seed": 42
+  },
+  "storage": {
+    "root": "projects/tcr_signaling/store"
+  }
 }

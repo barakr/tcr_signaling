@@ -275,12 +275,16 @@ int main(int argc, const char *argv[]) {
             params_file = argv[++i];
         else if (match(argv[i], "--pmhc_deposition") && i + 1 < argc) {
             std::string mode = argv[++i];
-            if (mode == "point") pmhc_deposition_arg = 0;
-            else if (mode == "area") pmhc_deposition_arg = 1;
+            /* Names are canonical; 0/1 are accepted because a ModelSpec DOE grid is
+             * typed float-only, so a spec can only reach this flag numerically.
+             * Mirrors --pmhc_mode, which already accepts 0/1. Anything else is an
+             * error rather than a silent fallback. */
+            if (mode == "point" || mode == "0" || mode == "0.0") pmhc_deposition_arg = 0;
+            else if (mode == "area" || mode == "1" || mode == "1.0") pmhc_deposition_arg = 1;
             else {
                 std::fprintf(stderr,
-                             "error: --pmhc_deposition must be 'point' or 'area', got '%s'\n",
-                             mode.c_str());
+                             "error: --pmhc_deposition must be 'point'/'0' or 'area'/'1', "
+                             "got '%s'\n", mode.c_str());
                 return 2;
             }
         }
