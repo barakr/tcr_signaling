@@ -50,6 +50,19 @@ overrides an explicit CLI flag for the three mode options; `--dump-frames` zeroe
 `np.median` reconstructions of `depletion_width_nm` disagree (by 0.39 nm in the worked
 example) while `sorted[n//2]` matches to 1e-13.
 
+**Navigation and the existing notebooks**: new `notebooks/Tutorial_0_Start_Here.ipynb`
+routes readers between the model track (KS 1-5, framework-free) and the metamodel track
+(`01`-`04`, needs `bayesmm`), with an environment check that reports which track is
+actually runnable. `01`-`04` reworked in place: the fragile
+`Path.cwd().parent.parent.parent` bootstrap replaced with an upward search (it assumed
+a submodule checkout and broke standalone); `projects.tcr_signaling.models.*` module
+paths and doubled `projects/tcr_signaling/` path prefixes corrected to match; learning
+aims, a framework-dependency banner and a self-check beacon added to each. `01`'s
+kinetic-segregation cell had been passing `--contact_fraction` and
+`--cd45_bulk_density` since the 2026-03 rewrite and errored with "unrecognized
+arguments" -- it now runs. `01` and `04` execute in ~3 s each; `02`/`03` need PyMC and
+are verified from the parent repo, where the framework lives.
+
 **Guard**: `models/kinetic_segregation/tests/test_notebooks.py` executes all five via
 `nbclient` and requires each notebook's `[KS_N self-check OK]` beacon, so a notebook
 that runs but does nothing still fails — the failure mode Status.md already records
