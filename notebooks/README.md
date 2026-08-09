@@ -21,16 +21,24 @@ notebooks build the simulator themselves the first time you run them.
 | Notebook | Question it answers | Time |
 |---|---|---|
 | [`models/kinetic_segregation/KS_1_Kinetic_Segregation`](models/kinetic_segregation/KS_1_Kinetic_Segregation.ipynb) | What *is* kinetic segregation, and why does it need a simulation? | ~2 s |
-| [`KS_2_The_Energy_Model`](models/kinetic_segregation/KS_2_The_Energy_Model.ipynb) | What are the three energy terms, and what is the MC scheme? | ~3 s |
-| [`KS_3_First_Simulation`](models/kinetic_segregation/KS_3_First_Simulation.ipynb) | Run it; what does every output key mean? | ~20 s |
-| [`KS_4_Key_Parameters`](models/kinetic_segregation/KS_4_Key_Parameters.ipynb) | What do rigidity, CD45 height and binding mode actually do? | ~45 s |
-| [`KS_5_Observables_and_Pitfalls`](models/kinetic_segregation/KS_5_Observables_and_Pitfalls.ipynb) | Which of the eight metrics should you trust, and when? | ~3 s |
+| [`KS_2_The_Energy_Model`](models/kinetic_segregation/KS_2_The_Energy_Model.ipynb) | What are the three energy terms, and what is the MC scheme? | ~4 s |
+| [`KS_3_First_Simulation`](models/kinetic_segregation/KS_3_First_Simulation.ipynb) | Run it; what does every output key mean? | ~18 s |
+| [`KS_4_Key_Parameters`](models/kinetic_segregation/KS_4_Key_Parameters.ipynb) | What do rigidity, CD45 height and binding mode actually do? | ~33 s |
+| [`KS_5_Observables_and_Pitfalls`](models/kinetic_segregation/KS_5_Observables_and_Pitfalls.ipynb) | Which of the eight metrics should you trust, and when? | ~2 s |
+
+Timings are from a clean clone on an M-series Mac, including the one-off build of
+the simulator; the series is about a minute end to end.
 
 **Work them in order.** Each builds on the previous one, and KS 4 assumes the resolution
 lesson from KS 3.
 
 **Track B — the metamodel.** How do four separately-built models get combined into one
-joint posterior? Sweeps, surrogates, couplings and the paper's figures.
+joint description? Sweeps, surrogates, couplings and the paper's figures.
+
+One thing to carry in: `bayesmm meta sample` performs **forward uncertainty
+propagation**, not conditioning — it draws from the priors and pushes those draws through
+the coupling transforms. `03` says so plainly. Read "posterior" in that notebook with
+that in mind.
 
 Needs the `bayesian-metamodeling` framework (`bayesmm`), and PyMC for `02` and `03`.
 
@@ -38,12 +46,21 @@ Needs the `bayesian-metamodeling` framework (`bayesmm`), and PyMC for `02` and `
 |---|---|---|
 | [`01_explore_models`](01_explore_models.ipynb) | What do the four partial models each produce? | `bayesmm` |
 | [`02_fit_surrogates`](02_fit_surrogates.ipynb) | How do you replace a slow model with a fast probabilistic one? | `bayesmm`, PyMC |
-| [`03_metamodel_inference`](03_metamodel_inference.ipynb) | How do coupled models constrain each other? | `bayesmm`, PyMC |
+| [`03_metamodel_inference`](03_metamodel_inference.ipynb) | How does uncertainty propagate through coupled models? | `bayesmm`, PyMC |
 | [`04_reproduce_figures`](04_reproduce_figures.ipynb) | Why does phosphorylated TCR form a *ring*? | `bayesmm` |
 
-> **`02` and `03` are not quick.** `02` sweeps every model spec — 79 design points, 56 of
-> them the KS production spec — which is real simulation, not a smoke test. Budget tens of
-> minutes, and use the `py312_bayesmm_pymc` environment.
+Use the `py312_bayesmm_pymc` environment for this track.
+
+> **`02` runs at a reduced "teaching scale" by default**, so the series is quick enough to
+> sit through. That is a deliberate choice, not a shortcut hidden from you: the notebook
+> says so, and its *Running it for real* section gives the single switch
+> (`TEACHING_SCALE = False`) plus the commands for the production design. At production
+> scale the sweeps take hours — KS wall-time is linear in simulated time, and the full
+> design spans `time_sec` up to 100 s.
+>
+> Worth knowing before you read the numbers: the teaching values sit **below** the
+> production parameter range, not merely at its cheap end. The surrogate you fit is a
+> demonstration of the mechanics, not a scientific result.
 
 ## If you are new here
 

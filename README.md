@@ -18,9 +18,9 @@ tells you which parts will run on your machine before you hit an error. From the
   a five-notebook course on the kinetic-segregation model: the biology, the energy
   function, running it, what each parameter does, and how to read the results without
   fooling yourself. Framework-free (numpy + a C toolchain); the whole series runs in
-  about 80 seconds.
+  about a minute.
 - **[`notebooks/`](notebooks/README.md)** — the metamodel track: sweeps, surrogates,
-  coupled inference and the paper's figures. Needs `bayesmm`, and PyMC for `02`/`03`.
+  coupling, uncertainty propagation and the paper's figures. Needs `bayesmm`, and PyMC for `02`/`03`.
 
 See [`notebooks/README.md`](notebooks/README.md) for the full map and timings.
 
