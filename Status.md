@@ -6,6 +6,49 @@
 
 ## Decision Log
 
+### 2026-08-07: Why the metamodel returned its prior — three causes, none of them the data
+
+Follow-up to the caveat in the entry below. The teaching sweeps were not at fault:
+they vary substantially (contact_fraction 0.087-0.442, mean_lck_activity 0-437,
+ptcr_fraction 0-0.998). Three separate causes, found by reading the compiler:
+
+1. **All three couplings were self-links.** `source == target` under an identity
+   transform, and the compiler computes `residual = target - transform(source)` —
+   identically zero. Three provable no-ops that looked like coupling.
+2. **Five variables had no prior**, so they defaulted to `N(0, 1)`. For
+   `depletion_width_nm` that means the sampler was drawing *negative nanometres*.
+   Those five are exactly the variables that came back at mean ~0, sd ~1.
+3. **`meta sample` does not condition on anything.** Its own docstring says it
+   generates "prior draws and coupling transforms", and it calls
+   `evaluate_log_prob(probe, surrogates={})` — an empty map — so all four
+   surrogate likelihood factors hit the `continue` branch and contribute nothing.
+   There is no MCMC in `meta/` at all. "Posterior" is a misnomer; the command
+   performs forward uncertainty propagation.
+
+**What changed in the spec.** One coupling replaces the three no-ops, and it is
+derived rather than fitted: `cd45_boundary = cd45_bulk / (1 - contact_fraction)`,
+the kinetic-segregation mechanism itself, declared `deterministic` with an affine
+transform (alpha=588.81, beta=277.30) — the linearisation over the contact-fraction
+range the sweeps actually produced. Deterministic on purpose: the docstring notes
+the post-draw approximation is *exact* for deterministic transforms and biased for
+soft links. One-dimensional fits for the other candidate links were rejected
+(r = 0.34-0.68) because those sweeps vary four inputs at once, so the fits would
+have been curve-fitting dressed as mechanism.
+
+The five unpriored variables now take the mean and spread **observed in notebook
+02's sweeps**. Result: draws are physically located rather than standard normal —
+`depletion_width_nm` 334.5 +/- 34.5 nm, `cd45_boundary_density` 412.8 +/- 81.5,
+and `corr(contact_fraction, cd45_boundary_density) = 1.000000` exactly, which is
+the propagation being real rather than noise.
+
+**A limitation left visible, not papered over.** `_prior_params` accepts only
+`kind: "normal"`, so bounded quantities cannot be expressed. `ptcr_fraction`
+saturates near 1 (sweeps: mean 0.86, sd 0.34), so 33% of draws land above 1.0. The
+self-check reports that percentage and asserts only what a Gaussian can honestly
+deliver — a median inside range — rather than shrinking the prior until the leak
+disappears, which would understate a spread the data really shows. A Beta or
+truncated normal is the fix; the sampler does not support one yet.
+
 ### 2026-08-07: 01-04 now run end to end in ~3 minutes
 
 Follow-up to the entry below. Two further framework bugs had to be fixed in the

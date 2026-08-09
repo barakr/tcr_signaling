@@ -1,36 +1,35 @@
 {
   "couplings": [
     {
-      "kind": "gaussian_link",
-      "sigma": 0.05,
+      "kind": "deterministic",
       "source": "contact_fraction",
-      "target": "contact_fraction",
+      "target": "cd45_boundary_density",
       "transform": {
-        "kind": "identity"
-      }
-    },
-    {
-      "kind": "gaussian_link",
-      "sigma": 10.0,
-      "source": "depletion_width_nm",
-      "target": "depletion_width_nm",
-      "transform": {
-        "kind": "identity"
-      }
-    },
-    {
-      "kind": "gaussian_link",
-      "sigma": 10.0,
-      "source": "mean_lck_activity",
-      "target": "mean_lck_activity",
-      "transform": {
-        "kind": "identity"
+        "alpha": 588.81,
+        "beta": 277.3,
+        "kind": "affine"
       }
     }
   ],
   "name": "tcr_signaling_metamodel",
   "ppl_backend": "pymc",
   "priors": [
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 403.2,
+        "scale": 85.12
+      },
+      "variable": "cd45_boundary_density"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 0.2304,
+        "scale": 0.1389
+      },
+      "variable": "contact_fraction"
+    },
     {
       "distribution": {
         "kind": "normal",
@@ -42,34 +41,18 @@
     {
       "distribution": {
         "kind": "normal",
-        "loc": 2.0,
-        "scale": 0.5
+        "loc": 0.2,
+        "scale": 0.1
       },
-      "variable": "patch_size"
+      "variable": "dephosphorylation_rate"
     },
     {
       "distribution": {
         "kind": "normal",
-        "loc": 50.0,
-        "scale": 25.0
+        "loc": 333.5,
+        "scale": 35.23
       },
-      "variable": "time_sec"
-    },
-    {
-      "distribution": {
-        "kind": "normal",
-        "loc": 30.0,
-        "scale": 20.0
-      },
-      "variable": "rigidity_kT_nm2"
-    },
-    {
-      "distribution": {
-        "kind": "normal",
-        "loc": 0.07,
-        "scale": 0.02
-      },
-      "variable": "lck_decay_length"
+      "variable": "depletion_width_nm"
     },
     {
       "distribution": {
@@ -82,10 +65,26 @@
     {
       "distribution": {
         "kind": "normal",
-        "loc": 150.0,
-        "scale": 50.0
+        "loc": 0.07,
+        "scale": 0.02
       },
-      "variable": "tcr_density"
+      "variable": "lck_decay_length"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 131.0,
+        "scale": 140.0
+      },
+      "variable": "mean_lck_activity"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 2.0,
+        "scale": 0.5
+      },
+      "variable": "patch_size"
     },
     {
       "distribution": {
@@ -98,10 +97,34 @@
     {
       "distribution": {
         "kind": "normal",
-        "loc": 0.2,
-        "scale": 0.1
+        "loc": 0.8611,
+        "scale": 0.3364
       },
-      "variable": "dephosphorylation_rate"
+      "variable": "ptcr_fraction"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 30.0,
+        "scale": 20.0
+      },
+      "variable": "rigidity_kT_nm2"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 150.0,
+        "scale": 50.0
+      },
+      "variable": "tcr_density"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 50.0,
+        "scale": 25.0
+      },
+      "variable": "time_sec"
     }
   ],
   "schema_version": "1.0",
