@@ -4,6 +4,26 @@ Reproduction of "Bayesian metamodeling of early T-cell antigen receptor signalin
 accounts for its nanoscale activation patterns" (Neve-Oz, Sherman & Raveh,
 *Frontiers in Immunology*, 2024).
 
+## New here? Start with the tutorials
+
+```bash
+conda activate py314_bayesmm
+jupyter lab notebooks/Tutorial_0_Start_Here.ipynb
+```
+
+`Tutorial_0` is orientation only — ten minutes, no simulation — and its environment check
+tells you which parts will run on your machine before you hit an error. From there:
+
+- **[`notebooks/models/kinetic_segregation/`](notebooks/models/kinetic_segregation/)** —
+  a five-notebook course on the kinetic-segregation model: the biology, the energy
+  function, running it, what each parameter does, and how to read the results without
+  fooling yourself. Framework-free (numpy + a C toolchain); the whole series runs in
+  about 80 seconds.
+- **[`notebooks/`](notebooks/README.md)** — the metamodel track: sweeps, surrogates,
+  coupled inference and the paper's figures. Needs `bayesmm`, and PyMC for `02`/`03`.
+
+See [`notebooks/README.md`](notebooks/README.md) for the full map and timings.
+
 ## Paper Reference
 
 - **Title**: Bayesian metamodeling of early T-cell antigen receptor signaling

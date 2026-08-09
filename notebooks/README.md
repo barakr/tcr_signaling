@@ -1,0 +1,70 @@
+# Notebooks
+
+Start with **[`Tutorial_0_Start_Here.ipynb`](Tutorial_0_Start_Here.ipynb)**. It takes ten
+minutes, runs no simulation, and its environment check tells you which of the two tracks
+below will actually work on your machine before you hit an error.
+
+```bash
+conda activate py314_bayesmm
+jupyter lab Tutorial_0_Start_Here.ipynb
+```
+
+## Two tracks
+
+**Track A — the model.** How does one biophysical model work? Currently that means
+kinetic segregation: the biology, the energy function, the Monte Carlo scheme, what each
+parameter does, and how to measure the result without fooling yourself.
+
+Needs numpy, matplotlib and a C toolchain (CMake + a C++ compiler). **No framework.** The
+notebooks build the simulator themselves the first time you run them.
+
+| Notebook | Question it answers | Time |
+|---|---|---|
+| [`models/kinetic_segregation/KS_1_Kinetic_Segregation`](models/kinetic_segregation/KS_1_Kinetic_Segregation.ipynb) | What *is* kinetic segregation, and why does it need a simulation? | ~2 s |
+| [`KS_2_The_Energy_Model`](models/kinetic_segregation/KS_2_The_Energy_Model.ipynb) | What are the three energy terms, and what is the MC scheme? | ~3 s |
+| [`KS_3_First_Simulation`](models/kinetic_segregation/KS_3_First_Simulation.ipynb) | Run it; what does every output key mean? | ~20 s |
+| [`KS_4_Key_Parameters`](models/kinetic_segregation/KS_4_Key_Parameters.ipynb) | What do rigidity, CD45 height and binding mode actually do? | ~45 s |
+| [`KS_5_Observables_and_Pitfalls`](models/kinetic_segregation/KS_5_Observables_and_Pitfalls.ipynb) | Which of the eight metrics should you trust, and when? | ~3 s |
+
+**Work them in order.** Each builds on the previous one, and KS 4 assumes the resolution
+lesson from KS 3.
+
+**Track B — the metamodel.** How do four separately-built models get combined into one
+joint posterior? Sweeps, surrogates, couplings and the paper's figures.
+
+Needs the `bayesian-metamodeling` framework (`bayesmm`), and PyMC for `02` and `03`.
+
+| Notebook | Question it answers | Needs |
+|---|---|---|
+| [`01_explore_models`](01_explore_models.ipynb) | What do the four partial models each produce? | `bayesmm` |
+| [`02_fit_surrogates`](02_fit_surrogates.ipynb) | How do you replace a slow model with a fast probabilistic one? | `bayesmm`, PyMC |
+| [`03_metamodel_inference`](03_metamodel_inference.ipynb) | How do coupled models constrain each other? | `bayesmm`, PyMC |
+| [`04_reproduce_figures`](04_reproduce_figures.ipynb) | Why does phosphorylated TCR form a *ring*? | `bayesmm` |
+
+> **`02` and `03` are not quick.** `02` sweeps every model spec — 79 design points, 56 of
+> them the KS production spec — which is real simulation, not a smoke test. Budget tens of
+> minutes, and use the `py312_bayesmm_pymc` environment.
+
+## If you are new here
+
+Read **KS 1 first even if you came for the metamodel.** Track B treats each partial model
+as a box that emits a number; Track A is where you learn what that number means and how
+badly it can mislead you. Three findings in the KS series are the difference between a
+result and an artefact:
+
+- Grid spacing is a physical parameter, not a discretisation choice (KS 3).
+- A parameter that appears to do nothing may mean your *observable* is saturated, not
+  that your model is insensitive (KS 4).
+- Two of the eight depletion metrics are `null` by default, and they happen to be the two
+  that survive an off-centre contact (KS 5).
+
+## Notes
+
+- Every notebook ships with its outputs stored, so you can read them on GitHub without
+  running anything.
+- Each ends in a self-check cell printing `[... self-check OK]`. If you re-run a notebook
+  and that line does not appear, something is wrong even if no cell raised —
+  `models/kinetic_segregation/tests/test_notebooks.py` enforces exactly this in CI.
+- KS 3 has a `MAKE_MOVIE = False` cell. Set it `True` (and have `ffmpeg` on PATH) to
+  render an MP4 of a run via `render_movie.py`. It is off by default because CI has no
+  ffmpeg.

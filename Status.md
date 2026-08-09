@@ -6,6 +6,35 @@
 
 ## Decision Log
 
+### 2026-08-07: Tutorial readiness — orientation, and a fresh-clone rehearsal
+
+Verified the tutorials the way a new reader meets them rather than the way they were
+built. Cloned the repo standalone into a temp directory (no submodule layout, no
+pre-built `ks_gpu`, no local state) and executed the whole KS series cold:
+
+| notebook | time | figures | beacon |
+|---|---|---|---|
+| KS_1 | 1.6 s | 1 | yes |
+| KS_2 | 4.1 s | 2 | yes |
+| KS_3 | 18.2 s | 2 | yes |
+| KS_4 | 33.1 s | 3 | yes |
+| KS_5 | 2.1 s | 1 | yes |
+
+59 s for the series. KS_2 built the ctypes shared library and KS_3 built the simulator
+binary on demand, so the "notebooks build what they need" claim is now tested rather
+than asserted. Tutorial_0's environment check reported correctly from the clean clone.
+
+**Two discoverability gaps closed.** `notebooks/` had no README, so a reader opening it
+got five files and a directory with no indication that `Tutorial_0` is the entry point;
+and the repo README mentioned notebooks only as a one-line directory description. Added
+`notebooks/README.md` (two-track map, per-notebook question and timing, the three
+findings worth knowing before starting) and a "New here? Start with the tutorials"
+section at the top of `README.md`. All relative links verified to resolve.
+
+Also checked and found clean: the KS_1 -> KS_5 "where to go next" chain is complete, and
+no stale text survived the visual edits.
+
+
 ### 2026-08-07: Why the metamodel returned its prior — three causes, none of them the data
 
 Follow-up to the caveat in the entry below. The teaching sweeps were not at fault:
