@@ -6,6 +6,37 @@
 
 ## Decision Log
 
+### 2026-08-07: 01-04 now run end to end in ~3 minutes
+
+Follow-up to the entry below. Two further framework bugs had to be fixed in the
+parent before this series could work at all, and 02 was made fast enough to read.
+
+- **02 sweeps at teaching scale, in 30 s.** Three knobs, and the third is the
+  10x: grid levels 8 -> 2, Sobol 64 -> 8, and `time_sec` overridden to 0.5/1.0.
+  KS wall-time is linear in simulated time (measured here: 0.5 s -> 4 s,
+  5 s -> 40 s, 100 s -> >9 min), so the production design is hours. The teaching
+  values are BELOW the production range, not merely its cheap end — stated in the
+  notebook, because it means the depletion widths are smaller than the production
+  numbers and the surrogate is a demonstration of mechanics, not a result.
+- **A "Running it for real" section** gives the exact commands and the single
+  switch (`TEACHING_SCALE = False`), says to budget hours, and explains that only
+  the data changes — every spec, adapter, path and coupling is identical, because
+  scale lives in the design block, not the pipeline.
+- **03 works for the first time.** Once 02 published the four surrogates,
+  `meta build` resolved and the metamodel sampled: 14 variables, 16 factors
+  (9 priors, 3 couplings, 4 surrogate likelihoods), 2000 draws. Its strict xfail
+  in the parent turned into XPASS and forced the marker out, which is what strict
+  is for.
+- **Every self-check is now real.** 03 asserts four surrogate likelihoods, at
+  least one coupling, and that the coupled variables have finite, non-zero-variance
+  posteriors — a collapsed sampler fails it.
+
+**Scientific caveat worth following up separately**: the sampled posteriors for
+`contact_fraction` and `ptcr_fraction` come back at mean ~0, sd ~1 — i.e.
+essentially their priors. The metamodel runs, but on this teaching-scale data it
+is not being constrained. Whether that persists with a production sweep is an
+open question, not something these notebook fixes answer.
+
 ### 2026-08-07: The notebooks/01-04 series ran nowhere, and was broken in four ways
 
 The parent added `Submodule notebooks CI`, which builds the KS model and executes
