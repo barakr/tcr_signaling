@@ -35,6 +35,26 @@ Also checked and found clean: the KS_1 -> KS_5 "where to go next" chain is compl
 no stale text survived the visual edits.
 
 
+### 2026-08-07: Track B made ready for a first-time reader
+
+Final pass over the entry point, from the position of someone opening the repo cold.
+
+- **`Tutorial_0_Start_Here` now states the running order** and the one dependency
+  that bites: 03 cannot run until 02 has, because the metamodel spec references
+  four surrogate artifacts by name and 02's last step publishes them. Verified
+  the documented failure is the real one — on a wiped `store/` and `artifacts/`,
+  `meta build` fails with exactly `Could not resolve surrogate_ref`.
+- **Two claims corrected rather than left flattering.** The vocabulary defined
+  "joint posterior" as the distribution after couplings are imposed, and the
+  overview said the metamodel "constrains them jointly". Both overstate what
+  `bayesmm meta sample` does today — it draws from priors and applies couplings
+  as a post-draw transform. Both now carry the caveat and point at the fuller
+  explanation in 03. The declaration in the spec is the durable part; the sampler
+  is what has to grow into it.
+- **Verified from clean**: with `store/` and `artifacts/` emptied, 01-04 run end
+  to end in ~2.6 minutes. Track A (KS_1-KS_5) passes, and the framework's own
+  T0-T9 pass in the pymc environment.
+
 ### 2026-08-07: Why the metamodel returned its prior — three causes, none of them the data
 
 Follow-up to the caveat in the entry below. The teaching sweeps were not at fault:
