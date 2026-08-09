@@ -6,6 +6,45 @@
 
 ## Decision Log
 
+### 2026-08-07: The notebooks/01-04 series ran nowhere, and was broken in four ways
+
+The parent added `Submodule notebooks CI`, which builds the KS model and executes
+these notebooks weekly. Its first runs found that the series had been broken for
+some time — nothing had ever executed it.
+
+- **Specs were parent-repo-relative while the notebooks run from the submodule
+  root.** `storage.root` and `dataset_ref` were `projects/tcr_signaling/store`,
+  so sweeps wrote to `<submodule>/projects/tcr_signaling/store` — a nested path
+  that `.gitignore`'s `projects/` line hid by accident. That is why `store/` held
+  only `.gitkeep`. All 8 specs de-nested to `store`.
+- **`metamodel.tcr_signaling.json` referenced four artifacts nothing produced.**
+  The surrogate store is content-addressed (registry keyed by hash), which is
+  right for provenance and useless as a reference you commit. Notebook 02 now
+  *publishes* each fit under a stable name in `artifacts/`, joining on
+  `spec_name`, artifact_id preserved.
+- **`03_metamodel_inference` never assigned `META_SPEC`** — NameError on its
+  first CLI cell.
+- **Every self-check was `assert ROOT.is_dir()`**, which is true in a repo where
+  nothing ran. Replaced: 01 asserts all four models produced their declared
+  observable and prints the values; 02 asserts the four surrogates are fitted,
+  published and declare real IO; 04 asserts the paper's actual claim — pTCR peaks
+  at r/R=1.000 with 4567x edge/centre contrast, so the assertion fails if the
+  ring inverts or flattens.
+
+**Teaching-scale sweeps in 02.** The production design is 56 KS points with
+`time_sec` up to 100; measured, `time_sec=5` takes 52 s and `time_sec=100` over
+9 minutes, so the full sweep is hours, and 02 timed out at both 1800 s and
+3600 s. It now sweeps *reduced copies* in `tmp/tutorial_specs/` — the cheapest
+levels, not the endpoints, since spanning the range selects the single most
+expensive simulation. Runtime ~4 min. The production specs are untouched;
+sweeping them unmodified still gives the real thing. The notebook says plainly
+that a surrogate fitted this way is a demonstration, not a result, and that the
+bias toward the cheap corner is a real limitation.
+
+Also fixed: 01's model cells invoked bare `"python"` rather than
+`sys.executable` — the same wrong-interpreter class as the 28835b8 post-mortem.
+
+
 ### 2026-08-07: Visual teaching in the KS series — filmstrips, not movies
 
 The tutorials argued spatial physics with error bars. KS_5, the notebook about reading

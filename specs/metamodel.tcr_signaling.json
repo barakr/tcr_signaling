@@ -1,61 +1,183 @@
 {
-  "schema_version": "1.0",
-  "name": "tcr_signaling_metamodel",
-  "ppl_backend": "pymc",
-  "surrogate_refs": [
-    "projects/tcr_signaling/artifacts/surrogate_membrane_topography.artifact.json",
-    "projects/tcr_signaling/artifacts/surrogate_kinetic_segregation.artifact.json",
-    "projects/tcr_signaling/artifacts/surrogate_lck_activity.artifact.json",
-    "projects/tcr_signaling/artifacts/surrogate_tcr_phosphorylation.artifact.json"
-  ],
-  "variables": [
-    {"name": "contact_radius", "type": "scalar", "units": "um"},
-    {"name": "patch_size", "type": "scalar", "units": "um"},
-    {"name": "contact_fraction", "type": "scalar"},
-    {"name": "time_sec", "type": "scalar", "units": "sec"},
-    {"name": "rigidity_kT_nm2", "type": "scalar", "units": "kT"},
-    {"name": "depletion_width_nm", "type": "scalar", "units": "nm"},
-    {"name": "cd45_boundary_density", "type": "scalar", "units": "molecules/um^2"},
-    {"name": "lck_decay_length", "type": "scalar", "units": "um"},
-    {"name": "lck_activation_rate", "type": "scalar", "units": "1/s"},
-    {"name": "mean_lck_activity", "type": "scalar"},
-    {"name": "tcr_density", "type": "scalar", "units": "molecules/um^2"},
-    {"name": "phosphorylation_rate", "type": "scalar", "units": "1/s"},
-    {"name": "dephosphorylation_rate", "type": "scalar", "units": "1/s"},
-    {"name": "ptcr_fraction", "type": "scalar"}
-  ],
   "couplings": [
     {
       "kind": "gaussian_link",
+      "sigma": 0.05,
       "source": "contact_fraction",
       "target": "contact_fraction",
-      "transform": {"kind": "identity"},
-      "sigma": 0.05
+      "transform": {
+        "kind": "identity"
+      }
     },
     {
       "kind": "gaussian_link",
+      "sigma": 10.0,
       "source": "depletion_width_nm",
       "target": "depletion_width_nm",
-      "transform": {"kind": "identity"},
-      "sigma": 10.0
+      "transform": {
+        "kind": "identity"
+      }
     },
     {
       "kind": "gaussian_link",
+      "sigma": 10.0,
       "source": "mean_lck_activity",
       "target": "mean_lck_activity",
-      "transform": {"kind": "identity"},
-      "sigma": 10.0
+      "transform": {
+        "kind": "identity"
+      }
     }
   ],
+  "name": "tcr_signaling_metamodel",
+  "ppl_backend": "pymc",
   "priors": [
-    {"variable": "contact_radius", "distribution": {"kind": "normal", "loc": 1.0, "scale": 0.3}},
-    {"variable": "patch_size", "distribution": {"kind": "normal", "loc": 2.0, "scale": 0.5}},
-    {"variable": "time_sec", "distribution": {"kind": "normal", "loc": 50.0, "scale": 25.0}},
-    {"variable": "rigidity_kT_nm2", "distribution": {"kind": "normal", "loc": 30.0, "scale": 20.0}},
-    {"variable": "lck_decay_length", "distribution": {"kind": "normal", "loc": 0.07, "scale": 0.02}},
-    {"variable": "lck_activation_rate", "distribution": {"kind": "normal", "loc": 0.5, "scale": 0.2}},
-    {"variable": "tcr_density", "distribution": {"kind": "normal", "loc": 150.0, "scale": 50.0}},
-    {"variable": "phosphorylation_rate", "distribution": {"kind": "normal", "loc": 0.1, "scale": 0.05}},
-    {"variable": "dephosphorylation_rate", "distribution": {"kind": "normal", "loc": 0.2, "scale": 0.1}}
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 1.0,
+        "scale": 0.3
+      },
+      "variable": "contact_radius"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 2.0,
+        "scale": 0.5
+      },
+      "variable": "patch_size"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 50.0,
+        "scale": 25.0
+      },
+      "variable": "time_sec"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 30.0,
+        "scale": 20.0
+      },
+      "variable": "rigidity_kT_nm2"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 0.07,
+        "scale": 0.02
+      },
+      "variable": "lck_decay_length"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 0.5,
+        "scale": 0.2
+      },
+      "variable": "lck_activation_rate"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 150.0,
+        "scale": 50.0
+      },
+      "variable": "tcr_density"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 0.1,
+        "scale": 0.05
+      },
+      "variable": "phosphorylation_rate"
+    },
+    {
+      "distribution": {
+        "kind": "normal",
+        "loc": 0.2,
+        "scale": 0.1
+      },
+      "variable": "dephosphorylation_rate"
+    }
+  ],
+  "schema_version": "1.0",
+  "surrogate_refs": [
+    "artifacts/surrogate_membrane_topography.artifact.json",
+    "artifacts/surrogate_kinetic_segregation.artifact.json",
+    "artifacts/surrogate_lck_activity.artifact.json",
+    "artifacts/surrogate_tcr_phosphorylation.artifact.json"
+  ],
+  "variables": [
+    {
+      "name": "contact_radius",
+      "type": "scalar",
+      "units": "um"
+    },
+    {
+      "name": "patch_size",
+      "type": "scalar",
+      "units": "um"
+    },
+    {
+      "name": "contact_fraction",
+      "type": "scalar"
+    },
+    {
+      "name": "time_sec",
+      "type": "scalar",
+      "units": "sec"
+    },
+    {
+      "name": "rigidity_kT_nm2",
+      "type": "scalar",
+      "units": "kT"
+    },
+    {
+      "name": "depletion_width_nm",
+      "type": "scalar",
+      "units": "nm"
+    },
+    {
+      "name": "cd45_boundary_density",
+      "type": "scalar",
+      "units": "molecules/um^2"
+    },
+    {
+      "name": "lck_decay_length",
+      "type": "scalar",
+      "units": "um"
+    },
+    {
+      "name": "lck_activation_rate",
+      "type": "scalar",
+      "units": "1/s"
+    },
+    {
+      "name": "mean_lck_activity",
+      "type": "scalar"
+    },
+    {
+      "name": "tcr_density",
+      "type": "scalar",
+      "units": "molecules/um^2"
+    },
+    {
+      "name": "phosphorylation_rate",
+      "type": "scalar",
+      "units": "1/s"
+    },
+    {
+      "name": "dephosphorylation_rate",
+      "type": "scalar",
+      "units": "1/s"
+    },
+    {
+      "name": "ptcr_fraction",
+      "type": "scalar"
+    }
   ]
 }

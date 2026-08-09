@@ -1,44 +1,115 @@
 {
-  "schema_version": "1.0",
-  "model": {
-    "name": "kinetic_segregation",
-    "version": "0.2.0",
-    "artifact": {
-      "type": "local",
-      "entrypoint": [
-        "python",
-        "-m",
-        "projects.tcr_signaling.models.kinetic_segregation"
-      ]
-    }
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [
+      {
+        "to": {
+          "key": "--time_sec",
+          "kind": "cli_arg"
+        },
+        "var": "time_sec"
+      },
+      {
+        "to": {
+          "key": "--rigidity_kT_nm2",
+          "kind": "cli_arg"
+        },
+        "var": "rigidity_kT_nm2"
+      },
+      {
+        "to": {
+          "key": "--pmhc_mode",
+          "kind": "cli_arg"
+        },
+        "var": "pmhc_mode"
+      },
+      {
+        "to": {
+          "key": "--pmhc_radius",
+          "kind": "cli_arg"
+        },
+        "var": "pmhc_radius"
+      },
+      {
+        "to": {
+          "key": "--n_pmhc",
+          "kind": "cli_arg"
+        },
+        "var": "n_pmhc"
+      },
+      {
+        "to": {
+          "key": "--pmhc_deposition",
+          "kind": "cli_arg"
+        },
+        "var": "pmhc_deposition"
+      }
+    ],
+    "output_mapping": [
+      {
+        "from": {
+          "kind": "file",
+          "path": "out/segregation.json"
+        },
+        "var": "depletion_width_nm"
+      }
+    ]
   },
-  "runner": {
-    "mode": "local_process",
-    "resources": {
-      "cpus": 1,
-      "mem_gb": 2,
-      "walltime_min": 5
-    }
+  "design": {
+    "grid": {
+      "n_pmhc": [
+        419.0
+      ],
+      "pmhc_deposition": [
+        1.0
+      ],
+      "pmhc_mode": [
+        1.0
+      ],
+      "pmhc_radius": [
+        666.67
+      ],
+      "rigidity_kT_nm2": [
+        1.0,
+        5.0,
+        10.0,
+        20.0,
+        30.0,
+        50.0,
+        70.0,
+        100.0
+      ],
+      "time_sec": [
+        5.0,
+        10.0,
+        20.0,
+        30.0,
+        50.0,
+        70.0,
+        100.0
+      ]
+    },
+    "strategy": "grid"
   },
   "io_schema": {
     "inputs": [
       {
         "name": "time_sec",
-        "type": "float",
-        "units": "sec",
         "support": [
           0.0,
           100.0
-        ]
+        ],
+        "type": "float",
+        "units": "sec"
       },
       {
         "name": "rigidity_kT_nm2",
-        "type": "float",
-        "units": "kT",
         "support": [
           0.0,
           100.0
-        ]
+        ],
+        "type": "float",
+        "units": "kT"
       },
       {
         "name": "pmhc_mode",
@@ -69,102 +140,31 @@
       }
     ]
   },
-  "design": {
-    "strategy": "grid",
-    "grid": {
-      "time_sec": [
-        5.0,
-        10.0,
-        20.0,
-        30.0,
-        50.0,
-        70.0,
-        100.0
+  "model": {
+    "artifact": {
+      "entrypoint": [
+        "python",
+        "-m",
+        "projects.tcr_signaling.models.kinetic_segregation"
       ],
-      "rigidity_kT_nm2": [
-        1.0,
-        5.0,
-        10.0,
-        20.0,
-        30.0,
-        50.0,
-        70.0,
-        100.0
-      ],
-      "pmhc_mode": [
-        1.0
-      ],
-      "pmhc_radius": [
-        666.67
-      ],
-      "n_pmhc": [
-        419.0
-      ],
-      "pmhc_deposition": [
-        1.0
-      ]
-    }
-  },
-  "adapter": {
-    "id": "python_cli_adapter_v1",
-    "input_mapping": [
-      {
-        "var": "time_sec",
-        "to": {
-          "kind": "cli_arg",
-          "key": "--time_sec"
-        }
-      },
-      {
-        "var": "rigidity_kT_nm2",
-        "to": {
-          "kind": "cli_arg",
-          "key": "--rigidity_kT_nm2"
-        }
-      },
-      {
-        "var": "pmhc_mode",
-        "to": {
-          "kind": "cli_arg",
-          "key": "--pmhc_mode"
-        }
-      },
-      {
-        "var": "pmhc_radius",
-        "to": {
-          "kind": "cli_arg",
-          "key": "--pmhc_radius"
-        }
-      },
-      {
-        "var": "n_pmhc",
-        "to": {
-          "kind": "cli_arg",
-          "key": "--n_pmhc"
-        }
-      },
-      {
-        "var": "pmhc_deposition",
-        "to": {
-          "kind": "cli_arg",
-          "key": "--pmhc_deposition"
-        }
-      }
-    ],
-    "output_mapping": [
-      {
-        "var": "depletion_width_nm",
-        "from": {
-          "kind": "file",
-          "path": "out/segregation.json"
-        }
-      }
-    ]
+      "type": "local"
+    },
+    "name": "kinetic_segregation",
+    "version": "0.2.0"
   },
   "reproducibility": {
     "seed": 42
   },
+  "runner": {
+    "mode": "local_process",
+    "resources": {
+      "cpus": 1,
+      "mem_gb": 2,
+      "walltime_min": 5
+    }
+  },
+  "schema_version": "1.0",
   "storage": {
-    "root": "projects/tcr_signaling/store"
+    "root": "store"
   }
 }
