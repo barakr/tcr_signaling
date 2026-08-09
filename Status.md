@@ -6,6 +6,41 @@
 
 ## Decision Log
 
+### 2026-08-07: Visual teaching in the KS series — filmstrips, not movies
+
+The tutorials argued spatial physics with error bars. KS_5, the notebook about reading
+results honestly, had **zero figures**; KS_4 had only error bars despite being about what
+parameters do in space; KS_3 showed a before and an after but never the process.
+
+**Filmstrips as the default, movies opt-in.** The submodule's CI installs
+numpy/scipy/matplotlib/pytest/nbclient and deliberately not ffmpeg, and the notebooks are
+CI-executed, so an MP4-rendering cell cannot be the default path. A 4-6 panel time strip
+carries most of a movie's teaching value -- it shows the contact forming or dissolving and
+CD45 clearing -- while costing one PNG, needing no ffmpeg, executing in CI, and surviving
+static rendering on GitHub.
+
+- **KS_3** gains a 6-panel time strip of one run, plus a printed table of mean height in
+  the contact disc and CD45 fraction inside it, so the eye and the numbers agree. The
+  frame-dumping cell was restructured to read every frame *before* the temp directory is
+  removed, with an assert that `dump_interval` divides `n_steps` (otherwise the "final"
+  frame is not the final state -- a bug that had already bitten twice).
+- **KS_4** gains a soft-vs-stiff contrast strip at **matched physical time**, which makes
+  the dt ~ 1/kappa confound concrete: the stiff run needs 20x the sweeps to cover the same
+  45.8 ms. Contact settles at 36.7 nm (kappa=1) versus 53.8 nm (kappa=20).
+- **KS_5** gains the sharpest demonstration in the series. The box is periodic, so sliding
+  every molecule by L/3 is *physically identical* -- yet `depletion_width_nm` collapses
+  from 147.70 nm to **0.00**, while the two nearest-neighbour metrics change by 3.2e-14 nm.
+  That is a proof, not an illustration, that metrics 2-6 measure the contact's position
+  rather than its segregation. It also explains the `pmhc_mode=uniform` zero from KS_3.
+- **Opt-in movie cell** in KS_3: `MAKE_MOVIE = False` by default, checks for ffmpeg, and
+  otherwise drives the repo's own `render_movie.py` into gitignored `tmp/`. Readers get
+  the animation; CI stays fast and ffmpeg-free.
+
+Cost: the KS notebook suite goes 50 s -> 77 s, within the agreed budget. Notebook sizes
+grow (KS_3 201->429 KB, KS_4 146->540 KB, KS_5 19->98 KB) because the figures are stored;
+that is the price of the notebooks rendering usefully on GitHub without execution.
+
+
 ### 2026-08-07: Production spec switched to area deposition + inner_circle pMHC
 
 Ran `specs/model.kinetic_segregation.json` both ways before deciding. Two findings
