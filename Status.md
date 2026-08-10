@@ -51,6 +51,22 @@ Verified by executing the notebook end-to-end in `py312_bayesmm_pymc`: no cell r
 and the self-check prints `[NB03 self-check OK] … propagation AND joint conditioning
 verified`.
 
+**Correction, same day — a threshold that encoded a local accident.** The first version
+of the self-check demanded per-variable shrink factors: `ptcr_fraction >= 1.3x`, taken
+from what this machine produced (1.85x). `Submodule notebooks CI` refits the surrogates
+from scratch and got **1.19x**, so the notebook failed for a reason that says nothing
+about whether the method works.
+
+An exact shrink factor is a property of one particular fit plus Monte Carlo error from
+a chain whose worst ESS is ~10. It is not a property of joint sampling. The assertion
+now makes the claim that survives a refit: **one** hard threshold on
+`mean_lck_activity` (>= 3x; it measures ~9.6x, and only "the likelihood was never
+evaluated" collapses that), plus an ensemble requirement that at least 3 of the 4
+surrogate-informed variables narrowed. All four factors are printed either way.
+
+Note these were assertions written earlier the same day, corrected because they were
+wrong — not long-standing checks being loosened to accommodate a change.
+
 **Follow-up:** the cells added above were written by a JSON-editing script and carried
 no `id` field, which `Submodule notebooks CI` caught — nbformat emits
 `MissingIDFieldWarning`, and the notebook test runs under `filterwarnings = error`.
