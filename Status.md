@@ -6,6 +6,51 @@
 
 ## Decision Log
 
+### 2026-08-10: Notebook 03 now *runs* joint sampling instead of describing it
+
+Notebook 03 documented `--method joint` in prose — including a table of joint-vs-prior
+standard deviations — while every executable cell ran the default `propagate`. So a
+reader read about conditioning and then watched forward propagation happen. The table
+had also already drifted: it claimed `ptcr_fraction` sd 0.235 where the real value is
+0.182. A table nothing computes rots exactly like a test nobody runs.
+
+**Changes:**
+- Step 2a (`propagate`) and Step 2b (`joint`) both run, on the same spec and seed.
+- The comparison table is **computed**, not quoted: prior sd / propagate sd / joint sd /
+  shrink factor / ESS, for all 14 variables.
+- Datasets are selected by the `method` recorded in `inference_data.json`, not by
+  mtime — both methods write into the same store, so "newest" would silently repoint
+  the checks at whichever ran last. (This needed a framework change; see the root
+  Status entry — `propagate` previously recorded no method at all.)
+- The self-check asserts the joint run conditioned on 4 surrogates, narrowed the four
+  variables its surrogates inform, held the deterministic link exactly, and mixed at
+  all.
+
+**What the run actually shows** (2000 draws, 1000 tune, seed 7): `mean_lck_activity`
+narrows 9.6x, `rigidity_kT_nm2` 2.4x, `ptcr_fraction` 1.9x, `contact_fraction` and
+`cd45_boundary_density` ~1.5x. Means move substantially too — `ptcr_fraction` from
+0.86 to 0.50. That is the metamodel doing its job: priors were per-variable marginals
+from notebook 02's sweeps, while the joint keeps only configurations all four models
+accept simultaneously.
+
+**Two caveats now stated in the notebook rather than papered over:**
+
+1. **Not every variable narrows.** Four weakly-informed inputs came back 4–14% *wider*
+   than their priors. A first draft of the self-check asserted "no variable may widen"
+   and failed — correctly, because the assertion was wrong, not the code. A marginal
+   posterior is under no obligation to be narrower than its prior; only the joint is
+   constrained, and a likelihood that induces correlations can widen a marginal.
+2. **The chain mixes poorly**, which explains most of that 4–14%. Random-walk
+   Metropolis in 14 dimensions gives `time_sec` an ESS of ~10 out of 2000 draws — an
+   sd carrying ~23% Monte Carlo error. The notebook prints ESS per variable so this is
+   visible rather than implied, and the self-check demands real shrinkage only where
+   the surrogates are informative. Gradient-based sampling would need the surrogate
+   `log_prob` expressed as a PyTensor graph; that is the natural next step.
+
+Verified by executing the notebook end-to-end in `py312_bayesmm_pymc`: no cell raises,
+and the self-check prints `[NB03 self-check OK] … propagation AND joint conditioning
+verified`.
+
 ### 2026-08-07: Tutorial readiness — orientation, and a fresh-clone rehearsal
 
 Verified the tutorials the way a new reader meets them rather than the way they were
