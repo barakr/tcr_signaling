@@ -35,6 +35,21 @@ Also checked and found clean: the KS_1 -> KS_5 "where to go next" chain is compl
 no stale text survived the visual edits.
 
 
+### 2026-08-07: `--method joint` — notebook 03 documents the new sampler
+
+The framework gained `bayesmm meta sample --method joint`, which conditions on the
+fitted surrogates instead of ignoring them. 03's explainer is updated: the caveats
+about surrogate likelihoods being inert and "posterior" being a misnomer now say
+they apply to the DEFAULT `--method propagate`, and the new section shows what
+changes under `joint` on this metamodel.
+
+Measured here, prior sd -> joint sd: contact_fraction 0.139 -> 0.099,
+cd45_boundary_density 85.1 -> 58.3, mean_lck_activity 140 -> **13.7**,
+ptcr_fraction 0.336 -> 0.235. Every variable narrows because the surrogates are
+now evidence; the Lck surrogate rules out most of what its prior allowed.
+
+The spec is unchanged — the same couplings and priors, sampled properly.
+
 ### 2026-08-07: Track B made ready for a first-time reader
 
 Final pass over the entry point, from the position of someone opening the repo cold.
