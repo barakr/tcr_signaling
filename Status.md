@@ -51,6 +51,13 @@ Verified by executing the notebook end-to-end in `py312_bayesmm_pymc`: no cell r
 and the self-check prints `[NB03 self-check OK] … propagation AND joint conditioning
 verified`.
 
+**Follow-up:** the cells added above were written by a JSON-editing script and carried
+no `id` field, which `Submodule notebooks CI` caught — nbformat emits
+`MissingIDFieldWarning`, and the notebook test runs under `filterwarnings = error`.
+Normalised with `nbformat.validator.normalize`; every cell in all five notebooks now
+has an id. Worth remembering when patching `.ipynb` files as JSON: nbformat fills ids
+in on *read*, so an in-memory check looks clean while the file on disk is not.
+
 ### 2026-08-07: Tutorial readiness — orientation, and a fresh-clone rehearsal
 
 Verified the tutorials the way a new reader meets them rather than the way they were
