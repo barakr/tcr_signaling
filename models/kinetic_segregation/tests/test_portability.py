@@ -185,6 +185,26 @@ class TestNoHardcodedPlatformAssumptions:
         assert "ks_tutorial.py" in names, "notebook helper not scanned"
 
 
+class TestWindowsEventLoop:
+    def test_conftest_gives_windows_a_selector_event_loop(self):
+        """pyzmq needs `add_reader`, which only the selector loop implements.
+
+        Python defaults to the Proactor loop on Windows, so pyzmq compensates
+        with an extra thread and emits a RuntimeWarning — which `filterwarnings
+        = error` turns into a failure of every notebook test before a single
+        cell runs, and which hung the run at teardown on top of that.
+
+        Checked statically and on every platform on purpose: a test that skipped
+        off Windows would be a skip with an unsanctioned reason (which the CI
+        audit rejects) *and* would only verify the rule where it already holds.
+        """
+        text = (_REPO / "conftest.py").read_text()
+        assert "WindowsSelectorEventLoopPolicy" in text, (
+            "conftest.py must set the selector event loop policy on Windows; "
+            "without it every notebook test fails there on a pyzmq RuntimeWarning"
+        )
+
+
 class TestKsBuildResolver:
     def test_binary_name_matches_this_platform(self):
         expected = "ks_gpu.exe" if os.name == "nt" else "ks_gpu"

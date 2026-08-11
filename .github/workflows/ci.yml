@@ -258,12 +258,18 @@ jobs:
           for nb in notebooks/models/kinetic_segregation/KS_*.ipynb; do
             name=$(basename "$nb" .ipynb)
             start=$(date +%s)
-            if out=$(python -m pytest -q -m slow \
-                 "models/kinetic_segregation/tests/test_notebooks.py::test_notebook_executes_and_self_check_passes[$name]" 2>&1); then
+            out=$(python -m pytest -q -m slow \
+                 "models/kinetic_segregation/tests/test_notebooks.py::test_notebook_executes_and_self_check_passes[$name]" 2>&1)
+            # Capture rc on the very next line: any command in between (even
+            # `status=1`) overwrites $?, which would report printf's status.
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
               printf '::notice::%s passed in %ss\n' "$name" "$(( $(date +%s) - start ))"
             else
               status=1
-              printf '::error::%s FAILED after %ss (rc=%s)\n' "$name" "$(( $(date +%s) - start ))" "$?"
+              # pytest rc is diagnostic on its own: 1 = a test failed,
+              # 4 = usage error (bad node id), 5 = nothing collected.
+              printf '::error::%s FAILED after %ss (pytest rc=%s)\n' "$name" "$(( $(date +%s) - start ))" "$rc"
               # The reason, not just the fact. Annotations carry no newlines, so
               # the tail goes out a line at a time; without this a Windows-only
               # failure is invisible to anyone who cannot read the raw log.

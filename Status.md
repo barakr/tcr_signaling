@@ -94,25 +94,56 @@ per-step timings ruled out every tempting explanation: the **build was the faste
 the three** (16 s, vs 43 s on macOS) and the **fast suite was fine** (40 s, vs 67 s on
 macOS, and only ~2x ubuntu). Only the notebook step was pathological.
 
-**First hypothesis — Defender rescanning `ks_gpu.exe` on every spawn — was wrong.** The
-exclusions went in (workspace, temp dirs, the process) and the step still ran to the
-30-minute timeout. Recording it because the reasoning looked sound and was not: the fast
-suite spawns the binary heavily too and is only ~2x slower, so *spawn* was never the
-variable that separated the two steps. The exclusions are harmless and were kept; they
-are not the fix.
+**It was not a performance problem at all, and three hypotheses were wrong before one
+measurement settled it.** Recorded in full because the failure of method matters more
+than the fix:
 
-**What actually separates them is per-call directory churn.** The test suite uses
-pytest's `tmp_path`, created once per test. `ks_tutorial.run_ks` created and then
-recursively deleted a `TemporaryDirectory` for **every single simulation**, and KS_4
-alone runs dozens of parameter points. That cost is invisible on Unix — the local
-per-notebook timings are identical before and after — and on Windows every create and
-delete traverses the filesystem filter drivers. It also scales with call count, which
-matches the observed profile: KS_4 (most calls) dominates at 31 s locally, KS_3 at 14 s,
-the other three under 2.5 s each.
+1. *Defender rescanning `ks_gpu.exe` on every spawn.* Exclusions went in; the step still
+   timed out. Kept (harmless), but not the fix.
+2. *A `TemporaryDirectory` created and deleted per simulation in `run_ks`.* Changed to
+   numbered subdirectories inside one session-scoped temp dir. Fewer syscalls on every
+   platform and worth keeping on its own merits, but there is **no evidence** it fixed
+   anything.
+3. *MSVC code generation.* Also wrong — see the numbers below.
 
-`run_ks` now allocates numbered subdirectories inside one session-scoped temporary
-directory, removed when the kernel exits. Fewer syscalls on every platform; the notebooks
-produce identical results.
+The root error was inferring "the binary is fine on Windows" from the fast suite being
+only ~2x slower than ubuntu. That suite cannot support the claim: a tests-like run
+(grid 16) takes 0.03 s while a notebook-like run (grid 64) takes 0.65–1.2 s, so the suite
+is dominated by process spawn and Python overhead and barely touches the inner loop.
+
+**The measurement that should have come first.** A CI step now times the identical
+simulation on all three platforms and reports it as an annotation:
+
+| | tests-like | realistic |
+|---|---|---|
+| macOS | 0.2 s | 46.8 s |
+| ubuntu | 0.3 s | 83.5 s |
+| Windows | 0.4 s | 95.4 s |
+
+Windows is **1.14x ubuntu**. The compiled model is fine under MSVC; there was never a
+performance problem to fix.
+
+**The actual cause: `filterwarnings = error` versus a benign pyzmq warning.** pyzmq needs
+`add_reader`, which only the selector event loop implements; Python has defaulted to the
+Proactor loop on Windows since 3.8, so pyzmq compensates with an extra selector thread
+and emits a `RuntimeWarning` saying so. `pytest.ini` turns warnings into errors, so every
+notebook test failed **before a single notebook cell ran** — and in a single pytest
+process running all five, zmq was left half-initialised and the run hung at teardown
+until CI killed it. One cause, both symptoms: the 30-minute timeouts and the 3-second
+failures were the same bug seen through different harnesses.
+
+`conftest.py` now sets `WindowsSelectorEventLoopPolicy` on Windows, which removes the
+condition rather than silencing the warning, and is what Jupyter does itself.
+`test_portability.py` guards it statically — on every platform, because a test that
+skipped off Windows would be a skip with an unsanctioned reason (the CI audit rejects
+those) and would only check the rule where it already holds.
+
+**What made the diagnosis possible**, after two blind 30-minute cycles: per-notebook
+pytest invocations that emit elapsed time and the failure tail as `::error::`/`::notice::`
+annotations, which are readable from the public API without a token. A single pytest call
+writing JUnit XML at the end loses everything when the step is killed. Note for next
+time: nbclient's `timeout` is **per cell**, not per notebook, so "step budget ÷ 5" bounds
+nothing.
 
 Bounded the diagnosis cost too, because a hang that only manifests on a machine none of
 us has is expensive to chase: the step now has `timeout-minutes: 30`, the per-notebook

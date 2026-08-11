@@ -1,7 +1,8 @@
 """Root conftest for tcr_signaling submodule tests.
 
 Ensures ``models`` package is importable when running pytest from
-``projects/tcr_signaling/``, and gates the Metal-only tests off macOS.
+``projects/tcr_signaling/``, gives Windows an event loop pyzmq can use, and
+gates the Metal-only tests off macOS.
 """
 
 from __future__ import annotations
@@ -15,6 +16,25 @@ import pytest
 _submodule_root = str(Path(__file__).resolve().parent)
 if _submodule_root not in sys.path:
     sys.path.insert(0, _submodule_root)
+
+
+# ── Windows: give pyzmq a selector event loop ───────────────────────────────
+#
+# pyzmq needs `add_reader`, which only the selector event loop implements.
+# Python has defaulted to the Proactor loop on Windows since 3.8, so pyzmq
+# compensates by spawning an extra selector thread and emits a RuntimeWarning
+# saying so. `pytest.ini` sets `filterwarnings = error`, which turned that
+# benign compensation into a failure of every notebook test *before a single
+# notebook cell ran* — and, in a single pytest process running all five, left
+# zmq half-initialised so the run then hung at teardown until CI killed it.
+#
+# Setting the policy removes the condition rather than silencing the warning;
+# it is what Jupyter itself does on Windows. No effect on macOS or Linux, where
+# the attribute does not exist.
+if sys.platform == "win32":  # pragma: no cover - platform-specific
+    import asyncio
+
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 # Why these skip rather than run: `CMakeLists.txt` compiles `src/gpu_stub.c`
