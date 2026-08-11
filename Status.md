@@ -6,6 +6,53 @@
 
 ## Decision Log
 
+### 2026-08-11: install docs get one home and a guard, and the model contract is written down
+
+`models/kinetic_segregation/README.md` said **"Requires macOS with Command Line Tools"** —
+false since Linux support, and still there after Windows landed. Nothing could have caught
+it, because nothing compared any document to anything. Build instructions had accumulated
+in five places (root README, `notebooks/README.md`, the model README, Tutorial_0,
+`CLAUDE.md`), plus the code (`ks_build.toolchain_hint()`), plus the CI workflow.
+
+**Duplication is not the problem; unverified duplication is.** A reader who lands on the
+repo root, one browsing the model directory, and one whose build just failed all need the
+commands, and none of them will follow a link chain. So: root `README.md` § *Build
+prerequisites (Windows, macOS, Linux)* is canonical, everything else links to it, and
+`tests/test_docs.py` pins what remains.
+
+| pinned | against |
+|---|---|
+| build commands in the READMEs | the `Build KS model` step in `.github/workflows/ci.yml` |
+| the Windows install command | `ks_build.TOOLCHAIN_HINTS["windows"]`, what a failed build prints |
+| "no doc claims the build needs macOS" | every doc except Status.md (a historical log) |
+| the canonical anchor | the heading it derives from, so a rename cannot silently 404 |
+| each compiled model README | must name all three platforms **in its first 20 lines** |
+
+`ks_build` grew `BUILD_COMMANDS` and `TOOLCHAIN_HINTS` (a dict rather than a platform
+branch) purely so the tests can check the Windows text from a Mac. All five guards were
+verified to go red when broken — the "first 20 lines" rule replaced a whole-file substring
+search that stayed green when the intro was changed to "macOS and Linux", because
+`ks_gpu.exe` was still mentioned fifty lines below.
+
+**Model contract, prompted by wanting to combine independent models later.** The
+architecture already supports it, and the survey confirmed it: all four partial models are
+independent (zero cross-model imports), and composition happens through
+`python -m projects.tcr_signaling.models.<name>` plus JSON on stdout — a *process*
+boundary, not a Python API. That is exactly why kinetic segregation can import nothing
+from the framework and still be composed; autonomy and combinability are not in tension.
+
+`tests/test_model_contract.py` enforces that for every model, discovered not listed:
+`__main__.py` and `tests/` exist, no cross-model imports, no absolute `models.` imports
+(via AST, so prose mentioning an import is not mistaken for one), every spec entrypoint
+names a real model, and all specs use the parent-qualified path. Written up in `CLAUDE.md`
+under *Adding another model*, including why there is deliberately **no shared build
+helper**: `ks_build.py` lives inside the model it builds, because a common build package
+would couple every model to every other model's build.
+
+The `__main__.py` relative-import rule moved out of `test_portability.py` into the
+contract test — one rule, one guard, applied to all four models rather than to the one
+that happened to break.
+
 ### 2026-08-11: The KS model is disconnected from the metamodel, and the paper's DOI was wrong
 
 Two findings from checking this project against the published paper

@@ -96,6 +96,53 @@ bayesmm surrogate fit specs/surrogate.kinetic_segregation.pymc_gp.json
 3. **Lck Activity** — Radially-symmetric exponential decay of active Lck
 4. **TCR Phosphorylation** — Lck* phosphorylates TCR ITAMs
 
+## Adding another model
+
+The point of this project is combining independently-built models, so the rules
+below exist to keep them independent. They are enforced by
+`models/kinetic_segregation/tests/test_model_contract.py`, which **discovers**
+models rather than listing them — a new model is held to them the day it lands.
+
+**The composition seam is a process boundary, not a Python API.** Each
+`specs/model.<name>.json` declares
+
+```json
+"entrypoint": ["python", "-m", "projects.tcr_signaling.models.<name>"]
+```
+
+and the model reads CLI flags and writes one JSON object to stdout. That is why
+kinetic segregation can import *nothing* from the framework and still be
+composable: nothing needs to import a model in order to use it. Autonomy and
+combinability are not in tension here — the CLI contract is what buys both.
+
+A model directory must have:
+
+| | |
+|---|---|
+| `__init__.py`, `__main__.py` | `__main__.py` is the contract — `python -m …models.<name>` |
+| `tests/` | its own suite; the root `pytest.ini` collects `models` |
+| `specs/model.<name>.json` | entrypoint parent-qualified, as above |
+| a README **if it compiles anything** | must name Windows/macOS/Linux in its first lines and link to the canonical [build prerequisites](README.md#build-prerequisites-windows-macos-linux) rather than re-explaining them |
+
+And must not:
+
+- **import another model.** Shared logic between two models makes them one model
+  with extra steps. Move it into the framework or duplicate it.
+- **use absolute `models.<name>` imports internally.** A model runs under two
+  package paths — `models.<name>` under this repo's pytest, and
+  `projects.tcr_signaling.models.<name>` under the framework. Absolute imports
+  resolve only under the first, so the breakage is invisible to this repo's own
+  suite and surfaces as a broken sweep in the parent. Use `from . import x`.
+- **share a build helper across models.** `ks_build.py` lives inside the model
+  it builds. A common build package would couple every model to every other
+  model's build; copying ~200 lines is the cheaper trade.
+
+Install and build instructions live in **one** place — root `README.md` §
+*Build prerequisites* — and `models/kinetic_segregation/tests/test_docs.py`
+pins the commands there against what CI actually runs and against what
+`ks_build.toolchain_hint()` prints on a failed build. Add install prose
+elsewhere and it will drift; link to the canonical section instead.
+
 ## Development Rules
 
 1. **This project has its own Status.md** — update it here, not in the parent repo
