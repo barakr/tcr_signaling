@@ -16,7 +16,13 @@ import time
 from pathlib import Path
 
 _PKG_DIR = Path(__file__).resolve().parent
-_BINARY = _PKG_DIR / "ks_gpu"
+
+# ks_build owns the platform-dependent naming (ks_gpu vs ks_gpu.exe) and the
+# multi-config build subdirectories, so this script works on Windows too.
+sys.path.insert(0, str(_PKG_DIR))
+import ks_build  # noqa: E402
+
+_BINARY = ks_build.find_binary() or (_PKG_DIR / ks_build.binary_name())
 _RENDER = _PKG_DIR / "render_movie.py"
 _OUTPUT_DIR = Path.home() / "Downloads" / "ks_depletion_metrics"
 _RENDER_PYTHON = Path.home() / "miniconda3" / "envs" / "py314_bayesmm" / "bin" / "python"

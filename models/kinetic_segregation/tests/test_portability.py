@@ -92,12 +92,27 @@ def _notebook_code(path: Path) -> str:
     )
 
 
+_REPO = _PKG.parents[1]
+
+# Directories holding Python that invokes the compiled model. `experiments/` and
+# `examples/` are in here because a Windows user follows those too — KS_5 sends
+# readers straight to experiments/ks_behavior_sweep/run.py.
+_SCRIPT_DIRS = (
+    _PKG,
+    _PKG / "benchmark",
+    _REPO / "examples",
+    _REPO / "experiments",
+)
+
+
 def _python_consumers() -> list[tuple[str, str]]:
     """(label, source) for everything that runs the model.
 
-    Test modules, the notebook helper, AND the executable cells of the tutorial
-    notebooks. The notebooks were the gap that mattered: a `subprocess.run(["make"])`
-    sat in KS_3's movie cell where a .py-only scan could not see it.
+    Test modules, the notebook helper, the executable cells of the tutorial
+    notebooks, and the analysis/generation scripts. Two gaps found the hard way:
+    a `subprocess.run(["make"])` sat in KS_3's movie cell where a .py-only scan
+    could not see it, and ten generation scripts hardcoded the bare binary name
+    where a tests-only scan could not see them either.
     """
     items: list[tuple[str, str]] = []
     for p in _TESTS.glob("test_*.py"):
@@ -110,6 +125,17 @@ def _python_consumers() -> list[tuple[str, str]]:
         if ".ipynb_checkpoints" in p.parts:
             continue
         items.append((p.name, _notebook_code(p)))
+    # This file is excluded from its own scan: it necessarily spells out every
+    # pattern it forbids, in the regexes and in the failure messages.
+    seen = {name for name, _ in items} | {"test_portability.py"}
+    for directory in _SCRIPT_DIRS:
+        if not directory.is_dir():
+            continue
+        for p in sorted(directory.rglob("*.py")):
+            if p.name in seen or "build" in p.parts:
+                continue
+            items.append((p.name, p.read_text()))
+            seen.add(p.name)
     return sorted(items)
 
 
@@ -142,7 +168,7 @@ class TestNoHardcodedPlatformAssumptions:
             f"{offenders} pick a library suffix inline; use ks_build.find_potentials()."
         )
 
-    def test_the_notebooks_are_actually_being_scanned(self):
+    def test_the_scan_actually_covers_what_it_claims(self):
         """Guard the guard: a glob that matches nothing passes every test above.
 
         This is the same failure mode the rest of this file exists to prevent —
@@ -153,6 +179,10 @@ class TestNoHardcodedPlatformAssumptions:
         assert sum(1 for n in names if n.startswith("KS_")) >= 5, (
             f"expected the 5 KS notebooks in the scan, saw {names}"
         )
+        # The generation/analysis scripts, which were the second gap.
+        assert "run_benchmark.py" in names, "benchmark/ not scanned"
+        assert any(n.startswith("generate_") for n in names), "generate_* scripts not scanned"
+        assert "ks_tutorial.py" in names, "notebook helper not scanned"
 
 
 class TestKsBuildResolver:

@@ -41,7 +41,14 @@ import numpy as np
 SCRIPT_DIR = Path(__file__).resolve().parent
 SUBMODULE_DIR = SCRIPT_DIR.parent.parent  # projects/tcr_signaling
 REPO_ROOT = SUBMODULE_DIR.parent.parent  # metamodeler_codex_scaffold_docs
-BINARY = SUBMODULE_DIR / "models" / "kinetic_segregation" / "ks_gpu"
+KS_DIR = SUBMODULE_DIR / "models" / "kinetic_segregation"
+
+# ks_build owns the platform-dependent naming (ks_gpu vs ks_gpu.exe) and the
+# multi-config build subdirectories, so this sweep works on Windows too.
+sys.path.insert(0, str(KS_DIR))
+import ks_build  # noqa: E402
+
+BINARY = ks_build.find_binary() or (KS_DIR / ks_build.binary_name())
 SPEC_PATH = SCRIPT_DIR / "spec.json"
 OUT_DIR = Path.home() / "Downloads" / "metamodel_ks"
 

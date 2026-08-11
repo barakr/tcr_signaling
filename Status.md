@@ -104,6 +104,20 @@ nbclient limit is settable (`KS_NOTEBOOK_TIMEOUT`, 600 in CI) so a stuck cell fa
 naming the cell, and failures emit `::error::` annotations naming the notebook.
 Annotations are readable from the public API without a token; the raw log is not.
 
+**Ten more scripts were still Unix-only, and the guard could not see them.** The first
+version of `test_portability.py` scanned `tests/` and the notebook helper. It therefore
+missed `experiments/ks_behavior_sweep/run.py` — which KS_5 sends readers to directly —
+plus `benchmark/run_benchmark.py`, six `generate_*.py`, and two root-level
+`test_*convergence.py` scripts (standalone tools despite the name; pytest does not
+collect them). All resolved the binary as `<dir> / "ks_gpu"`, so on Windows they raise
+"binary not found" no matter how correctly the machine is set up.
+
+All ten now go through `ks_build`, and the scan covers `models/`, `benchmark/`,
+`examples/` and `experiments/` — 42 files, up from 14. The scan asserts its own coverage
+(`run_benchmark.py` present, a `generate_*` present, notebooks present), because
+widening a glob is itself a change that can silently match nothing. `test_portability.py`
+is excluded from its own scan: it necessarily spells out every pattern it forbids.
+
 ### 2026-08-10: Notebook 03 now *runs* joint sampling instead of describing it
 
 Notebook 03 documented `--method joint` in prose — including a table of joint-vs-prior

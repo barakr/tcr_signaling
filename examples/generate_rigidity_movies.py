@@ -29,7 +29,13 @@ OUTPUT_DIR = Path.home() / "Downloads"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _SUBMODULE_ROOT = _SCRIPT_DIR.parent
 _GPU_DIR = _SUBMODULE_ROOT / "models" / "kinetic_segregation"
-_BINARY = _GPU_DIR / "ks_gpu"
+
+# ks_build owns the platform-dependent naming (ks_gpu vs ks_gpu.exe) and the
+# multi-config build subdirectories, so this script works on Windows too.
+sys.path.insert(0, str(_GPU_DIR))
+import ks_build  # noqa: E402
+
+_BINARY = ks_build.find_binary() or (_GPU_DIR / ks_build.binary_name())
 _RENDER_SCRIPT = _GPU_DIR / "render_movie.py"
 _RENDER_PYTHON = Path.home() / "miniconda3" / "envs" / "py314_bayesmm" / "bin" / "python"
 

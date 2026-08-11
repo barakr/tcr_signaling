@@ -15,6 +15,7 @@ GPU enabled for speed. Outputs to ~/Downloads/ks_rigidity_convergence/.
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -22,7 +23,13 @@ from pathlib import Path
 import numpy as np
 
 _PKG_DIR = Path(__file__).resolve().parent
-_BINARY = _PKG_DIR / "ks_gpu"
+
+# ks_build owns the platform-dependent naming (ks_gpu vs ks_gpu.exe) and the
+# multi-config build subdirectories, so this script works on Windows too.
+sys.path.insert(0, str(_PKG_DIR))
+import ks_build  # noqa: E402
+
+_BINARY = ks_build.find_binary() or (_PKG_DIR / ks_build.binary_name())
 _OUTPUT_DIR = Path.home() / "Downloads" / "ks_rigidity_convergence"
 _RENDER_PYTHON = Path.home() / "miniconda3" / "envs" / "py314_bayesmm" / "bin" / "python"
 

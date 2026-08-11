@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 _PKG_DIR = Path(__file__).resolve().parents[1]
-_BINARY = _PKG_DIR / "ks_gpu"
+
+# ks_build owns the platform-dependent naming (ks_gpu vs ks_gpu.exe) and the
+# multi-config build subdirectories, so this script works on Windows too.
+sys.path.insert(0, str(_PKG_DIR))
+import ks_build  # noqa: E402
+
+_BINARY = ks_build.find_binary() or (_PKG_DIR / ks_build.binary_name())
 
 # Configuration matrix.
 CONFIGS = {
