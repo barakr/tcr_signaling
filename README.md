@@ -4,6 +4,17 @@ Reproduction of "Bayesian metamodeling of early T-cell antigen receptor signalin
 accounts for its nanoscale activation patterns" (Neve-Oz, Sherman & Raveh,
 *Frontiers in Immunology*, 2024).
 
+## Just cloned? Run this once
+
+```bash
+python scripts/dev_setup.py
+```
+
+Two settings live in `.git/`, which no clone receives — most importantly `core.hooksPath`,
+without which **no git hook runs at all** and the repo looks green while none of its checks
+execute. Takes a second, safe to re-run, prints what it changed. Details:
+[First-time setup after cloning](#first-time-setup-after-cloning).
+
 ## New here? Start with the tutorials
 
 ```bash

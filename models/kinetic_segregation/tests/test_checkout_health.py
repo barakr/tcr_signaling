@@ -27,6 +27,7 @@ true. `scripts/dev_setup.py` applies the repair.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -114,6 +115,46 @@ class TestGitAgreesWithReality:
             f"git reports {len(phantom)} file(s) as deleted that are present on "
             f"disk, e.g. {phantom[:3]}.\n\n"
             f"Committing now would record their deletion.\n\n{_REPAIR}"
+        )
+
+
+class TestHooksAreInstalled:
+    """A developer clone with no hooks configured must not look green.
+
+    The gap this closes: the two tests above only fire for a *linked worktree*, and a
+    plain clone is not affected by that bug — so on an ordinary fresh clone the hooks
+    were silently absent and the whole suite passed. No commit-msg check, no ruff, no
+    fast tests, no Status.md check, and nothing anywhere saying so. That is exactly the
+    "green means nothing ran" failure CLAUDE.md rule 12 exists to prevent, and leaving
+    it to whether someone read the README is not a guard.
+
+    Exempt under CI because there hooks are not merely unconfigured but irrelevant: the
+    workflow runs ruff and pytest as explicit steps, so the checks a hook would trigger
+    do execute. That is a reasoned exemption rather than a hidden no-op, and it is a
+    pass rather than a skip on purpose — `Deep CI`'s audit sanctions only the Metal
+    skip, so a skip here would fail the job for the wrong reason.
+    """
+
+    def test_core_hookspath_points_at_runnable_hooks(self):
+        if os.environ.get("CI"):
+            return
+        if not _under_git():
+            return
+
+        configured = _git("config", "--get", "core.hooksPath").stdout.strip()
+        resolved = None
+        if configured:
+            path = Path(configured)
+            resolved = path if path.is_absolute() else _REPO / path
+
+        assert resolved is not None and (resolved / "pre-commit").is_file(), (
+            "git hooks are not installed, so NONE of them run: no conventional-commit "
+            "check, no ruff, no fast tests, no Status.md check. Nothing fails — the "
+            "checks simply never execute.\n\n"
+            f"    core.hooksPath = {configured or '<unset>'}\n\n"
+            "Fix (once per clone):\n\n    python scripts/dev_setup.py\n\n"
+            "Set CI=1 to bypass this, which is what the workflows do — they run ruff "
+            "and pytest as explicit steps instead."
         )
 
 

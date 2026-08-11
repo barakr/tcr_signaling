@@ -62,7 +62,25 @@ location*:
 
 Verified by breaking the config exactly as a fresh clone has it: both tests go red with
 the repair attached, `pre-commit` refuses with the two paths side by side, and
-`dev_setup.py` detects, repairs and confirms. `TOTAL_FLOOR` 229 → 232.
+`dev_setup.py` detects, repairs and confirms. `TOTAL_FLOOR` 229 → 233.
+
+**A fourth defect, found by asking whether a newcomer would actually be protected.** The
+guards above only fire for a *linked worktree*. A plain clone is not affected by the
+`core.worktree` bug at all, so on an ordinary fresh clone the hooks were silently absent
+and **the whole suite passed** — the exact failure this work exists to prevent, still open
+for the commonest case. Two fixes: `TestHooksAreInstalled` fails when `core.hooksPath`
+does not point at runnable hooks (exempt under `CI`, where the workflow runs ruff and
+pytest as explicit steps, so the checks a hook would trigger do execute); and the setup
+step was promoted to the **first** section of `README.md`, because the previous first
+section told a newcomer to launch Jupyter while setup sat at line 80, where a top-down
+reader never reaches it.
+
+That guard's environment-level verification is **still outstanding**: the machine's git
+began refusing to run mid-session (unaccepted Xcode Command Line Tools licence), and with
+git unavailable the guard early-returns. Its assertion logic was verified against a
+stubbed git — fires on unset, fires on a path with no hooks, passes on a real one — but
+it has not yet been seen to go red against a genuinely unconfigured clone. Do that after
+`sudo xcodebuild -license accept`.
 
 
 ### 2026-08-11: Every git worktree of this submodule was born broken (local repair)
