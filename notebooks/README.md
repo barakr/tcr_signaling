@@ -35,10 +35,18 @@ lesson from KS 3.
 **Track B — the metamodel.** How do four separately-built models get combined into one
 joint description? Sweeps, surrogates, couplings and the paper's figures.
 
-One thing to carry in: `bayesmm meta sample` performs **forward uncertainty
-propagation**, not conditioning — it draws from the priors and pushes those draws through
-the coupling transforms. `03` says so plainly. Read "posterior" in that notebook with
-that in mind.
+One thing to carry in: `bayesmm meta sample` has **two modes**, and they answer
+different questions.
+
+- `--method propagate` (the default) draws from the priors and applies the couplings as a
+  post-draw transform. That is forward uncertainty propagation, not conditioning — the
+  surrogate likelihoods are never evaluated, so calling its output a "posterior" is a
+  misnomer.
+- `--method joint` runs Metropolis over the full joint density — priors, couplings *and*
+  surrogate likelihoods — so both ends of a coupling move and the surrogates actually
+  constrain the result.
+
+`03` covers both. Read the word "posterior" with the method in mind.
 
 Needs the `bayesian-metamodeling` framework (`bayesmm`), and PyMC for `02` and `03`.
 
