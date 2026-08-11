@@ -258,12 +258,19 @@ jobs:
           for nb in notebooks/models/kinetic_segregation/KS_*.ipynb; do
             name=$(basename "$nb" .ipynb)
             start=$(date +%s)
-            if python -m pytest -q -m slow \
-                 "models/kinetic_segregation/tests/test_notebooks.py::test_notebook_executes_and_self_check_passes[$name]"; then
+            if out=$(python -m pytest -q -m slow \
+                 "models/kinetic_segregation/tests/test_notebooks.py::test_notebook_executes_and_self_check_passes[$name]" 2>&1); then
               printf '::notice::%s passed in %ss\n' "$name" "$(( $(date +%s) - start ))"
             else
               status=1
-              printf '::error::%s FAILED after %ss\n' "$name" "$(( $(date +%s) - start ))"
+              printf '::error::%s FAILED after %ss (rc=%s)\n' "$name" "$(( $(date +%s) - start ))" "$?"
+              # The reason, not just the fact. Annotations carry no newlines, so
+              # the tail goes out a line at a time; without this a Windows-only
+              # failure is invisible to anyone who cannot read the raw log.
+              printf '%s\n' "$out" | grep -viE '^\s*$' | tail -12 | while IFS= read -r line; do
+                printf '::error::%s | %s\n' "$name" "$(printf '%s' "$line" | cut -c1-220)"
+              done
             fi
+            printf '%s\n' "$out"
           done
           exit $status
