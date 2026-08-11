@@ -14,6 +14,7 @@ from it the next time the model changes.
 from __future__ import annotations
 
 import ctypes
+import itertools
 import json
 import subprocess
 import sys
@@ -149,6 +150,32 @@ def ensure_potentials() -> ctypes.CDLL:
     return _ks_build().load_potentials()
 
 
+_SESSION_TMP: tempfile.TemporaryDirectory | None = None
+_RUN_SEQ = itertools.count()
+
+
+def _scratch_dir() -> Path:
+    """A fresh subdirectory inside ONE session-scoped temporary directory.
+
+    Deliberately not a `TemporaryDirectory` per simulation. KS_4 alone runs
+    dozens of parameter points, and creating then recursively deleting a
+    directory for each is pure overhead — negligible on Unix, but on Windows
+    every create and delete goes through the filesystem filter drivers
+    (Defender among them), which is a per-call cost that does not shrink with
+    how small the simulation is.
+
+    The whole tree is removed when the kernel exits. Each run writes one small
+    JSON, so nothing accumulates that matters; frame dumps take an explicit
+    `run_dir` precisely because they are the large case.
+    """
+    global _SESSION_TMP
+    if _SESSION_TMP is None:
+        _SESSION_TMP = tempfile.TemporaryDirectory(prefix="ks_tutorial_")
+    path = Path(_SESSION_TMP.name) / f"run_{next(_RUN_SEQ):04d}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _to_argv(params: dict[str, Any]) -> list[str]:
     argv: list[str] = []
     for key, value in params.items():
@@ -170,32 +197,26 @@ def run_ks(run_dir: str | Path | None = None, *, gpu: bool = False, **params: An
     `--rigidity_kT 20`. Defaults to CPU (`--no-gpu`) for reproducibility across
     machines; pass `gpu=True` to exercise the Metal backend on Apple hardware.
 
-    With `run_dir=None` the simulation runs in a temporary directory that is
-    deleted afterwards — fine unless you asked for `dump_frames`, in which case
-    pass an explicit `run_dir` so the frames survive.
+    With `run_dir=None` the simulation runs in a scratch directory that is
+    cleaned up when the kernel exits — fine unless you asked for `dump_frames`,
+    in which case pass an explicit `run_dir` so the frames are easy to find.
     """
     binary = ensure_binary()
     params.setdefault("time_sec", 1.0)
     params.setdefault("rigidity_kT", 20.0)
 
-    tmp: tempfile.TemporaryDirectory | None = None
     if run_dir is None:
-        tmp = tempfile.TemporaryDirectory()
-        run_dir = tmp.name
-    try:
-        argv = [str(binary), "--run-dir", str(run_dir)]
-        if not gpu:
-            argv.append("--no-gpu")
-        argv += _to_argv(params)
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"ks_gpu exited {proc.returncode}\ncmd: {' '.join(argv)}\n{proc.stderr[-2000:]}"
-            )
-        return json.loads(proc.stdout)
-    finally:
-        if tmp is not None:
-            tmp.cleanup()
+        run_dir = _scratch_dir()
+    argv = [str(binary), "--run-dir", str(run_dir)]
+    if not gpu:
+        argv.append("--no-gpu")
+    argv += _to_argv(params)
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ks_gpu exited {proc.returncode}\ncmd: {' '.join(argv)}\n{proc.stderr[-2000:]}"
+        )
+    return json.loads(proc.stdout)
 
 
 def load_frame_meta(run_dir: str | Path) -> dict:

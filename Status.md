@@ -92,11 +92,27 @@ Windows build script is provided" and "verified separately on macOS"; both corre
 Windows run took over 25 minutes on the notebook step against 87 s on macOS. The
 per-step timings ruled out every tempting explanation: the **build was the fastest of
 the three** (16 s, vs 43 s on macOS) and the **fast suite was fine** (40 s, vs 67 s on
-macOS). Only the notebook step was pathological, and what is unique about it is that it
-spawns a few hundred short `ks_gpu` runs. Windows Defender rescans the freshly built
-executable on every launch. Excluding the workspace, the temp directories and the
-process itself targets that and nothing else — `continue-on-error`, since a hardened
-runner image may refuse the policy change and losing a speedup must not fail a job.
+macOS, and only ~2x ubuntu). Only the notebook step was pathological.
+
+**First hypothesis — Defender rescanning `ks_gpu.exe` on every spawn — was wrong.** The
+exclusions went in (workspace, temp dirs, the process) and the step still ran to the
+30-minute timeout. Recording it because the reasoning looked sound and was not: the fast
+suite spawns the binary heavily too and is only ~2x slower, so *spawn* was never the
+variable that separated the two steps. The exclusions are harmless and were kept; they
+are not the fix.
+
+**What actually separates them is per-call directory churn.** The test suite uses
+pytest's `tmp_path`, created once per test. `ks_tutorial.run_ks` created and then
+recursively deleted a `TemporaryDirectory` for **every single simulation**, and KS_4
+alone runs dozens of parameter points. That cost is invisible on Unix — the local
+per-notebook timings are identical before and after — and on Windows every create and
+delete traverses the filesystem filter drivers. It also scales with call count, which
+matches the observed profile: KS_4 (most calls) dominates at 31 s locally, KS_3 at 14 s,
+the other three under 2.5 s each.
+
+`run_ks` now allocates numbered subdirectories inside one session-scoped temporary
+directory, removed when the kernel exits. Fewer syscalls on every platform; the notebooks
+produce identical results.
 
 Bounded the diagnosis cost too, because a hang that only manifests on a machine none of
 us has is expensive to chase: the step now has `timeout-minutes: 30`, the per-notebook
