@@ -45,6 +45,18 @@ typedef struct {
     int n_mol;
 } BinParams;
 
+/* Where to look for `name` (shaders.metallib / shaders.metal), relative to the
+ * directory holding the executable. Used by both lookups so they cannot drift
+ * apart — the previous code had two hand-maintained lists and they had already
+ * diverged. */
+static NSArray *_ks_shader_candidates(NSString *execDir, NSString *name) {
+    return @[
+        [[execDir stringByAppendingPathComponent:@"src"] stringByAppendingPathComponent:name],
+        [execDir stringByAppendingPathComponent:name],
+        [[execDir stringByAppendingPathComponent:@"../src"] stringByAppendingPathComponent:name],
+    ];
+}
+
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> queue;
@@ -96,21 +108,29 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
         eng->rng_key1 = (uint32_t)(gpu_rng_key >> 32);
         eng->rng_counter = 0;
 
-        /* Try to load pre-compiled .metallib first, fall back to source. */
+        /* Try to load pre-compiled .metallib first, fall back to source.
+         *
+         * Every candidate is resolved against the EXECUTABLE's directory, never
+         * against the working directory. This is not a style preference: these
+         * lists used to be cwd-relative, so the same command produced GPU
+         * physics from the submodule root and CPU physics from the parent repo
+         * root — a ~7% shift in depletion_width_nm decided by where the caller
+         * happened to be standing, with nothing in the output saying which had
+         * run. The ModelSpec entrypoint runs from the parent root, so every
+         * framework-driven sweep on macOS silently took the CPU path.
+         *
+         * `src/` first because that is where CMake writes both files
+         * (CMAKE_SOURCE_DIR), and CMAKE_RUNTIME_OUTPUT_DIRECTORY puts the
+         * executable in that same source directory. The other two cover a
+         * binary left in build/ or build/Release/ by a generator that ignores
+         * the pinned output directory. */
         NSError *error = nil;
         id<MTLLibrary> library = nil;
 
-        NSArray *metallib_candidates = @[
-            @"src/shaders.metallib",
-            @"shaders.metallib",
-            @"models/kinetic_segregation/src/shaders.metallib",
-        ];
         NSString *execPath = [[NSBundle mainBundle] executablePath];
-        if (execPath) {
-            NSString *dir = [execPath stringByDeletingLastPathComponent];
-            metallib_candidates = [@[[dir stringByAppendingPathComponent:@"shaders.metallib"]]
-                                   arrayByAddingObjectsFromArray:metallib_candidates];
-        }
+        NSString *execDir = execPath ? [execPath stringByDeletingLastPathComponent] : nil;
+        NSArray *metallib_candidates =
+            execDir ? _ks_shader_candidates(execDir, @"shaders.metallib") : @[];
         for (NSString *path in metallib_candidates) {
             NSURL *url = [NSURL fileURLWithPath:path];
             if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
@@ -124,27 +144,26 @@ void *gpu_engine_create(int grid_size, uint64_t gpu_rng_key) {
         }
 
         if (!library) {
+            /* Same executable-relative rule as the .metallib lookup above. This
+             * fallback is the live path on any Mac without the Metal compiler
+             * (`xcrun metal`), where no .metallib is ever built — so it was
+             * every bit as cwd-dependent in practice. */
             NSString *shaderPath = nil;
-            if (execPath) {
-                NSString *dir = [execPath stringByDeletingLastPathComponent];
-                shaderPath = [dir stringByAppendingPathComponent:@"shaders.metal"];
-            }
-            if (!shaderPath || ![[NSFileManager defaultManager] fileExistsAtPath:shaderPath]) {
-                NSArray *candidates = @[
-                    @"src/shaders.metal",
-                    @"shaders.metal",
-                    @"models/kinetic_segregation/src/shaders.metal",
-                ];
-                for (NSString *c in candidates) {
-                    if ([[NSFileManager defaultManager] fileExistsAtPath:c]) {
-                        shaderPath = c;
-                        break;
-                    }
+            for (NSString *c in (execDir ? _ks_shader_candidates(execDir, @"shaders.metal") : @[])) {
+                if ([[NSFileManager defaultManager] fileExistsAtPath:c]) {
+                    shaderPath = c;
+                    break;
                 }
             }
 
-            if (!shaderPath || ![[NSFileManager defaultManager] fileExistsAtPath:shaderPath]) {
-                fprintf(stderr, "Metal: shader not found, using CPU fallback.\n");
+            if (!shaderPath) {
+                /* Name the directory searched. "shader not found" alone sent two
+                 * separate investigations looking at the working directory, which
+                 * is precisely what this lookup no longer consults. */
+                fprintf(stderr,
+                        "Metal: neither shaders.metallib nor shaders.metal found next to the "
+                        "executable (%s), using CPU fallback.\n",
+                        execDir ? [execDir UTF8String] : "<unknown>");
                 free(eng);
                 return NULL;
             }

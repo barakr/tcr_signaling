@@ -6,6 +6,74 @@
 
 ## Decision Log
 
+### 2026-08-11: Backend selection no longer depends on the working directory
+
+Fixes the defect recorded but deliberately left open in the Windows/MSVC entry below.
+`metal_engine.m` resolved its shader through cwd-relative candidates, so **the same
+command produced different physics depending on where the caller stood**:
+
+| cwd | backend | `depletion_width_nm` |
+|---|---|---|
+| `projects/tcr_signaling` (submodule root) | Metal | 312.67231074220615 |
+| parent repo root | **CPU** | 283.9132645633737 |
+| `--no-gpu`, any cwd | CPU | 283.9132645633737 |
+
+The ModelSpec entrypoint is `python -m projects.tcr_signaling.models.kinetic_segregation`,
+which the framework launches from the parent root — so every `bayesmm`-driven sweep on
+macOS had been taking the CPU path, while anyone running the model by hand from the
+submodule root got the GPU path. ~7% apart on this observable, with nothing in the output
+saying which had run.
+
+**On a Mac without the Metal compiler the `.metallib` is a red herring.** `xcrun metal`
+is not part of the Command Line Tools, so `CMakeLists.txt` never produces
+`src/shaders.metallib` there and the live path is the *source* fallback that compiles
+`shaders.metal` at runtime. Its candidate list had the identical defect. Both lists now
+go through one helper, `_ks_shader_candidates(execDir, name)`, so they cannot drift apart
+again — they already had.
+
+**Decisions taken (user sign-off on all three):**
+
+1. **Executable-relative only; the cwd candidates are deleted, not demoted.** A backend
+   chosen by where you stand is the defect, and a demoted fallback keeps that alive.
+   `<execDir>/src/`, `<execDir>/`, `<execDir>/../src/` cover every layout this repo
+   builds — CMake writes both the metallib and the executable into `CMAKE_SOURCE_DIR`,
+   and the other two catch a generator that ignores the pinned output directory.
+2. **The backend is recorded in the run's JSON** (`diagnostics.backend`: `"metal"` |
+   `"cpu"`), and announced on stderr in both cases rather than only on Metal success.
+   This is the part that matters for provenance: `__main__.py` discards stderr on a zero
+   exit, so **JSON was the only channel that could reach a stored run.** Every result now
+   says what produced it.
+3. **New opt-in `--require-gpu`** turns a downgrade into exit 1. Not the default, and it
+   cannot be: off Apple, `CMakeLists.txt` compiles `gpu_stub.c`, whose
+   `gpu_engine_create()` returns NULL by design, so a hard default would break every
+   Linux and Windows run. `--require-gpu` with `--no-gpu` is rejected as contradictory.
+
+**No reference values were re-recorded, and none needed to be** — this was checked, not
+assumed, which is what KS rule 3 asks for:
+
+- the `cpu` baselines are produced with an explicit `--no-gpu`, so they cannot move;
+- the `gpu` baselines come from tests run from the submodule root, one of the directories
+  where the old lookup *did* find a shader — they were already Metal;
+- notebooks pin the CPU (`ks_tutorial.py` appends `--no-gpu`; notebook 01's KS cell passes
+  it and sets `cwd=ROOT`), and `artifacts/` holds nothing but `.gitkeep`;
+- the suite passes unchanged: **178 → 189 tests, 0 skips, 0 failures**, deterministic
+  bit-level baselines included.
+
+**What does change:** framework-driven sweeps and notebook 02's `bayesmm run` move from
+the CPU path to the Metal path on macOS. Nothing committed derives from either (`store/`
+is gitignored), but local sweep results predating this commit are CPU and will not
+reproduce — re-run them, or pass `--no-gpu`.
+
+**Guards, verified to go red.** `tests/test_backend_selection.py` (11 tests, none gated on
+macOS) runs the same arguments from four unrelated working directories and asserts one
+distinct result; copies the binary somewhere bare and asserts it does *not* borrow a
+shader from the cwd; and statically asserts no cwd-relative shader literal returns to
+`metal_engine.m` — the static one matters because `metal_engine.m` is not compiled at all
+on the Linux and Windows jobs, so nothing else there could catch a regression. Reverting
+`metal_engine.m` to its previous version turns 6 of the 11 red. `TOTAL_FLOOR` in
+`ci.yml` raised 183 → 190 to keep the collapse guard proportional to the new count.
+
+
 ### 2026-08-11: The KS model is disconnected from the metamodel, and the paper's DOI was wrong
 
 Two findings from checking this project against the published paper
@@ -194,7 +262,8 @@ forbids, and a naive substring scan flagged that. (Same shape as the guard that 
 itself when the scan was widened to `models/`.)
 
 **Separately found, not caused by this work, and NOT fixed here — the Metal shader
-library is located by cwd-relative paths.** `metal_engine.m` tries
+library is located by cwd-relative paths.** (Fixed later the same day — see
+"Backend selection no longer depends on the working directory" above.) `metal_engine.m` tries
 `<execDir>/shaders.metallib` first, but the file is at `<execDir>/src/shaders.metallib`,
 so that executable-relative candidate always misses and the lookup falls through to
 `src/shaders.metallib` / `models/kinetic_segregation/src/shaders.metallib`, both relative

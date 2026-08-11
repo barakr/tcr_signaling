@@ -488,6 +488,27 @@ The GPU backend is accessed through a four-function C~API defined in
 \texttt{void*} handle, allowing different backends (Metal, CUDA) to be
 linked at compile time without changing the simulation core.
 
+\subsection{Backend selection and reporting}
+
+The GPU path is used by default when it is available, and
+\texttt{--no-gpu} forces the CPU path.  The two are not numerically
+identical: the GPU evaluates the energies in single precision and draws
+from a Philox counter-based stream, while the CPU path uses double
+precision and PCG64, so the two are statistically equivalent
+realisations rather than the same trajectory.  Reported results must
+therefore state which path produced them, and every run records the
+backend both on \texttt{stderr} and as \texttt{diagnostics.backend}
+(\texttt{"metal"} or \texttt{"cpu"}) in the output JSON.
+
+Availability is determined solely by the flags and by whether a Metal
+device and shader are present.  The shader is located relative to the
+\emph{executable}, never the working directory: until 2026-08-11 the
+lookup was working-directory relative, which made the backend --- and
+hence the numerical result --- depend on the directory the caller
+happened to invoke the binary from.  Where a run must not silently
+degrade, \texttt{--require-gpu} makes an unavailable GPU backend a
+fatal error instead of a fallback.
+
 \subsection{CPU mode}
 
 In CPU mode, Phase~1 (molecular moves) and Phase~2 (grid height

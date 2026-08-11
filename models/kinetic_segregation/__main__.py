@@ -75,6 +75,11 @@ def main() -> int:
     parser.add_argument("--grid_size", type=lambda x: int(float(x)), default=None)
     parser.add_argument("--no-gpu", action="store_true", help="Disable Metal GPU")
     parser.add_argument(
+        "--require-gpu",
+        action="store_true",
+        help="Fail instead of falling back to the CPU when the GPU backend is unavailable",
+    )
+    parser.add_argument(
         "--D_mol", type=float, default=None, help="Molecular diffusion coeff (nm²/s)"
     )
     parser.add_argument(
@@ -195,6 +200,8 @@ def main() -> int:
         cmd.extend(["--n_steps", str(args.n_steps)])
     if args.no_gpu:
         cmd.append("--no-gpu")
+    if args.require_gpu:
+        cmd.append("--require-gpu")
     if args.D_mol is not None:
         cmd.extend(["--D_mol", str(args.D_mol)])
     if args.D_h is not None:

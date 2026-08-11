@@ -46,7 +46,8 @@ static void print_usage(std::string_view prog) {
     std::cerr << "Usage: " << prog
               << " --time_sec FLOAT --rigidity_kT FLOAT --run-dir PATH\n"
               << "       [--seed INT] [--n_tcr INT] [--n_cd45 INT] [--n_steps INT]\n"
-              << "       [--grid_size INT] [--no-gpu] [--dump-frames] [--dump-interval INT]\n"
+              << "       [--grid_size INT] [--no-gpu] [--require-gpu]\n"
+              << "       [--dump-frames] [--dump-interval INT]\n"
               << "       [--monitor-binding FLOAT] [--monitor-interval INT]\n"
               << "       [--snapshot-interval FLOAT]  (compute all metrics every N seconds)\n"
               << "       [--grid-substeps INT] [--D_mol FLOAT] [--D_h FLOAT]\n"
@@ -195,6 +196,7 @@ int main(int argc, const char *argv[]) {
     int seed = 42, n_tcr = 125, n_cd45 = 500, grid_size = 64;
     int n_steps_arg = -1;
     int use_gpu = 1;
+    bool require_gpu = false;
     bool dump_frames_flag = false;
     int dump_interval = 1;
     int grid_substeps = 1;
@@ -241,6 +243,8 @@ int main(int argc, const char *argv[]) {
             grid_size = static_cast<int>(std::atof(argv[++i]));
         else if (match(argv[i], "--no-gpu"))
             use_gpu = 0;
+        else if (match(argv[i], "--require-gpu"))
+            require_gpu = true;
         else if (match(argv[i], "--dump-frames"))
             dump_frames_flag = true;
         else if (match(argv[i], "--dump-interval") && i + 1 < argc)
@@ -348,6 +352,14 @@ int main(int argc, const char *argv[]) {
         return 1;
     }
 
+    /* Caught here rather than at the GPU check below, which would otherwise
+     * report "the GPU backend could not be initialized" for what is really a
+     * contradictory request. */
+    if (require_gpu && !use_gpu) {
+        std::cerr << "Error: --require-gpu and --no-gpu are mutually exclusive\n";
+        return 1;
+    }
+
     /* Derive seed. */
     auto point_seed = derive_seed(static_cast<uint64_t>(seed), time_sec, rigidity);
 
@@ -370,6 +382,25 @@ int main(int argc, const char *argv[]) {
                            h0_tcr_arg, init_height_arg,
                            sigma_r_arg, sigma_bind_arg, patch_size_arg,
                            pmhc_deposition_arg);
+    /* Say which backend actually ran, always — not only when Metal succeeds.
+     * The two produce measurably different numbers (they differ in precision and
+     * in RNG stream), so "which one was it" is provenance, not chatter. It also
+     * goes into the JSON below, because __main__.py drops stderr on a zero exit
+     * and the JSON is the only channel that reaches a stored run. */
+    const char *backend = sim->use_gpu ? "metal" : "cpu";
+    std::cerr << "Backend: " << backend << "\n";
+
+    /* --require-gpu turns a silent downgrade into a hard failure. Opt-in, because
+     * the default MUST keep falling back: off Apple, CMakeLists.txt compiles
+     * gpu_stub.c, whose gpu_engine_create() returns NULL by design, so a default
+     * hard error would break every Linux and Windows run. */
+    if (require_gpu && !sim->use_gpu) {
+        std::cerr << "error: --require-gpu was given but the GPU backend could not be "
+                     "initialized; refusing to fall back to the CPU silently.\n";
+        sim_destroy(sim);
+        return 1;
+    }
+
     if (grid_substeps > 1) sim->grid_substeps = grid_substeps;
     sim->bind_threshold = monitor_binding_threshold;
 
@@ -492,6 +523,7 @@ int main(int argc, const char *argv[]) {
             {"D_h_nm2_per_s", sim->D_h},
             {"D_mol_nm2_per_s", sim->D_mol},
             {"accept_rate", accept_rate},
+            {"backend", backend},
             {"depletion_bound_tcr_cd45_nn_p10_nm",
              dm.bound_tcr_cd45_nn_p10 < 0 ? nlohmann::json(nullptr)
                                            : nlohmann::json(dm.bound_tcr_cd45_nn_p10)},
