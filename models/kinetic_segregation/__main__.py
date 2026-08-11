@@ -8,18 +8,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+from models.kinetic_segregation import ks_build
+
 
 def _find_binary() -> Path:
-    """Locate the ks_gpu binary relative to this package."""
-    pkg_dir = Path(__file__).resolve().parent
-    candidates = [
-        pkg_dir / "ks_gpu",
-        pkg_dir / "build" / "ks_gpu",
-    ]
-    for c in candidates:
-        if c.exists() and c.is_file():
-            return c
-    raise FileNotFoundError(f"ks_gpu binary not found. Build it first: cd {pkg_dir} && make")
+    """Locate the ks_gpu binary relative to this package.
+
+    Delegates to ks_build so the executable suffix (`.exe` on Windows) and the
+    multi-config build subdirectories are handled in exactly one place.
+    """
+    binary = ks_build.find_binary()
+    if binary is not None:
+        return binary
+    raise FileNotFoundError(
+        f"ks_gpu binary not found. Build it first:\n  {ks_build.BUILD_HINT}\n\n"
+        f"{ks_build.toolchain_hint()}"
+    )
 
 
 def _merge_params(args: argparse.Namespace, params_dict: dict) -> None:

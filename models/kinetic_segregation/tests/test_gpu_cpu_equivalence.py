@@ -20,8 +20,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from models.kinetic_segregation import ks_build
+
 _PKG_DIR = Path(__file__).resolve().parents[1]
-_BINARY = _PKG_DIR / "ks_gpu"
+_BINARY = ks_build.find_binary() or (_PKG_DIR / ks_build.binary_name())
 _REF_FILE = Path(__file__).resolve().parent / "reference_values.json"
 PATCH_SIZE_NM = 2000.0
 
@@ -29,15 +31,10 @@ PATCH_SIZE_NM = 2000.0
 def _ensure_binary():
     if _BINARY.exists():
         return
-    result = subprocess.run(
-        ["make"],
-        cwd=str(_PKG_DIR),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Failed to build binary: {result.stderr}")
+    try:
+        ks_build.build()
+    except RuntimeError as exc:
+        pytest.skip(f"Failed to build binary: {exc}")
 
 
 def _load_reference():

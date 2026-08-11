@@ -1,5 +1,5 @@
 #include "rng.h"
-#include <math.h>
+#include "ks_compat.h"  /* pulls in <math.h> with M_PI available on MSVC too */
 
 void pcg64_seed(pcg64_t *rng, uint64_t seed) {
     rng->state = 0;

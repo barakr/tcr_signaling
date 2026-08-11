@@ -1,22 +1,18 @@
 #include "simulation.h"
 #include "potentials.h"
 #include "cell_list.h"
-#include <math.h>
+#include "ks_compat.h"  /* pulls in <math.h> with M_PI available on MSVC too */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 #ifdef KS_PROFILE
-#include <time.h>
 static double _profile_phase1_ms = 0.0;
 static double _profile_phase2_ms = 0.0;
 double _profile_bin_ms = 0.0;  /* non-static: shared with metal_engine.m */
 
-static double _clock_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
-}
+/* ks_clock_ms() comes from ks_compat.h: monotonic on every platform. */
+#define _clock_ms ks_clock_ms
 
 void sim_profile_report(int n_steps) {
     fprintf(stderr, "PROFILE: phase1=%.1fms phase2=%.1fms bin=%.1fms total=%.1fms "

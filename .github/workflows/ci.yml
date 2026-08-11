@@ -13,34 +13,31 @@ name: KS model CI
 # These tests import no framework code at all — only numpy/scipy/matplotlib —
 # so nothing needs to be installed from the parent repo.
 #
-# Windows is absent on purpose (decided 2026-08-07), not overlooked.
+# Windows was deliberately absent until 2026-08-11, on the reasoning that no
+# real user ran the native KS model there. That condition no longer holds — a
+# student hit exactly this — so the job the old comment said to build "when an
+# actual Windows user appears" is now in the matrix below, native MSVC as
+# recommended (MSYS2 would only have been a third GCC build of the same
+# gpu_stub.c path ubuntu already covers, proving nothing a Windows user needs).
 #
-# CMakeLists.txt has no WIN32/MSVC branch, so the model does not build there; a
-# Windows job today would skip everything and report a meaningless green.
-#
-# Both ways of fixing that were costed and rejected:
-#   * MSYS2/UCRT64 (~2h) compiles the same `gpu_stub.c` non-Apple path with GCC
-#     that the ubuntu job already builds — a third GCC build of covered code,
-#     so almost no new signal for permanent upkeep.
-#   * Native MSVC (~1 day) WOULD add signal (different compiler, CRT and C11
-#     conformance), but the cost is real: `M_PI` needs _USE_MATH_DEFINES, 15
-#     test files hardcode the `ks_gpu` binary name (Windows adds `.exe`), 8
-#     shell out to `make`, and libks_potentials needs WINDOWS_EXPORT_ALL_SYMBOLS
-#     plus a config-subdir path for ctypes.
-#
-# Neither serves a known user: the framework already covers Windows for the
-# pure-Python layer, which is what most users touch, and no one runs the native
-# KS simulation there. Revisit when an actual Windows user for the C model
-# appears — then do native MSVC, since MSYS2 would not prove what they need.
+# The portability work that unblocked it: src/ks_compat.h (_USE_MATH_DEFINES for
+# M_PI), a WIN32 branch in CMakeLists.txt (WINDOWS_EXPORT_ALL_SYMBOLS plus
+# per-config output dirs for the multi-config VS generator), and ks_build.py,
+# which is now the single place that knows the `.exe` suffix, the `.dll` naming
+# and how to invoke cmake instead of `make`. tests/test_portability.py fails if
+# any of that is undone.
 
 on:
   push:
     branches: ["**"]
   pull_request:
-  # Weekly, offset one hour from the framework's schedule so the two runs are
-  # easy to tell apart in notifications.
+  # Daily. This was weekly until Windows joined the matrix: a stock Windows box
+  # picks up MSVC and SDK updates on Microsoft's schedule, not ours, and the
+  # runner image moves under us too, so a toolchain break here has no push to
+  # ride in on. Offset one hour from the framework's schedule so the two runs
+  # are easy to tell apart in notifications.
   schedule:
-    - cron: "0 7 * * 1"
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 jobs:
@@ -50,10 +47,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS exercises the Metal backend; Linux exercises the gpu_stub.c CPU
-        # fallback path, which is what non-Apple users actually run. Both build
-        # the same C99 core, so a portability regression shows up on Linux.
-        os: [macos-latest, ubuntu-latest]
+        # macOS exercises the Metal backend. Linux and Windows both exercise the
+        # gpu_stub.c CPU fallback, but they are NOT redundant: Windows is the
+        # only job compiling with MSVC rather than GCC/Clang, so it is the only
+        # one that catches a glibc/libc++ assumption, a POSIX-only call, or a
+        # C11 conformance gap. That is the signal it exists for.
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    defaults:
+      run:
+        # bash everywhere, so one script works on all three. Present on the
+        # Windows runners (Git for Windows); without this they default to
+        # PowerShell and the heredoc in the skip-audit step below dies.
+        shell: bash
+
+    env:
+      # Windows runners ship tkinter, so matplotlib would pick TkAgg and block
+      # on a display that does not exist when the notebooks render figures.
+      MPLBACKEND: Agg
 
     steps:
       - uses: actions/checkout@v4
@@ -65,8 +76,13 @@ jobs:
       - name: Toolchain info
         run: |
           cmake --version
-          c++ --version
-          if [ "$RUNNER_OS" = "macOS" ]; then xcrun --show-sdk-path; fi
+          case "$RUNNER_OS" in
+            macOS)   c++ --version; xcrun --show-sdk-path ;;
+            Linux)   c++ --version ;;
+            # No `c++` on Windows; cl.exe is only on PATH inside a developer
+            # shell, which CMake sets up itself. Report what CMake will pick.
+            Windows) cmake --system-information 2>/dev/null | grep -i -m3 "CMAKE_CXX_COMPILER\b" || true ;;
+          esac
 
       - name: Install test dependencies
         # nbclient/nbformat are for the tutorial-notebook step below; the notebooks
@@ -77,7 +93,22 @@ jobs:
 
       - name: Build KS model
         working-directory: models/kinetic_segregation
-        run: make
+        # cmake directly rather than `make`: the Makefile is a convenience
+        # wrapper for Unix humans and there is no make on a Windows runner.
+        # --config Release is a no-op for single-config generators and is what
+        # selects the configuration for the Visual Studio one.
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+
+      - name: Show what was built
+        working-directory: models/kinetic_segregation
+        # If the executable or the ctypes DLL lands somewhere unexpected, every
+        # dependent test skips and the run looks green. Print the artifacts so a
+        # path regression is visible in the log even before the audit below.
+        run: |
+          ls -l ks_gpu ks_gpu.exe 2>/dev/null || true
+          find build -maxdepth 2 \( -name "*ks_potentials*" -o -name "ks_gpu*" \) -print
 
       - name: Run fast test suite
         # `deterministic` is deselected: bit-level reproducibility baselines that
@@ -104,7 +135,7 @@ jobs:
           import os, sys, xml.etree.ElementTree as ET
 
           ALLOWED_SKIP = "requires Metal GPU backend"
-          TOTAL_FLOOR = 173        # 178 collected today; headroom without hiding a collapse
+          TOTAL_FLOOR = 183        # 188 collected today; headroom without hiding a collapse
           root = ET.parse("results.xml").getroot()
           suite = root.find("testsuite")
           if suite is None:

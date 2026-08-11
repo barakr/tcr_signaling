@@ -31,6 +31,7 @@ __all__ = [
     "ks_dir",
     "ensure_binary",
     "ensure_potentials",
+    "toolchain_hint",
     "run_ks",
     "load_frame",
     "load_frame_meta",
@@ -75,7 +76,28 @@ _HYPHEN_FLAGS = {
 }
 _BOOL_FLAGS = {"no_gpu", "dump_frames"}
 
-_LIB_EXT = ".dylib" if sys.platform == "darwin" else ".so"
+
+def _ks_build():
+    """Import the model's own ks_build module (path/build resolution).
+
+    Imported lazily and by path rather than at module import time: `ks_dir()`
+    searches upward from the notebook's working directory, which is only known
+    once a cell runs. Reusing the model's resolver rather than duplicating it
+    here is what keeps the notebooks working on Windows, where the binary is
+    `ks_gpu.exe` and the ctypes library is `ks_potentials.dll`.
+    """
+    global _KS_BUILD
+    if _KS_BUILD is None:
+        target = str(ks_dir())
+        if target not in sys.path:
+            sys.path.insert(0, target)
+        import ks_build  # noqa: PLC0415  (deliberately deferred; see docstring)
+
+        _KS_BUILD = ks_build
+    return _KS_BUILD
+
+
+_KS_BUILD = None
 
 
 def ks_dir() -> Path:
@@ -97,63 +119,34 @@ def ks_dir() -> Path:
     )
 
 
-def _build(target: str) -> None:
-    proc = subprocess.run(
-        ["make", target] if target else ["make"],
-        cwd=str(ks_dir()),
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"`make {target}` failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+def toolchain_hint() -> str:
+    """Platform-correct instructions for installing a compiler and CMake.
+
+    Notebooks print this when a build fails, so a Windows reader hitting a
+    missing compiler gets the winget command rather than a CMake stack trace.
+    """
+    return _ks_build().toolchain_hint()
 
 
 def ensure_binary() -> Path:
-    """Return the path to `ks_gpu`, building it if absent."""
-    binary = ks_dir() / "ks_gpu"
-    if not binary.exists():
-        _build("")
-    if not binary.exists():
-        raise RuntimeError(f"{binary} still missing after `make`.")
+    """Return the path to `ks_gpu` (`ks_gpu.exe` on Windows), building if absent."""
+    kb = _ks_build()
+    binary = kb.find_binary(auto_build=True)
+    if binary is None:
+        raise RuntimeError(
+            f"{kb.binary_name()} still missing after the build.\n\n{kb.toolchain_hint()}"
+        )
     return binary
 
 
 def ensure_potentials() -> ctypes.CDLL:
     """Load the C potential functions, building the shared library if needed.
 
-    Signatures mirror models/kinetic_segregation/tests/test_potentials.py so the
-    notebooks and the test suite call the identical symbols.
+    The ctypes prototypes live in the model's `ks_build.load_potentials`, so the
+    notebooks and the test suite cannot drift into calling the same C symbol
+    with two different signatures.
     """
-    lib_path = ks_dir() / "build" / f"libks_potentials{_LIB_EXT}"
-    if not lib_path.exists():
-        _build("testlib")
-    if not lib_path.exists():
-        raise RuntimeError(f"{lib_path} still missing after `make testlib`.")
-
-    lib = ctypes.CDLL(str(lib_path))
-
-    # tcr_pmhc_potential(h, h0_tcr, u_assoc, sigma_bind) -> double
-    lib.tcr_pmhc_potential.restype = ctypes.c_double
-    lib.tcr_pmhc_potential.argtypes = [ctypes.c_double] * 4
-
-    # cd45_repulsion(h, cd45_height, k_rep) -> double
-    lib.cd45_repulsion.restype = ctypes.c_double
-    lib.cd45_repulsion.argtypes = [ctypes.c_double] * 3
-
-    # bending_energy_delta(h*, n, kappa, dx, gi, gj, old_val, new_val) -> double
-    lib.bending_energy_delta.restype = ctypes.c_double
-    lib.bending_energy_delta.argtypes = [
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_int,
-        ctypes.c_double,
-        ctypes.c_double,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_double,
-        ctypes.c_double,
-    ]
-    return lib
+    return _ks_build().load_potentials()
 
 
 def _to_argv(params: dict[str, Any]) -> list[str]:

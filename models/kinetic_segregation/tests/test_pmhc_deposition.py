@@ -25,8 +25,10 @@ from pathlib import Path
 
 import pytest
 
+from models.kinetic_segregation import ks_build
+
 _PKG = Path(__file__).resolve().parents[1]
-_BINARY = _PKG / "ks_gpu"
+_BINARY = ks_build.find_binary() or (_PKG / ks_build.binary_name())
 
 # A pMHC count and sigma_r for which the resolved target is easy to reason about.
 _COMMON = [
@@ -50,7 +52,10 @@ _COMMON = [
 
 def _run(tmp_path, *, patch, grid, deposition=None, label="run"):
     if not _BINARY.exists():
-        subprocess.run(["make"], cwd=str(_PKG), capture_output=True, text=True, timeout=300)
+        try:
+            ks_build.build()
+        except RuntimeError as exc:
+            pytest.skip(f"Failed to build binary: {exc}")
     if not _BINARY.exists():
         pytest.skip("ks_gpu not available")
     cmd = [

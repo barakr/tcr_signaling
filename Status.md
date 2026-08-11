@@ -6,6 +6,64 @@
 
 ## Decision Log
 
+### 2026-08-11: KS model builds and is tested on Windows (native MSVC)
+
+`.github/workflows/ci.yml` carried a reasoned decision to leave Windows out: no real
+user ran the native KS model there, so a Windows job would have been upkeep without
+signal. That comment ended "revisit when an actual Windows user for the C model
+appears — then do native MSVC, since MSYS2 would not prove what they need." A student
+hit exactly this, so the condition is met and the recommended option is what was built.
+
+**Why native MSVC and not MSYS2/MinGW.** MSYS2 would compile the same non-Apple
+`gpu_stub.c` path with GCC that the ubuntu job already covers — a third GCC build of
+covered code. MSVC is a different compiler, CRT and C11 implementation, so it is the
+only configuration that can catch a glibc/libc++ assumption or a POSIX-only call.
+That is also what a Visual Studio user actually runs.
+
+**What was blocking the build:**
+
+- `M_PI` is not standard C. MSVC only declares it when `_USE_MATH_DEFINES` precedes
+  `<math.h>`, so `simulation.c` and `rng.c` compiled everywhere except Windows. New
+  `src/ks_compat.h` centralises the define plus a literal fallback, and also carries a
+  monotonic `ks_clock_ms()` (the `KS_PROFILE` path used POSIX `clock_gettime`;
+  Windows now gets `QueryPerformanceCounter`, not C11 `timespec_get`, which is
+  wall-clock and can step backwards).
+- The Visual Studio generator is **multi-config** and appends `Release/` to output
+  directories, so `ks_gpu.exe` would not be where every test looks. `CMakeLists.txt`
+  now pins the per-config output directories.
+- MSVC exports **nothing** from a DLL without `__declspec(dllexport)`. The ctypes
+  tests would have loaded a library with no symbols. Fixed with
+  `WINDOWS_EXPORT_ALL_SYMBOLS`, which generates the `.def` file instead of annotating
+  portable C shared with the Metal shaders. A DLL is also a RUNTIME artifact, not a
+  LIBRARY one, so `RUNTIME_OUTPUT_DIRECTORY` had to be set as well.
+
+**Python side — one resolver instead of ten.** New `models/kinetic_segregation/ks_build.py`
+owns the `.exe` suffix, the `libks_potentials.dylib`/`.so` vs `ks_potentials.dll`
+naming, the config subdirectories, and building via `cmake --build` rather than
+`make` (absent on a stock Windows box). The 8 test modules, `__main__.py` and the
+notebook helper all go through it. The ctypes prototypes moved there too, so the
+notebooks and `test_potentials.py` can no longer drift into calling the same C symbol
+two different ways — while writing this, the two copies were already inconsistent
+with `potentials.h` in a draft.
+
+**Why this class of bug is invisible on a Mac, and what now catches it.** Every
+failure mode above degrades to a *skip*, not an error: no binary found → skip; no
+library found → skip; and a suite of skips exits 0. New
+`tests/test_portability.py` (10 tests) asserts the invariants statically — no source
+uses `M_PI` without `ks_compat.h`, nothing hardcodes `"ks_gpu"` or `.dylib`, nothing
+shells out to `make`. Each guard was verified to go **red** when its invariant is
+broken before being committed.
+
+**CI cadence changed from weekly to daily**, and Windows runs on every push like the
+other two. A Windows toolchain moves on Microsoft's schedule and the runner image
+moves under us, so a break here has no push of ours to ride in on. `TOTAL_FLOOR`
+raised 173 → 183 (188 collected).
+
+**Test-plumbing change under CLAUDE.md rule 7.** `test_potentials.py`'s fixture now
+calls `ks_build.load_potentials()` instead of declaring prototypes inline, and 8
+modules had their build helper swapped. No assertion changed; local results are
+unchanged (196 passed).
+
 ### 2026-08-10: Notebook 03 now *runs* joint sampling instead of describing it
 
 Notebook 03 documented `--method joint` in prose — including a table of joint-vs-prior

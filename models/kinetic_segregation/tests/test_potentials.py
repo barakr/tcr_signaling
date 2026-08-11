@@ -4,79 +4,26 @@ from __future__ import annotations
 
 import ctypes
 import math
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
-_PKG_DIR = Path(__file__).resolve().parents[1]
-_LIB_EXT = ".dylib" if sys.platform == "darwin" else ".so"
-_LIB_PATH = _PKG_DIR / "build" / f"libks_potentials{_LIB_EXT}"
-
-
-def _build_testlib():
-    """Build the shared library if not present."""
-    if _LIB_PATH.exists():
-        return
-    result = subprocess.run(
-        ["make", "testlib"],
-        cwd=str(_PKG_DIR),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Failed to build test library: {result.stderr}")
+from models.kinetic_segregation import ks_build
 
 
 @pytest.fixture(scope="module")
 def lib():
-    _build_testlib()
-    if not _LIB_PATH.exists():
-        pytest.skip("Test library not available")
-    lib = ctypes.CDLL(str(_LIB_PATH))
+    """Load the potentials library with its prototypes already declared.
 
-    # tcr_pmhc_potential(double h, double h0_tcr, double u_assoc, double sigma_bind) -> double
-    lib.tcr_pmhc_potential.restype = ctypes.c_double
-    lib.tcr_pmhc_potential.argtypes = [
-        ctypes.c_double,
-        ctypes.c_double,
-        ctypes.c_double,
-        ctypes.c_double,
-    ]
-
-    # cd45_repulsion(double h, double cd45_height, double k_rep) -> double
-    lib.cd45_repulsion.restype = ctypes.c_double
-    lib.cd45_repulsion.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
-
-    # bending_energy_delta(double *h, int n, double kappa, double dx,
-    #                      int gi, int gj, double old_val, double new_val) -> double
-    lib.bending_energy_delta.restype = ctypes.c_double
-    lib.bending_energy_delta.argtypes = [
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_int,
-        ctypes.c_double,
-        ctypes.c_double,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_double,
-        ctypes.c_double,
-    ]
-
-    # mol_repulsion(pos, idx, all_pos, n_mol, eps, r_cut, patch_size) -> double
-    lib.mol_repulsion.restype = ctypes.c_double
-    lib.mol_repulsion.argtypes = [
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_int,
-        ctypes.c_double,
-        ctypes.c_double,
-        ctypes.c_double,
-    ]
-
-    return lib
+    Both the location logic (`libks_potentials.dylib`/`.so`, but
+    `ks_potentials.dll` on Windows, possibly under a config subdirectory) and
+    the ctypes prototypes live in ks_build, so the notebooks and this suite
+    cannot drift into calling the same C symbol two different ways. The test
+    bodies below are unchanged — only the fixture's plumbing moved.
+    """
+    try:
+        return ks_build.load_potentials()
+    except RuntimeError as exc:
+        pytest.skip(f"Test library not available: {exc}")
 
 
 class TestTcrPotentialC:
