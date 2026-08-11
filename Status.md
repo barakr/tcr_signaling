@@ -75,12 +75,15 @@ step was promoted to the **first** section of `README.md`, because the previous 
 section told a newcomer to launch Jupyter while setup sat at line 80, where a top-down
 reader never reaches it.
 
-That guard's environment-level verification is **still outstanding**: the machine's git
-began refusing to run mid-session (unaccepted Xcode Command Line Tools licence), and with
-git unavailable the guard early-returns. Its assertion logic was verified against a
-stubbed git — fires on unset, fires on a path with no hooks, passes on a real one — but
-it has not yet been seen to go red against a genuinely unconfigured clone. Do that after
-`sudo xcodebuild -license accept`.
+That guard is now verified end to end: with `core.hooksPath` unset to simulate a fresh
+clone it goes red naming the one-command fix, passes under `CI=1`, and `dev_setup.py`
+restores it. Verification had to wait — the machine's git began refusing to run
+mid-session on an unaccepted Xcode Command Line Tools licence, and with git unavailable
+the guard early-returns, so the first "must be red" run printed **green for the wrong
+reason**. Worth recording as the session's fourth instance of the same pattern, and the
+only one where the thing silently no-opping was the *verification itself*: a check that
+cannot distinguish "passed" from "did not run" is not a check, and that applies to the
+harness as much as to the code under test.
 
 
 ### 2026-08-11: Every git worktree of this submodule was born broken (local repair)
