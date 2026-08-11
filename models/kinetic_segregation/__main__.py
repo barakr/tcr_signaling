@@ -8,7 +8,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from models.kinetic_segregation import ks_build
+# Relative, NOT `from models.kinetic_segregation import ...`. This module is run
+# under two different package paths: `python -m models.kinetic_segregation` from
+# the submodule root, and `python -m projects.tcr_signaling.models.kinetic_segregation`
+# from the parent repo, which is what the ModelSpec entrypoint uses. An absolute
+# import naming `models` resolves only under the first and raises
+# ModuleNotFoundError under the second.
+from . import ks_build
 
 
 def _find_binary() -> Path:

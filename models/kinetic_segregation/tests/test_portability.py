@@ -185,6 +185,28 @@ class TestNoHardcodedPlatformAssumptions:
         assert "ks_tutorial.py" in names, "notebook helper not scanned"
 
 
+class TestEntrypointImports:
+    def test_main_uses_relative_imports(self):
+        """`__main__.py` runs under two different package paths.
+
+        `python -m models.kinetic_segregation` from the submodule root, and
+        `python -m projects.tcr_signaling.models.kinetic_segregation` from the
+        parent repo — which is what the ModelSpec entrypoint uses. An absolute
+        `from models.kinetic_segregation import ...` resolves only under the
+        first and raises ModuleNotFoundError under the second, which breaks
+        every framework-driven sweep while the submodule's own suite stays green.
+        """
+        text = (_PKG / "__main__.py").read_text()
+        # Comments are stripped first: the module explains the rule by quoting
+        # the very import it forbids, and a naive substring scan flags that.
+        code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        assert "from models.kinetic_segregation import" not in code, (
+            "__main__.py must import siblings relatively (`from . import ks_build`); "
+            "an absolute 'models.' import breaks the parent's entrypoint"
+        )
+        assert "from . import" in code, "expected a relative sibling import"
+
+
 class TestWindowsEventLoop:
     def test_conftest_gives_windows_a_selector_event_loop(self):
         """pyzmq needs `add_reader`, which only the selector loop implements.

@@ -141,6 +141,38 @@ condition rather than silencing the warning, and is what Jupyter does itself.
 skipped off Windows would be a skip with an unsanctioned reason (the CI audit rejects
 those) and would only check the rule where it already holds.
 
+**A regression this work introduced, and how it hid.** Routing `__main__.py` through
+`ks_build` used `from models.kinetic_segregation import ks_build`, which resolves only
+when the module is run as `python -m models.kinetic_segregation` from the submodule root.
+The ModelSpec entrypoint is `python -m projects.tcr_signaling.models.kinetic_segregation`,
+run from the **parent** repo, where the top-level package is `projects` — so every
+framework-driven sweep died with `ModuleNotFoundError` while this repo's own suite stayed
+green, because the submodule suite only ever exercises the first path. It surfaced as the
+parent's `Submodule notebooks CI` going red on notebooks 02 and 03 (02 fits no surrogates,
+so 03 has nothing to sample).
+
+`from . import ks_build` works under both package paths. `test_portability.py` guards it,
+scanning **code lines only** — the module explains the rule by quoting the very import it
+forbids, and a naive substring scan flagged that. (Same shape as the guard that flagged
+itself when the scan was widened to `models/`.)
+
+**Separately found, not caused by this work, and NOT fixed here — the Metal shader
+library is located by cwd-relative paths.** `metal_engine.m` tries
+`<execDir>/shaders.metallib` first, but the file is at `<execDir>/src/shaders.metallib`,
+so that executable-relative candidate always misses and the lookup falls through to
+`src/shaders.metallib` / `models/kinetic_segregation/src/shaders.metallib`, both relative
+to the **working directory**. Consequence on macOS: run from the submodule root and the
+GPU backend loads; run the identical command from the parent root — which is what the
+ModelSpec entrypoint does — and it silently falls back to the CPU. Measured on the same
+inputs: `depletion_width_nm` 312.67 (submodule root, GPU) vs 283.91 (parent root, CPU),
+the latter matching `--no-gpu` exactly.
+
+Both numbers are valid; which one you get depends on where you stand, and nothing says
+so. Left for a decision rather than folded into Windows work: the one-line fix (add
+`<execDir>/src/shaders.metallib` to the candidate list) would move production sweeps on
+macOS from the CPU path to the GPU path, which changes results and touches the reference
+values KS rule 3 protects.
+
 **What made the diagnosis possible**, after two blind 30-minute cycles: per-notebook
 pytest invocations that emit elapsed time and the failure tail as `::error::`/`::notice::`
 annotations, which are readable from the public API without a token. A single pytest call
