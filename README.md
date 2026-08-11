@@ -80,7 +80,7 @@ notebooks calls it.
 ## First-time setup after cloning
 
 ```bash
-./scripts/dev-setup.sh
+python scripts/dev_setup.py
 ```
 
 Run this once per clone. It is idempotent, it prints what it changed, and it verifies

@@ -23,12 +23,22 @@ already knew. So a fresh clone silently had no conventional-commit check, no `ru
 fast tests and no `Status.md` check. Nothing failed. It simply never ran, and looked
 green — rule 12's own failure mode, sitting in the repo's setup.
 
-**What was added.** `scripts/dev-setup.sh` (idempotent, reports what it changed, and
-verifies rather than assumes), documented in `README.md` § *First-time setup after
-cloning*; `.claude/worktrees/` moved into the committed `.gitignore`; a guard at the top
-of `githooks/pre-commit`; and `tests/test_checkout_health.py`, which needs no setup at
+**What was added.** `scripts/dev_setup.py` (idempotent, `--check` mode, reports what it
+changed, and verifies rather than assumes), documented in `README.md` § *First-time setup
+after cloning*; `.claude/worktrees/` moved into the committed `.gitignore`; a guard at the
+top of `githooks/pre-commit`; and `tests/test_checkout_health.py`, which needs no setup at
 all and so is the only one of these that protects a clone whose owner never read the
 README.
+
+**Python, not bash** — written as a shell script first, then rewritten. KS rule 6 already
+forbids depending on `make` "because a stock Windows box has no `make`", and bash is the
+same category. The consequence is worse here than an awkward build: a Windows developer
+who cannot run setup gets *no git hooks at all*, which is the very hole the script exists
+to close, reopened for one platform. `ks_build.py` is the precedent for a portable helper
+with no framework dependency. `TestDevSetupRunsEverywhere` runs it on all three OSes in
+CI, asserting it completes rather than asserting an exit code — the code depends on
+whether the machine is configured (CI deliberately is not), while *running at all* is
+what varies by platform.
 
 **Three defects found by verifying the guards instead of trusting them**, each the same
 shape as the bug they were written for — *code that trusts ambient state over its own
@@ -40,7 +50,7 @@ location*:
    `--absolute-git-dir` succeeds in both states and separates "no git" from "git is
    confused". **The first version of the guard was useless and only measurement showed
    it.**
-2. `dev-setup.sh` located the repo with `git rev-parse --show-toplevel` — the very
+2. `dev_setup.py`'s shell predecessor located the repo with `git rev-parse --show-toplevel` — the very
    command that lies in the broken state — so it repaired the config and then verified
    in the wrong directory. It now derives the root from its own path, which is precisely
    the fix applied to the Metal shader lookup.
@@ -52,7 +62,7 @@ location*:
 
 Verified by breaking the config exactly as a fresh clone has it: both tests go red with
 the repair attached, `pre-commit` refuses with the two paths side by side, and
-`dev-setup.sh` detects, repairs and confirms. `TOTAL_FLOOR` 229 → 231.
+`dev_setup.py` detects, repairs and confirms. `TOTAL_FLOOR` 229 → 232.
 
 
 ### 2026-08-11: Every git worktree of this submodule was born broken (local repair)

@@ -22,18 +22,19 @@ enough that a developer may react destructively before going looking for prose.
 This runs in the suite everyone already runs and needs no setup at all.
 
 It cannot fire spuriously — in a healthy checkout both assertions are trivially
-true. `scripts/dev-setup.sh` applies the repair.
+true. `scripts/dev_setup.py` applies the repair.
 """
 
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[3]
 
 _REPAIR = """\
-Repair (from the repo root, or just run scripts/dev-setup.sh):
+Repair (from the repo root, or just run scripts/dev_setup.py):
 
     C=$(git rev-parse --git-common-dir)
     git config --file "$C/config.worktree" core.worktree \\
@@ -113,4 +114,38 @@ class TestGitAgreesWithReality:
             f"git reports {len(phantom)} file(s) as deleted that are present on "
             f"disk, e.g. {phantom[:3]}.\n\n"
             f"Committing now would record their deletion.\n\n{_REPAIR}"
+        )
+
+
+class TestDevSetupRunsEverywhere:
+    """The setup script must actually execute on all three platforms.
+
+    This is the whole reason it is Python and not a shell script: CLAUDE.md KS rule 6
+    forbids depending on `make` because a stock Windows box has none, and bash is in the
+    same category. A Windows developer who cannot run setup gets no git hooks at all —
+    the exact hole the script exists to close, reopened for one platform.
+
+    Asserting on the *exit code* would couple this to whether the machine happens to be
+    configured (CI deliberately is not), so it asserts what actually varies by platform:
+    that the script runs to completion rather than dying on a syntax error, a missing
+    interpreter or a path assumption. Windows CI is where this earns its keep.
+    """
+
+    def test_check_mode_runs_without_crashing(self):
+        proc = subprocess.run(
+            [sys.executable, str(_REPO / "scripts" / "dev_setup.py"), "--check"],
+            cwd=str(_REPO),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert "Traceback" not in proc.stderr, (
+            f"scripts/dev_setup.py crashed on {sys.platform}:\n{proc.stderr[-1500:]}"
+        )
+        # 0 = nothing to do, 1 = setup needed. Anything else is a crash.
+        assert proc.returncode in (0, 1), (
+            f"unexpected exit {proc.returncode} on {sys.platform}:\n{proc.stderr[-1500:]}"
+        )
+        assert "dev-setup:" in proc.stdout, (
+            f"no report on stdout; the script did not run to completion:\n{proc.stdout[-500:]}"
         )

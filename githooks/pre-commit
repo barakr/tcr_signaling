@@ -16,7 +16,7 @@ set -euo pipefail
 # In a linked worktree, $GIT_DIR/gitdir holds the path of that worktree's `.git`
 # file, so its parent is where the files really are. If git disagrees, it has
 # resolved the worktree elsewhere (an inherited relative core.worktree — see
-# scripts/dev-setup.sh) and reports every tracked file as deleted. Committing
+# scripts/dev_setup.py) and reports every tracked file as deleted. Committing
 # would record exactly that. Structural, so it does not depend on the hook's
 # working directory, which is itself wrong in the broken state.
 _gitdir="$(git rev-parse --absolute-git-dir)"
@@ -28,7 +28,7 @@ if [[ -f "$_gitdir/gitdir" ]]; then
     echo "  files are at : $_real_root" >&2
     echo "  git thinks   : $_top" >&2
     echo "  Every tracked file is being reported as deleted; this commit would" >&2
-    echo "  record that deletion. Fix it with:  ./scripts/dev-setup.sh" >&2
+    echo "  record that deletion. Fix it with:  python scripts/dev_setup.py" >&2
     exit 1
   fi
 fi
