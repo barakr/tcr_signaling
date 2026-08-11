@@ -31,8 +31,10 @@ import sys
 from pathlib import Path
 
 __all__ = [
+    "BUILD_COMMANDS",
     "BUILD_HINT",
     "KS_DIR",
+    "TOOLCHAIN_HINTS",
     "binary_name",
     "build",
     "find_binary",
@@ -125,32 +127,51 @@ def have_compiler() -> bool:
 def toolchain_hint() -> str:
     """Platform-correct instructions for installing a compiler and CMake."""
     if _IS_WINDOWS:
-        return (
-            "Windows needs a C/C++ compiler and CMake:\n"
-            "  1. Install 'Visual Studio 2022 Build Tools' and tick the\n"
-            "     'Desktop development with C++' workload (this provides both\n"
-            "     the MSVC compiler and CMake):\n"
-            "       winget install Microsoft.VisualStudio.2022.BuildTools "
-            '--override "--wait --quiet --add '
-            'Microsoft.VisualStudio.Workload.VCTools --includeRecommended"\n'
-            "  2. Reopen your terminal so the new tools are on PATH.\n"
-            "  If CMake is still not found, `conda install -c conda-forge cmake` "
-            "or `winget install Kitware.CMake` adds it."
-        )
+        return TOOLCHAIN_HINTS["windows"]
     if sys.platform == "darwin":
-        return (
-            "macOS needs the Command Line Tools and CMake:\n"
-            "  xcode-select --install\n"
-            "  conda install -c conda-forge cmake     # or: brew install cmake"
-        )
-    return (
+        return TOOLCHAIN_HINTS["macos"]
+    return TOOLCHAIN_HINTS["linux"]
+
+
+# Keyed rather than branched so a test can check the Windows text from a Mac.
+# `tests/test_docs.py` pins these against README.md: the commands a reader is
+# told to run and the commands a failed build prints must not drift apart, and
+# the only way to notice on one platform that the other's text went stale is to
+# assert it.
+TOOLCHAIN_HINTS: dict[str, str] = {
+    "windows": (
+        "Windows needs a C/C++ compiler and CMake:\n"
+        "  1. Install 'Visual Studio 2022 Build Tools' and tick the\n"
+        "     'Desktop development with C++' workload (this provides both\n"
+        "     the MSVC compiler and CMake):\n"
+        "       winget install Microsoft.VisualStudio.2022.BuildTools "
+        '--override "--wait --quiet --add '
+        'Microsoft.VisualStudio.Workload.VCTools --includeRecommended"\n'
+        "  2. Reopen your terminal so the new tools are on PATH.\n"
+        "  If CMake is still not found, `conda install -c conda-forge cmake` "
+        "or `winget install Kitware.CMake` adds it."
+    ),
+    "macos": (
+        "macOS needs the Command Line Tools and CMake:\n"
+        "  xcode-select --install\n"
+        "  conda install -c conda-forge cmake     # or: brew install cmake"
+    ),
+    "linux": (
         "Linux needs a C/C++ compiler and CMake:\n"
         "  sudo apt install build-essential cmake     # Debian/Ubuntu\n"
         "  conda install -c conda-forge cmake compilers   # without sudo"
-    )
+    ),
+}
 
+# The two commands that build the model, identical on every platform. Defined
+# once here because `tests/test_docs.py` asserts that the READMEs and the CI
+# workflow both use exactly these — the docs cannot drift from what is tested.
+BUILD_COMMANDS: tuple[str, ...] = (
+    "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release",
+    "cmake --build build --config Release",
+)
 
-BUILD_HINT = "cd models/kinetic_segregation && cmake -S . -B build && cmake --build build"
+BUILD_HINT = "cd models/kinetic_segregation && " + " && ".join(BUILD_COMMANDS)
 
 
 def build(target: str | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
