@@ -6,6 +6,40 @@
 
 ## Decision Log
 
+### 2026-08-11: Every git worktree of this submodule was born broken (local repair)
+
+Not a code change — a trap in the local git plumbing, recorded because it recurs on
+**every clone** and because its failure mode is destructive.
+
+`git submodule` writes `core.worktree = ../../../../projects/tcr_signaling` into
+`.git/modules/projects/tcr_signaling/config`, and that path is resolved relative to the
+**gitdir**. For the main checkout the gitdir is the module directory and it resolves
+correctly. A linked worktree's gitdir is two levels deeper
+(`.../worktrees/<name>`), so the same inherited relative path lands two levels short —
+on the module directory, which contains no working files.
+
+The result: `git status` in any worktree of this submodule reports **every tracked file
+as deleted** (131 of them), while the files are present on disk. A `git commit -a` there
+would have committed the deletion of the entire repository. Verified as git's own
+behaviour, not the tooling's: a plain `git worktree add --detach` reproduces it exactly
+on git 2.50.1.
+
+**Repair** — `core.worktree` is a per-worktree setting, and `extensions.worktreeConfig`
+is already enabled here, so it simply belongs in the per-worktree config rather than the
+shared one. Moved verbatim (the relative form is kept, so the tree stays relocatable):
+
+```bash
+C=.git/modules/projects/tcr_signaling
+git config --file $C/config.worktree core.worktree "$(git config --file $C/config --get core.worktree)"
+git config --file $C/config --unset core.worktree
+```
+
+After this a newly created worktree resolves its own toplevel and reports 0 status lines
+with no override of its own; the main checkout is unaffected. Both were verified, as was
+a from-scratch `git worktree add`. Nothing is committed by this — each clone needs the
+two commands once, so if a worktree ever shows the whole repo as deleted, this is why.
+
+
 ### 2026-08-11: Backend selection no longer depends on the working directory
 
 Fixes the defect recorded but deliberately left open in the Windows/MSVC entry below.
@@ -71,7 +105,14 @@ shader from the cwd; and statically asserts no cwd-relative shader literal retur
 `metal_engine.m` — the static one matters because `metal_engine.m` is not compiled at all
 on the Linux and Windows jobs, so nothing else there could catch a regression. Reverting
 `metal_engine.m` to its previous version turns 6 of the 11 red. `TOTAL_FLOOR` in
-`ci.yml` raised 183 → 190 to keep the collapse guard proportional to the new count.
+`ci.yml` raised 183 → 197 to keep the collapse guard proportional to the new count.
+
+The floor was set by measurement rather than by inference. A detached worktree at
+`85baaba` — the commit whose comment records "188 collected today" — collects exactly
+188 in this environment, which establishes that the local count and the recorded CI
+count are the same number. The current count is 202, so the file's long-standing
+convention (floor = count − 5) gives 197. The 3 tests between 188 + 11 new = 199 and
+202 were added by commits after `85baaba` that did not update the floor.
 
 
 ### 2026-08-11: The KS model is disconnected from the metamodel, and the paper's DOI was wrong
