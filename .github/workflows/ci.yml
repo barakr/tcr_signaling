@@ -73,26 +73,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Exclude the workspace from Defender (Windows)
-        # The notebooks spawn a few hundred short ks_gpu runs. On Linux and macOS
-        # that costs ~0.3 s each; on Windows, Defender rescans the freshly built
-        # ks_gpu.exe on every launch, which took the notebook step from 87 s
-        # (macOS) to >25 min. Build and the pytest suite are unaffected -- Windows
-        # actually builds fastest of the three -- so this targets process spawn,
-        # not the model.
-        #
-        # continue-on-error: a hardened runner image may refuse the policy change.
-        # Losing the speedup is acceptable; failing the job over it is not.
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE"
-          Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP"
-          Add-MpPreference -ExclusionPath "$env:TEMP"
-          Add-MpPreference -ExclusionProcess "ks_gpu.exe"
-          Write-Host "Defender exclusions added"
-
       - name: Toolchain info
         run: |
           cmake --version
@@ -141,6 +121,10 @@ jobs:
         #
         # The test suite runs tiny grids where per-run overhead dominates; the
         # notebooks run grid_size=64, which is where the O(N^2) inner loop does.
+        #
+        # n_steps is PINNED, exactly as the notebooks pin it. Leaving it to the
+        # auto-calibrated dt makes this one run cost ~90 s on every push for the
+        # same comparative signal a ~1 s run gives.
         run: |
           python - <<'PY'
           import subprocess, sys, tempfile, time
@@ -150,8 +134,10 @@ jobs:
           if binary is None:
               print("::error::no binary to time"); raise SystemExit(1)
           for label, extra in (
-              ("small (tests-like)", ["--grid_size", "16", "--n_tcr", "10", "--n_cd45", "20"]),
-              ("realistic (notebook-like)", ["--grid_size", "64", "--n_tcr", "125", "--n_cd45", "500"]),
+              ("small (tests-like)",
+               ["--grid_size", "16", "--n_steps", "300", "--n_tcr", "10", "--n_cd45", "20"]),
+              ("realistic (KS_4-like)",
+               ["--grid_size", "64", "--n_steps", "1500", "--n_tcr", "40", "--n_cd45", "400"]),
           ):
               with tempfile.TemporaryDirectory() as d:
                   t0 = time.perf_counter()
@@ -161,7 +147,7 @@ jobs:
                       capture_output=True, text=True, timeout=1200,
                   )
                   elapsed = time.perf_counter() - t0
-              print(f"::notice::{label}: {elapsed:.1f}s (rc={proc.returncode})")
+              print(f"::notice::{label}: {elapsed:.2f}s (rc={proc.returncode})")
           PY
 
       - name: Run fast test suite

@@ -99,7 +99,10 @@ measurement settled it.** Recorded in full because the failure of method matters
 than the fix:
 
 1. *Defender rescanning `ks_gpu.exe` on every spawn.* Exclusions went in; the step still
-   timed out. Kept (harmless), but not the fix.
+   timed out. **Since removed**: with the real cause fixed, the Windows notebooks take
+   118 s against ubuntu's 106 s, which the 1.14x compute ratio explains on its own,
+   leaving no room for a Defender effect. An unproven step nobody can account for is
+   exactly the kind of cargo this repo's CI is meant not to accumulate.
 2. *A `TemporaryDirectory` created and deleted per simulation in `run_ks`.* Changed to
    numbered subdirectories inside one session-scoped temp dir. Fewer syscalls on every
    platform and worth keeping on its own merits, but there is **no evidence** it fixed
