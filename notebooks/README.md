@@ -85,8 +85,10 @@ result and an artefact:
 
 ## Notes
 
-- Every notebook ships with its outputs stored, so you can read them on GitHub without
-  running anything.
+- **Track A ships with its outputs stored**, figures included, so you can read the whole
+  KS series on GitHub without building anything. Track B does not — those notebooks want
+  an environment with `bayesmm` (and PyMC for `02`/`03`) and are meant to be run. `04` is
+  the exception and carries its figures.
 - Each ends in a self-check cell printing `[... self-check OK]`. If you re-run a notebook
   and that line does not appear, something is wrong even if no cell raised —
   `models/kinetic_segregation/tests/test_notebooks.py` enforces exactly this in CI.
