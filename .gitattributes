@@ -1,0 +1,29 @@
+# Line-ending policy, added when Windows joined the supported platforms.
+#
+# Git for Windows defaults to core.autocrlf=true, which converts LF to CRLF on
+# checkout and back on commit. That round-trip is usually invisible — until a
+# file's *bytes* are load-bearing. Two places here they are:
+#
+#   * spec JSON is hashed into run provenance, so a CRLF copy of an unchanged
+#     spec produces a different digest and a Windows user's sweep stops matching
+#     a colleague's for a reason that has nothing to do with the science;
+#   * tests/reference_values.json holds the exact numerical baselines that KS
+#     rule 3 forbids re-recording without sign-off.
+#
+# Normalising to LF in the repository keeps the stored bytes identical on every
+# platform. Working trees are unaffected on macOS and Linux, and MSVC, GCC and
+# Clang all compile LF sources without complaint.
+* text=auto eol=lf
+
+# Binary formats: never transform these, whatever the platform.
+*.png binary
+*.pdf binary
+*.mp4 binary
+*.bin binary
+*.metallib binary
+*.npy binary
+*.npz binary
+
+# Notebooks are JSON, but they are diffed and merged often enough that it is
+# worth being explicit rather than relying on content sniffing.
+*.ipynb text eol=lf
