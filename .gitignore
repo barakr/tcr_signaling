@@ -9,3 +9,6 @@ tmp/
 projects/
 original_paper/
 results.xml
+# Agent tooling creates git worktrees here. Was only ever covered by a local
+# .git/info/exclude, which no clone receives.
+.claude/worktrees/

@@ -6,6 +6,55 @@
 
 ## Decision Log
 
+### 2026-08-11: Setup was on the honour system — now committed, guarded and verified
+
+Follow-up to the worktree entry below, after asking what else lived only in `.git/` and
+therefore reached no clone. Three things did, and the middle one is the serious one:
+
+| Setting | Lived in | Consequence when absent |
+|---|---|---|
+| `core.worktree` repair | `.git/modules/.../config.worktree` | the worktree trap below |
+| `core.hooksPath` | `.git/modules/.../config` | **no git hook runs at all** |
+| `.claude/worktrees/` exclude | `.git/info/exclude` | agent worktrees show as untracked |
+
+Hook installation was documented nowhere — not `README.md`, not `CLAUDE.md`, not the
+`Makefile`; only a comment inside `githooks/pre-commit`, which you would read only if you
+already knew. So a fresh clone silently had no conventional-commit check, no `ruff`, no
+fast tests and no `Status.md` check. Nothing failed. It simply never ran, and looked
+green — rule 12's own failure mode, sitting in the repo's setup.
+
+**What was added.** `scripts/dev-setup.sh` (idempotent, reports what it changed, and
+verifies rather than assumes), documented in `README.md` § *First-time setup after
+cloning*; `.claude/worktrees/` moved into the committed `.gitignore`; a guard at the top
+of `githooks/pre-commit`; and `tests/test_checkout_health.py`, which needs no setup at
+all and so is the only one of these that protects a clone whose owner never read the
+README.
+
+**Three defects found by verifying the guards instead of trusting them**, each the same
+shape as the bug they were written for — *code that trusts ambient state over its own
+location*:
+
+1. `test_checkout_health.py` gated on `git rev-parse --is-inside-work-tree`, which
+   answers **false** in the broken state (the cwd is not inside the worktree git
+   believes in). The test passed against a checkout showing 120 phantom deletions.
+   `--absolute-git-dir` succeeds in both states and separates "no git" from "git is
+   confused". **The first version of the guard was useless and only measurement showed
+   it.**
+2. `dev-setup.sh` located the repo with `git rev-parse --show-toplevel` — the very
+   command that lies in the broken state — so it repaired the config and then verified
+   in the wrong directory. It now derives the root from its own path, which is precisely
+   the fix applied to the Metal shader lookup.
+3. Its hooks check compared the config string to `"githooks"`, so the valid absolute path
+   the agent tooling writes read as broken; it "fixed" a working setup and reported a
+   change that never took effect, because a per-worktree value shadows the shared one.
+   It now tests whether the path *points at runnable hooks* and writes at the scope that
+   takes effect.
+
+Verified by breaking the config exactly as a fresh clone has it: both tests go red with
+the repair attached, `pre-commit` refuses with the two paths side by side, and
+`dev-setup.sh` detects, repairs and confirms. `TOTAL_FLOOR` 229 → 231.
+
+
 ### 2026-08-11: Every git worktree of this submodule was born broken (local repair)
 
 Not a code change — a trap in the local git plumbing, recorded because it recurs on

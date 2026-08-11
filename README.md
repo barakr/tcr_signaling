@@ -77,6 +77,31 @@ notebooks calls it.
 > choice, use MSVC. The GPU path is Apple-only; Windows and Linux run the same C99 CPU
 > core, which produces the same physics.
 
+## First-time setup after cloning
+
+```bash
+./scripts/dev-setup.sh
+```
+
+Run this once per clone. It is idempotent, it prints what it changed, and it verifies
+the result rather than assuming it.
+
+It configures two things that live in `.git/` and therefore arrive with no clone:
+
+- **`core.hooksPath`** — until it is set, **no git hook runs at all**. Not `commit-msg`,
+  not `pre-commit`, not `pre-push`: no conventional-commit check, no `ruff`, no fast
+  tests, no `Status.md` check. Nothing fails; the checks simply never execute and the
+  repo looks green.
+- **`core.worktree`** — when this repo is used as a submodule, git writes a *relative*
+  `core.worktree` into the shared config, and every `git worktree` inherits it even
+  though it is only correct for one worktree. In an affected worktree `git status`
+  reports **every tracked file as deleted** while the files are on disk, and
+  `git commit -a` would record that deletion.
+
+If you skip this step, `models/kinetic_segregation/tests/test_checkout_health.py` fails
+with the repair instructions, and `pre-commit` refuses the dangerous commit — but only
+once hooks are installed, which is the first bullet. So: run it.
+
 ## Paper Reference
 
 - **Title**: Bayesian metamodeling of early T-cell antigen receptor signaling
