@@ -88,6 +88,22 @@ Build prerequisites for all three platforms now live in `README.md`, linked from
 `notebooks/README.md`, `KS_2` and `Tutorial_0`. The parent repo's README claimed "no
 Windows build script is provided" and "verified separately on macOS"; both corrected.
 
+**The one real Windows performance problem, and why it was not the compiler.** The first
+Windows run took over 25 minutes on the notebook step against 87 s on macOS. The
+per-step timings ruled out every tempting explanation: the **build was the fastest of
+the three** (16 s, vs 43 s on macOS) and the **fast suite was fine** (40 s, vs 67 s on
+macOS). Only the notebook step was pathological, and what is unique about it is that it
+spawns a few hundred short `ks_gpu` runs. Windows Defender rescans the freshly built
+executable on every launch. Excluding the workspace, the temp directories and the
+process itself targets that and nothing else — `continue-on-error`, since a hardened
+runner image may refuse the policy change and losing a speedup must not fail a job.
+
+Bounded the diagnosis cost too, because a hang that only manifests on a machine none of
+us has is expensive to chase: the step now has `timeout-minutes: 30`, the per-notebook
+nbclient limit is settable (`KS_NOTEBOOK_TIMEOUT`, 600 in CI) so a stuck cell fails
+naming the cell, and failures emit `::error::` annotations naming the notebook.
+Annotations are readable from the public API without a token; the raw log is not.
+
 ### 2026-08-10: Notebook 03 now *runs* joint sampling instead of describing it
 
 Notebook 03 documented `--method joint` in prose — including a table of joint-vs-prior

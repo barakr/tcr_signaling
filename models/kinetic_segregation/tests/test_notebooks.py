@@ -16,12 +16,18 @@ for CI but not for a pre-commit hook. CI runs them in a dedicated step.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[3]
 _NOTEBOOK_DIR = _REPO / "notebooks" / "models" / "kinetic_segregation"
+
+# Generous by default, because a developer's first run compiles the model. CI
+# lowers it via KS_NOTEBOOK_TIMEOUT so that a stuck cell fails naming the cell,
+# rather than letting five notebooks sit at 30 minutes each.
+_TIMEOUT = int(os.environ.get("KS_NOTEBOOK_TIMEOUT", "1800"))
 
 # Substrings that mean a cell reported trouble without raising.
 _FAILURE_MARKERS = ("Traceback", "ModuleNotFoundError", "CellExecutionError")
@@ -47,7 +53,7 @@ def test_notebook_executes_and_self_check_passes(notebook: Path):
     nb = nbformat.read(notebook, as_version=4)
     client = nbclient.NotebookClient(
         nb,
-        timeout=1800,
+        timeout=_TIMEOUT,
         kernel_name="python3",
         # cwd = the notebook's own directory, so `import ks_tutorial` resolves the
         # same way it does for a reader who opened it in Jupyter.
