@@ -162,6 +162,26 @@ elsewhere and it will drift; link to the canonical section instead.
    - Documented in the plan with explicit rationale
    - Approved by the user before implementation
    - Prefer to ask for user input before modifying existing test assertions
+8. **Explain the situation the developer is actually in, before the technical
+   detail.** Prominence must track *consequence to the reader*, not how
+   interesting the finding was to derive. State plainly, up front and unprompted:
+
+   - **Where the work landed.** If you are in a git worktree on a branch, say so
+     in the first report — including that `main` does not have it, whether `main`
+     has moved, and the command to merge. Do not assume the branch is known: the
+     tooling creates worktrees silently, and a developer who has never met one
+     has no reason to suspect their `main` is untouched. Work nobody knows how to
+     collect is work nobody gets.
+   - **Anything destructive that was avoided or is still latent** — a broken
+     checkout, a command that would have deleted data, a repair that must be
+     repeated on other clones.
+   - **What changed for them in practice**, before what changed in the code.
+
+   Assume no familiarity with git plumbing, CI internals or build systems, and
+   define the term the first time it is used. This rule exists because a session
+   once delivered pages on shader path resolution and test-collection floors
+   while mentioning only in passing that every commit sat on an unmerged branch —
+   the one fact without which none of the rest would ever have reached `main`.
 
 ## KS Model Rules
 
