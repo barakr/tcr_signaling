@@ -89,7 +89,11 @@ jobs:
         # themselves import nothing beyond numpy/matplotlib, so no framework here.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy scipy matplotlib pytest nbclient nbformat ipykernel
+          # pyyaml is for tests/test_docs.py, which parses THIS workflow to check
+          # that the build commands in the READMEs are the ones actually run.
+          # Without it that test importorskips, and the audit below rightly fails
+          # the job rather than let an unexplained skip look like a pass.
+          python -m pip install numpy scipy matplotlib pytest nbclient nbformat ipykernel pyyaml
 
       - name: Build KS model
         working-directory: models/kinetic_segregation

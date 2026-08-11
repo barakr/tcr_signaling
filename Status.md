@@ -53,6 +53,14 @@ The `__main__.py` relative-import rule moved out of `test_portability.py` into t
 contract test — one rule, one guard, applied to all four models rather than to the one
 that happened to break.
 
+**The skip audit caught this work immediately, which is the system behaving correctly.**
+`test_docs.py` parses the workflow with PyYAML, which CI did not install, so the test
+`importorskip`ed and all three platforms went red on "skips without a sanctioned reason" —
+before the notebook step even ran. The fix was to install `pyyaml` so the check actually
+runs, not to add the reason to the sanctioned list. Worth recording as the intended
+outcome: a new test that silently does not run in CI is exactly the failure mode rule 12
+exists to prevent, and it took one push to surface rather than months.
+
 ### 2026-08-11: The KS model is disconnected from the metamodel, and the paper's DOI was wrong
 
 Two findings from checking this project against the published paper
