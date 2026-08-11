@@ -130,6 +130,40 @@ jobs:
           ls -l ks_gpu ks_gpu.exe 2>/dev/null || true
           find build -maxdepth 2 \( -name "*ks_potentials*" -o -name "ks_gpu*" \) -print
 
+      - name: Time one realistic simulation
+        working-directory: models/kinetic_segregation
+        # Cross-platform stopwatch on the SAME work, reported as an annotation so
+        # it is readable from the public API without a token. This exists because
+        # two plausible explanations for the Windows notebook slowdown were acted
+        # on and both were wrong: it separates "the compiled model is slow for
+        # realistic parameters" from "the notebook machinery is slow", which no
+        # amount of reasoning about step totals could.
+        #
+        # The test suite runs tiny grids where per-run overhead dominates; the
+        # notebooks run grid_size=64, which is where the O(N^2) inner loop does.
+        run: |
+          python - <<'PY'
+          import subprocess, sys, tempfile, time
+          sys.path.insert(0, ".")
+          import ks_build
+          binary = ks_build.find_binary()
+          if binary is None:
+              print("::error::no binary to time"); raise SystemExit(1)
+          for label, extra in (
+              ("small (tests-like)", ["--grid_size", "16", "--n_tcr", "10", "--n_cd45", "20"]),
+              ("realistic (notebook-like)", ["--grid_size", "64", "--n_tcr", "125", "--n_cd45", "500"]),
+          ):
+              with tempfile.TemporaryDirectory() as d:
+                  t0 = time.perf_counter()
+                  proc = subprocess.run(
+                      [str(binary), "--run-dir", d, "--no-gpu",
+                       "--time_sec", "1", "--rigidity_kT", "20", *extra],
+                      capture_output=True, text=True, timeout=1200,
+                  )
+                  elapsed = time.perf_counter() - t0
+              print(f"::notice::{label}: {elapsed:.1f}s (rc={proc.returncode})")
+          PY
+
       - name: Run fast test suite
         # `deterministic` is deselected: bit-level reproducibility baselines that
         # CLAUDE.md documents as platform-specific, and a hosted runner is
@@ -204,40 +238,32 @@ jobs:
         # minutes, so five stuck notebooks could otherwise burn hours before
         # anyone noticed. KS_NOTEBOOK_TIMEOUT shortens the inner limit too, so a
         # stuck cell fails with the cell that stuck rather than with the job.
-        timeout-minutes: 30
+        # 15, not 30: ubuntu takes 70 s and macOS 116 s, so a platform needing
+        # more than 15 minutes has a problem worth failing over, and a shorter
+        # budget halves the cost of each diagnostic cycle.
+        timeout-minutes: 15
         env:
-          # 5 notebooks x 240 s < the 30 min step budget, so the step always
-          # finishes and always writes its XML. A per-notebook limit that could
-          # sum past the step timeout is worse than useless: the step dies with
-          # no results at all, which is how the first Windows slowdown cost a
-          # full run to learn nothing.
-          KS_NOTEBOOK_TIMEOUT: "240"
+          # NB: nbclient's timeout is PER CELL, not per notebook. Setting it to
+          # "the step budget divided by five" does not bound the step at all --
+          # that mistake cost a full 30-minute run that produced no results.
+          KS_NOTEBOOK_TIMEOUT: "180"
         run: |
-          python -m pytest -q -m slow -v \
-            models/kinetic_segregation/tests/test_notebooks.py \
-            --junit-xml=notebooks.xml || true
-          python - <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          # Annotations are readable from the public API without a token; the raw
-          # log is not. Durations are emitted for PASSING notebooks too, so a
-          # platform-specific slowdown can be attributed to a notebook instead of
-          # guessed at. Same reasoning as Deep CI in the parent repo.
-          try:
-              suite = ET.parse("notebooks.xml").getroot().find("testsuite")
-          except Exception as exc:
-              print(f"::error::could not read notebook results: {exc}")
-              sys.exit(1)
-          bad = 0
-          for case in suite.iter("testcase"):
-              name = case.get("name")
-              secs = float(case.get("time") or 0.0)
-              failed = case.findall("failure") + case.findall("error")
-              print(f"::{'error' if failed else 'notice'}::{name} took {secs:.0f}s")
-              for node in failed:
-                  bad += 1
-                  msg = ((node.get("message") or "") + " " + (node.text or "")).strip()
-                  print(f"::error::{name}: {msg[:400]}")
-          if bad:
-              sys.exit(f"{bad} notebook check(s) failed")
-          print(f"OK: {suite.get('tests')} notebook checks passed")
-          PY
+          # One pytest call per notebook, with the elapsed time emitted as an
+          # annotation IMMEDIATELY after each. Annotations are processed as the
+          # log streams, so the ones already printed survive a step timeout --
+          # which a single pytest call writing JUnit XML at the end does not.
+          # That is the whole point: attribute the time to a notebook instead of
+          # losing everything when the slowest one overruns.
+          status=0
+          for nb in notebooks/models/kinetic_segregation/KS_*.ipynb; do
+            name=$(basename "$nb" .ipynb)
+            start=$(date +%s)
+            if python -m pytest -q -m slow \
+                 "models/kinetic_segregation/tests/test_notebooks.py::test_notebook_executes_and_self_check_passes[$name]"; then
+              printf '::notice::%s passed in %ss\n' "$name" "$(( $(date +%s) - start ))"
+            else
+              status=1
+              printf '::error::%s FAILED after %ss\n' "$name" "$(( $(date +%s) - start ))"
+            fi
+          done
+          exit $status
