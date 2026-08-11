@@ -6,6 +6,43 @@
 
 ## Decision Log
 
+### 2026-08-11: The KS model is disconnected from the metamodel, and the paper's DOI was wrong
+
+Two findings from checking this project against the published paper
+([doi:10.3389/fimmu.2024.1412221](https://doi.org/10.3389/fimmu.2024.1412221)).
+
+**1. `depletion_width_nm` feeds nothing.** The kinetic-segregation model's only output is
+consumed by no other model and referenced by no coupling. In the paper, KS's depletion width
+(`Dep_KS`) is an **input to the pTCR model** — that coupling is what makes membrane mechanics
+matter for signalling, and it is the mechanism the paper is about.
+
+The consequence is measurable and has been visible for a while without being understood:
+conditioning on the pTCR readout informs `phosphorylation_rate` (0.45 sd shift),
+`dephosphorylation_rate` (0.34) and `tcr_density` (0.22), but moves `rigidity_kT_nm2` by
+0.04 sd and `time_sec` by essentially nothing. Those are precisely the two variables the
+joint sampler's mixing diagnostic keeps flagging as poorly mixed. **That was never a sampler
+problem.** No data can reach them, so the chain is exploring an unconstrained prior.
+
+So the metamodel as specified cannot reproduce the paper's central query,
+`Pr(DL, Dep, t_KS, R_KS, Diff, P_off | Phos_obs, Rg_obs)` — the `t_KS` and `R_KS` half of it
+is unreachable.
+
+**Fixing it is a modelling decision, not a patch**, which is why it is recorded rather than
+done: the `tcr_phosphorylation` surrogate would have to be refit with `depletion_width_nm`
+among its inputs, which means re-running that model's sweep over a design that varies it.
+Flagged for the user.
+
+Tutorial 7b (framework repo) now inspects this mechanically and prints, per model, whether
+any measurement can reach its parameters — `kinetic_segregation` comes back `UNREACHABLE`
+with the reason. The lesson generalises: conditioning travels along factors, and a variable
+with no path to your data sits at its prior forever without warning you.
+
+**2. The DOI in `README.md` was wrong.** It gave `10.3389/fimmu.2024.1437672`, which 404s.
+The correct DOI is `10.3389/fimmu.2024.1412221`, verified against the DOI resolver (HTTP 200)
+and PubMed (PMID 39524449). Two notebooks carried a "Citation note" recording the
+discrepancy as unresolved; both now state the resolved answer.
+
+
 ### 2026-08-11: KS model builds and is tested on Windows (native MSVC)
 
 `.github/workflows/ci.yml` carried a reasoned decision to leave Windows out: no real
