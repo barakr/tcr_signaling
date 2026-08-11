@@ -24,6 +24,59 @@ tells you which parts will run on your machine before you hit an error. From the
 
 See [`notebooks/README.md`](notebooks/README.md) for the full map and timings.
 
+## Build prerequisites (Windows, macOS, Linux)
+
+The kinetic-segregation model is compiled C — the notebooks build it for you on first
+run, but they need a **C/C++ compiler and CMake ≥ 3.20** to do it. Everything else in
+the repo is pure Python.
+
+**Windows.** Install the Visual Studio 2022 Build Tools with the *Desktop development
+with C++* workload, which supplies both MSVC and CMake:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Then **reopen your terminal** so the new tools are on `PATH`. If you already have Visual
+Studio but the build fails, the usual cause is a missing or outdated C++ workload — open
+the Visual Studio Installer, choose *Modify*, and tick *Desktop development with C++*.
+Full Visual Studio works just as well as the Build Tools; the Build Tools are simply the
+smaller download.
+
+If CMake is still not found afterwards, `conda install -c conda-forge cmake` or
+`winget install Kitware.CMake` adds it on its own.
+
+**macOS**
+
+```bash
+xcode-select --install
+conda install -c conda-forge cmake     # or: brew install cmake
+```
+
+**Linux**
+
+```bash
+sudo apt install build-essential cmake        # Debian/Ubuntu
+conda install -c conda-forge cmake compilers  # without sudo
+```
+
+Then build (from `models/kinetic_segregation/`) — the same two commands on every platform:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+`make` still works on macOS and Linux as a shorthand for exactly those two commands.
+There is no `make` on a stock Windows box, which is why nothing in the test suite or the
+notebooks calls it.
+
+> **Which compilers are tested.** CI builds the model on every push with **MSVC**
+> (Windows), **Clang** (macOS, plus the Metal GPU backend) and **GCC** (Linux). MinGW-w64
+> and MSYS2 are likely to work but are not tested — if you are on Windows and have a
+> choice, use MSVC. The GPU path is Apple-only; Windows and Linux run the same C99 CPU
+> core, which produces the same physics.
+
 ## Paper Reference
 
 - **Title**: Bayesian metamodeling of early T-cell antigen receptor signaling

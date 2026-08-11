@@ -15,8 +15,14 @@ jupyter lab Tutorial_0_Start_Here.ipynb
 kinetic segregation: the biology, the energy function, the Monte Carlo scheme, what each
 parameter does, and how to measure the result without fooling yourself.
 
-Needs numpy, matplotlib and a C toolchain (CMake + a C++ compiler). **No framework.** The
-notebooks build the simulator themselves the first time you run them.
+Needs numpy, matplotlib and a C toolchain (CMake ≥ 3.20 + a C++ compiler). **No
+framework.** The notebooks build the simulator themselves the first time you run them.
+
+Works on Windows, macOS and Linux — all three are built and tested in CI on every push.
+On Windows you need the **Visual Studio 2022 Build Tools** with the *Desktop development
+with C++* workload; see [Build prerequisites](../README.md#build-prerequisites-windows-macos-linux)
+for the one-line install for your platform. If the build cell fails, it prints the
+command you need rather than a CMake stack trace.
 
 | Notebook | Question it answers | Time |
 |---|---|---|

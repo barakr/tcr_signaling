@@ -15,6 +15,7 @@ rule, and cost milliseconds.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -76,13 +77,40 @@ class TestMathPortability:
 # ── Python side ─────────────────────────────────────────────────────────────
 
 
-def _python_consumers() -> list[Path]:
-    """Test modules plus the notebook helper — everything that runs the model."""
-    files = [p for p in _TESTS.glob("test_*.py") if p.name != "test_portability.py"]
-    helper = _PKG.parents[1] / "notebooks" / "models" / "kinetic_segregation" / "ks_tutorial.py"
+_NOTEBOOK_DIR = _PKG.parents[1] / "notebooks"
+
+
+def _notebook_code(path: Path) -> str:
+    """Concatenated source of a notebook's CODE cells only.
+
+    Markdown is excluded deliberately: prose may legitimately mention `make` as
+    the Unix shorthand. It is executable cells that must not depend on it.
+    """
+    nb = json.loads(path.read_text(encoding="utf-8"))
+    return "\n".join(
+        "".join(c.get("source", [])) for c in nb.get("cells", []) if c.get("cell_type") == "code"
+    )
+
+
+def _python_consumers() -> list[tuple[str, str]]:
+    """(label, source) for everything that runs the model.
+
+    Test modules, the notebook helper, AND the executable cells of the tutorial
+    notebooks. The notebooks were the gap that mattered: a `subprocess.run(["make"])`
+    sat in KS_3's movie cell where a .py-only scan could not see it.
+    """
+    items: list[tuple[str, str]] = []
+    for p in _TESTS.glob("test_*.py"):
+        if p.name != "test_portability.py":
+            items.append((p.name, p.read_text()))
+    helper = _NOTEBOOK_DIR / "models" / "kinetic_segregation" / "ks_tutorial.py"
     if helper.is_file():
-        files.append(helper)
-    return sorted(files)
+        items.append((helper.name, helper.read_text()))
+    for p in sorted(_NOTEBOOK_DIR.rglob("*.ipynb")):
+        if ".ipynb_checkpoints" in p.parts:
+            continue
+        items.append((p.name, _notebook_code(p)))
+    return sorted(items)
 
 
 class TestNoHardcodedPlatformAssumptions:
@@ -92,7 +120,7 @@ class TestNoHardcodedPlatformAssumptions:
         Go through ks_build.binary_name() / find_binary() instead.
         """
         pattern = re.compile(r"""/\s*["']ks_gpu["']""")
-        offenders = [p.name for p in _python_consumers() if pattern.search(p.read_text())]
+        offenders = [n for n, src in _python_consumers() if pattern.search(src)]
         assert not offenders, (
             f"{offenders} build a path with the literal 'ks_gpu'; on Windows the file "
             "is ks_gpu.exe and these tests would silently skip. Use ks_build.binary_name()."
@@ -101,21 +129,29 @@ class TestNoHardcodedPlatformAssumptions:
     def test_nothing_shells_out_to_make(self):
         """`make` is absent on a stock Windows box; CMake is required everywhere."""
         pattern = re.compile(r"""\[\s*["']make["']""")
-        offenders = [p.name for p in _python_consumers() if pattern.search(p.read_text())]
+        offenders = [n for n, src in _python_consumers() if pattern.search(src)]
         assert not offenders, (
             f"{offenders} invoke `make`, which does not exist on Windows. "
-            "Use ks_build.build(), which calls cmake --build."
+            "Use ks_build.build() (or ks_tutorial.ensure_binary()), which call cmake."
         )
 
     def test_nothing_hardcodes_a_shared_library_suffix(self):
         """`.dylib if darwin else .so` silently excludes Windows' .dll."""
-        offenders = []
-        for path in _python_consumers():
-            text = path.read_text()
-            if '".dylib"' in text or "'.dylib'" in text:
-                offenders.append(path.name)
+        offenders = [n for n, src in _python_consumers() if '".dylib"' in src or "'.dylib'" in src]
         assert not offenders, (
             f"{offenders} pick a library suffix inline; use ks_build.find_potentials()."
+        )
+
+    def test_the_notebooks_are_actually_being_scanned(self):
+        """Guard the guard: a glob that matches nothing passes every test above.
+
+        This is the same failure mode the rest of this file exists to prevent —
+        a check that quietly inspects nothing and reports success.
+        """
+        names = [n for n, _ in _python_consumers()]
+        assert any(n.endswith(".ipynb") for n in names), "no notebooks scanned"
+        assert sum(1 for n in names if n.startswith("KS_")) >= 5, (
+            f"expected the 5 KS notebooks in the scan, saw {names}"
         )
 
 

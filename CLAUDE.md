@@ -27,16 +27,19 @@ models/
       potentials.c/h           #   Energy functions (double precision, CPU)
       rng.c/h                  #   PCG64 pseudo-random number generator
       ks_physics.h             #   Shared float physics (CPU + GPU single source of truth)
+      ks_compat.h              #   Platform shims (M_PI on MSVC, monotonic clock)
       gpu_engine.h             #   Backend-neutral GPU C API (4 functions, opaque handle)
       metal_engine.m           #   Metal backend (macOS / Apple Silicon)
-      gpu_stub.c               #   Stub backend (non-Apple → CPU fallback)
+      gpu_stub.c               #   Stub backend (non-Apple → CPU fallback: Linux + Windows)
       shaders.metal            #   GPU compute kernels (Philox RNG, checkerboard)
       main.cpp                 #   C++20 CLI (nlohmann/json, FNV-1a seeds)
-    tests/                     #   72 pytest tests (regression + physics + equivalence)
+    tests/                     #   pytest suite (regression + physics + equivalence + portability)
     benchmark/                 #   Performance benchmarks (CPU vs GPU)
     Methods/                   #   LaTeX methods documentation → methods.pdf
-    CMakeLists.txt             #   Cross-platform build (CMake >= 3.20)
-    Makefile                   #   Thin CMake wrapper (make / make pdf / make clean)
+    CMakeLists.txt             #   Cross-platform build (CMake >= 3.20; MSVC/Clang/GCC)
+    Makefile                   #   Unix shorthand for cmake (no make on Windows)
+    ks_build.py                #   Locates/builds the artifacts — the ONLY place that
+                               #   knows .exe/.dll/.dylib naming and config subdirs
     __main__.py                #   Python wrapper for framework compatibility
     render_movie.py            #   Animation renderer (binary frame dumps → MP4)
   lck_activity/                # Lck radial decay model
@@ -60,8 +63,12 @@ pytest -q                                      # Run all model tests
 pytest -q models/kinetic_segregation/tests/    # Run KS tests only
 pytest -q -m "not deterministic"               # Skip bit-level tests (new platform)
 
-# Build KS binary (CMake, cross-platform)
+# Build KS binary — these two work on Windows, macOS and Linux alike
 cd models/kinetic_segregation
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+
+# Unix shorthand for exactly the above (there is no `make` on Windows)
 make                   # Build ks_gpu binary + shared testlib
 make clean && make     # Full rebuild
 make pdf               # Compile Methods/methods.pdf (needs tectonic in PATH)
@@ -143,8 +150,10 @@ These rules apply specifically to the kinetic segregation model
    code. Don't update mid-refactor — update once changes stabilize, before
    major commits or pushes. Recompile with `make pdf`.
 
-6. **Build with CMake** via the `make` wrapper. The `CMakeLists.txt` handles
-   Apple (Metal) vs Linux (stub → CPU fallback) automatically.
+6. **Build with CMake.** `CMakeLists.txt` handles Apple (Metal) vs Linux/Windows
+   (stub → CPU fallback) automatically. `make` is a Unix-only shorthand — never
+   introduce a dependency on it in Python, CI or docs, because a stock Windows
+   box has no `make`.
 
 7. **Conda environments** — use the same environments as the parent framework:
 
@@ -163,6 +172,23 @@ These rules apply specifically to the kinetic segregation model
    format without updating `render_movie.py`.
 
 9. **All KS tests must pass** before committing changes to the model.
+
+10. **Never hardcode a platform-dependent path or filename.** `ks_build.py` is
+    the single place that knows `ks_gpu` vs `ks_gpu.exe`,
+    `libks_potentials.dylib`/`.so` vs `ks_potentials.dll`, and the `Release/`
+    subdirectory the Visual Studio generator adds. Everything — the 8 test
+    modules, `__main__.py`, the notebook helper — goes through it.
+
+    This matters more than it looks: every one of these mistakes degrades to a
+    **skip**, not an error. A test that cannot find the binary skips, a suite of
+    skips exits 0, and Windows silently tests nothing.
+    `tests/test_portability.py` asserts these invariants statically, and each of
+    its guards was verified to go red when broken.
+
+11. **`M_PI` requires `src/ks_compat.h`.** It is not standard C: MSVC declares it
+    only when `_USE_MATH_DEFINES` precedes `<math.h>`. Include `ks_compat.h`
+    instead of `<math.h>` in any file that needs it. Same for monotonic timing —
+    use `ks_clock_ms()`, not POSIX `clock_gettime`.
 
 ## Relationship to Parent Repo
 

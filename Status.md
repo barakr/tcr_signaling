@@ -64,6 +64,30 @@ calls `ks_build.load_potentials()` instead of declaring prototypes inline, and 8
 modules had their build helper swapped. No assertion changed; local results are
 unchanged (196 passed).
 
+**Follow-up the same day — the reader-facing half.** Tutorial_0's environment check was
+not merely silent about Windows, it was *wrong* there, in the way that costs a new user
+an afternoon: it looked for `ks_gpu` rather than `ks_gpu.exe`, and gated on
+`shutil.which("c++")`, which is false on every Windows machine including correctly
+configured ones — `cl.exe` is not on `PATH`, CMake locates it through the registry. So a
+student who had installed everything correctly was told "Track A: not ready".
+
+It now calls `ks_build.have_compiler()`, which on Windows asks `vswhere` for an install
+carrying `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` — precisely the "Desktop
+development with C++" workload people omit — and prints the `winget` command when it is
+absent. The same cell's `bayesmm` probe raised `FileNotFoundError` instead of reporting
+`False` when the framework was absent, which is the exact configuration of the
+Track-A-only reader it exists to serve.
+
+**A guard that could not see the defect it was written for.** `test_portability.py`
+scanned `.py` files only, while `KS_3`'s movie cell called `subprocess.run(["make"])`
+from a *notebook*. The scan now covers notebook code cells (markdown excluded — prose
+may legitimately mention `make` as the Unix shorthand), plus a test asserting the scan
+is non-empty, so widening the glob cannot itself become a check that inspects nothing.
+
+Build prerequisites for all three platforms now live in `README.md`, linked from
+`notebooks/README.md`, `KS_2` and `Tutorial_0`. The parent repo's README claimed "no
+Windows build script is provided" and "verified separately on macOS"; both corrected.
+
 ### 2026-08-10: Notebook 03 now *runs* joint sampling instead of describing it
 
 Notebook 03 documented `--method joint` in prose — including a table of joint-vs-prior

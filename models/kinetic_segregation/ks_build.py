@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,8 @@ __all__ = [
     "build",
     "find_binary",
     "find_potentials",
+    "have_cmake",
+    "have_compiler",
     "load_potentials",
     "toolchain_hint",
 ]
@@ -70,6 +73,53 @@ def _potentials_names() -> tuple[str, ...]:
 
 def _candidates(root: Path, names: tuple[str, ...]) -> list[Path]:
     return [root / cfg / name for name in names for cfg in _CONFIGS]
+
+
+def have_cmake() -> bool:
+    """Is CMake on PATH?"""
+    return shutil.which(os.environ.get("CMAKE", "cmake")) is not None
+
+
+def have_compiler() -> bool:
+    """Is a C/C++ compiler available to CMake?
+
+    On Unix this is just "is there a compiler on PATH". On Windows it is not:
+    MSVC's `cl.exe` is only on PATH inside a Developer Command Prompt, and CMake
+    finds it for itself through the registry. Testing `which("c++")` there
+    reports "no compiler" on a perfectly working Visual Studio install — a false
+    negative that tells a correctly-configured user to reinstall.
+
+    So on Windows we ask `vswhere`, the tool Microsoft ships for exactly this,
+    for an installation carrying the VC++ toolset. That component is precisely
+    the "Desktop development with C++" workload, which is the piece people miss.
+    """
+    if _IS_WINDOWS:
+        if shutil.which("cl"):
+            return True
+        program_files = os.environ.get("ProgramFiles(x86)") or os.environ.get("ProgramFiles", "")
+        vswhere = Path(program_files) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+        if not vswhere.is_file():
+            return False
+        try:
+            proc = subprocess.run(
+                [
+                    str(vswhere),
+                    "-latest",
+                    "-products",
+                    "*",
+                    "-requires",
+                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property",
+                    "installationPath",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return bool(proc.stdout.strip())
+    return any(shutil.which(c) for c in ("c++", "clang++", "g++", "cc", "gcc"))
 
 
 def toolchain_hint() -> str:
