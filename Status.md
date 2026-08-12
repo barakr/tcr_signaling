@@ -6,6 +6,31 @@
 
 ## Decision Log
 
+### 2026-08-12: `KS model CI` moved to Node 24 — `checkout@v7`, `setup-python@v7`
+
+Every job was emitting GitHub's deprecation notice: `actions/checkout@v4` and
+`actions/setup-python@v5` are built on **Node.js 20**, which GitHub has retired. The
+runner force-runs them on Node 24 for now, so nothing was broken — but that shim will be
+withdrawn, and when it is, this workflow fails on all three OSes at once.
+
+Took the current majors (`v7`/`v7`) rather than the minimum that silences the warning
+(`checkout@v5` / `setup-python@v6`), after confirming neither's breaking changes reach us:
+`checkout@v7` blocks fork-PR checkout under `pull_request_target`/`workflow_run` and we use
+neither trigger; `setup-python@v7` removed the `pip-install` input and we pass only
+`python-version`. Both call sites here are the minimal form — a bare `checkout`, and
+`setup-python` with a version and nothing else. Verified by grep before editing.
+
+This matched the parent framework's four workflows, bumped the same day; keeping the two
+repos on one action version means a future problem shows up in both at once rather than in
+whichever was left behind. The parent's gitlink was moved afterwards, so a fresh clone of
+the parent gets this file.
+
+Worth noting for the CI-hardening theme in this log: this is the *opposite* failure mode
+from a silent skip. It was a warning nobody had to act on, printed on every job, in a repo
+whose whole convention is that annotations mean something. Left alone it trains the reader
+to scroll past the annotation channel — which is exactly where `Deep CI`'s skip audit and
+this repo's collection floor report their failures.
+
 ### 2026-08-11: Setup was on the honour system — now committed, guarded and verified
 
 Follow-up to the worktree entry below, after asking what else lived only in `.git/` and
