@@ -24,6 +24,20 @@ COLOR_DEPLETION = "#CCBB44"  # muted gold — annotation (partial separation)
 COLOR_DEPL_GOOD = "#228833"  # green — well separated (overlap < 0.1)
 COLOR_DEPL_POOR = "#CC3311"  # red — poor separation / overlap (overlap >= 0.4)
 
+# Paul Tol vibrant palette, extended -- one color per pMHC species (mixed-
+# affinity mixtures). Index 0 intentionally matches COLOR_PMHC so a
+# single-species run still looks like today's plain green markers.
+SPECIES_COLORS = [
+    "#228833",  # green (species 0)
+    "#EE7733",  # orange
+    "#0077BB",  # blue
+    "#CC3311",  # red-orange
+    "#33BBEE",  # cyan
+    "#AA3377",  # purple
+    "#EEDD88",  # pale yellow
+    "#BBBBBB",  # grey
+]
+
 
 def _even_figsize(w_in, h_in, dpi):
     """Round figure size so pixel dimensions are even (h264 requirement)."""
@@ -101,8 +115,11 @@ def _compute_depletion_metrics(tcr_pos, cd45_pos, patch_size):
 def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size, bind_threshold=3.0):
     """Compute P10 cross-NN distances for bound TCRs.
 
-    Returns (bound_mask, tcr_cd45_p10_nm, cd45_tcr_p10_nm).
+    Returns (bound_mask, tcr_cd45_p10_nm, cd45_tcr_p10_nm, bound_pmhc_idx).
     bound_mask: boolean array of shape (n_tcr,), True for bound TCRs.
+    bound_pmhc_idx: int array of shape (n_tcr,), index into pmhc_pos of the
+        nearest pMHC for each bound TCR (-1 for unbound TCRs) -- lets the
+        caller color a bound TCR by which pMHC species it engaged.
     P10 values are None if no TCRs are bound.
     """
     half = patch_size / 2.0
@@ -111,6 +128,7 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size, bind_threshol
 
     # Find bound TCRs: within bind_threshold of any pMHC
     bound_mask = np.zeros(n_tcr, dtype=bool)
+    bound_pmhc_idx = np.full(n_tcr, -1, dtype=int)
     if pmhc_pos is not None and len(pmhc_pos) > 0:
         thr2 = bind_threshold * bind_threshold
         for t in range(n_tcr):
@@ -118,12 +136,16 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size, bind_threshol
             dy = tcr_pos[t, 1] - pmhc_pos[:, 1]
             dx = np.where(dx > half, dx - patch_size, np.where(dx < -half, dx + patch_size, dx))
             dy = np.where(dy > half, dy - patch_size, np.where(dy < -half, dy + patch_size, dy))
-            if np.any(dx * dx + dy * dy < thr2):
+            d2 = dx * dx + dy * dy
+            if np.any(d2 < thr2):
                 bound_mask[t] = True
+                # argmin over ALL pMHC, not just those under threshold: since
+                # bound_mask is True here, the minimum is guaranteed < thr2.
+                bound_pmhc_idx[t] = int(np.argmin(d2))
 
     n_bound = int(np.sum(bound_mask))
     if n_bound == 0:
-        return bound_mask, None, None
+        return bound_mask, None, None, bound_pmhc_idx
 
     bound_tcr = tcr_pos[bound_mask]
 
@@ -149,7 +171,7 @@ def _compute_cross_nn_p10(tcr_pos, cd45_pos, pmhc_pos, patch_size, bind_threshol
     nn_cd45_tcr.sort()
     cd45_tcr_p10 = float(nn_cd45_tcr[n_cd45 // 10])
 
-    return bound_mask, tcr_cd45_p10, cd45_tcr_p10
+    return bound_mask, tcr_cd45_p10, cd45_tcr_p10, bound_pmhc_idx
 
 
 def main():
@@ -208,6 +230,11 @@ def main():
         else meta.get("rigidity_kT", meta.get("rigidity_kT_nm2"))
     )
     n_pmhc = meta.get("n_pmhc", 0)
+    # Mixed-affinity pMHC species (additive sidecar fields, absent for a
+    # single-affinity run -- see main.cpp's dump_frames meta.json block).
+    species_table = meta.get("pmhc_species")
+    pmhc_species_id = meta.get("pmhc_species_id")
+    n_species = len(species_table) if species_table else 0
     n_frames = meta.get("n_frames", n_steps)
     all_frames = list(range(0, n_frames + 1))
     steps = all_frames[:: args.skip]
@@ -266,31 +293,78 @@ def main():
     ax_mol.set_xlabel("x (\u00b5m)")
     ax_mol.set_ylabel("y (\u00b5m)")
 
-    # Draw pMHC first (background), then CD45, then TCR on top
+    # Draw pMHC first (background), then CD45, then TCR on top. When a
+    # mixed-affinity species table is present, color pMHC by species instead
+    # of the single flat green -- one legend entry per species.
     if pmhc_pos is not None:
         pmhc_um = pmhc_pos / 1000.0
-        ax_mol.scatter(
-            pmhc_um[:, 0],
-            pmhc_um[:, 1],
-            c=COLOR_PMHC,
-            marker="x",
-            s=30,
-            alpha=0.7,
-            label="pMHC",
-            zorder=1,
-            linewidths=1.0,
-        )
+        if n_species > 1 and pmhc_species_id is not None:
+            sp_id_arr = np.array(pmhc_species_id)
+            for sp in range(n_species):
+                mask = sp_id_arr == sp
+                if not np.any(mask):
+                    continue
+                u_assoc = species_table[sp].get("u_assoc")
+                label = (
+                    f"pMHC species {sp} (u_assoc={u_assoc:g})"
+                    if u_assoc is not None
+                    else f"pMHC species {sp}"
+                )
+                ax_mol.scatter(
+                    pmhc_um[mask, 0],
+                    pmhc_um[mask, 1],
+                    c=SPECIES_COLORS[sp % len(SPECIES_COLORS)],
+                    marker="x",
+                    s=30,
+                    alpha=0.7,
+                    label=label,
+                    zorder=1,
+                    linewidths=1.0,
+                )
+        else:
+            ax_mol.scatter(
+                pmhc_um[:, 0],
+                pmhc_um[:, 1],
+                c=COLOR_PMHC,
+                marker="x",
+                s=30,
+                alpha=0.7,
+                label="pMHC",
+                zorder=1,
+                linewidths=1.0,
+            )
 
     cd45_scat = ax_mol.scatter([], [], c=COLOR_CD45, s=12, alpha=0.5, label="CD45", zorder=2)
     tcr_scat = ax_mol.scatter([], [], c=COLOR_TCR, s=20, alpha=0.7, label="TCR", zorder=3)
-    # Bound TCR highlight (filled, brighter)
-    bound_scat = (
-        ax_mol.scatter(
-            [], [], c=COLOR_TCR, s=40, alpha=0.9, edgecolors="white", linewidths=0.8, zorder=5
-        )
-        if args.show_separation
-        else None
-    )
+    # Bound TCR highlight (filled, brighter). One scatter artist per species
+    # when a mixture is present, so a viewer can see at a glance which TCRs
+    # engaged the high-affinity species vs the low-affinity one -- this is
+    # the actual discrimination signal, not just a count.
+    if args.show_separation:
+        if n_species > 1:
+            bound_scats = [
+                ax_mol.scatter(
+                    [],
+                    [],
+                    c=SPECIES_COLORS[sp % len(SPECIES_COLORS)],
+                    s=40,
+                    alpha=0.9,
+                    edgecolors="white",
+                    linewidths=0.8,
+                    zorder=5,
+                    label=f"bound (species {sp})",
+                )
+                for sp in range(n_species)
+            ]
+        else:
+            bound_scats = [
+                ax_mol.scatter(
+                    [], [], c=COLOR_TCR, s=40, alpha=0.9, edgecolors="white",
+                    linewidths=0.8, zorder=5,
+                )
+            ]
+    else:
+        bound_scats = None
     # P10 separation circle (drawn as a single circle at patch center for legend)
     sep_circles = []  # will be re-created each frame
 
@@ -424,16 +498,31 @@ def main():
         sep_circles.clear()
 
         if args.show_separation and pmhc_pos is not None:
-            bound_mask, tcr_cd45_p10, cd45_tcr_p10 = _compute_cross_nn_p10(
+            bound_mask, tcr_cd45_p10, cd45_tcr_p10, bound_pmhc_idx = _compute_cross_nn_p10(
                 tcr, cd45, pmhc_pos, patch_nm, args.bind_threshold
             )
             n_bound = int(np.sum(bound_mask))
 
-            # Highlight bound TCRs
-            if n_bound > 0:
-                bound_scat.set_offsets(tcr_um[bound_mask])
+            # Highlight bound TCRs -- split by species when a mixture is
+            # present, otherwise the single legacy highlight color.
+            per_species_bound_counts = None
+            if n_species > 1 and pmhc_species_id is not None:
+                sp_id_arr = np.array(pmhc_species_id)
+                bound_species = np.where(
+                    bound_mask, sp_id_arr[np.clip(bound_pmhc_idx, 0, None)], -1
+                )
+                per_species_bound_counts = []
+                for sp in range(n_species):
+                    sp_mask = bound_species == sp
+                    bound_scats[sp].set_offsets(
+                        tcr_um[sp_mask] if np.any(sp_mask) else np.empty((0, 2))
+                    )
+                    per_species_bound_counts.append(int(np.sum(sp_mask)))
             else:
-                bound_scat.set_offsets(np.empty((0, 2)))
+                if n_bound > 0:
+                    bound_scats[0].set_offsets(tcr_um[bound_mask])
+                else:
+                    bound_scats[0].set_offsets(np.empty((0, 2)))
 
             if tcr_cd45_p10 is not None:
                 # Draw P10 radius circle around each bound TCR
@@ -452,11 +541,21 @@ def main():
                     ax_mol.add_patch(circ)
                     sep_circles.append(circ)
 
-                sep_text.set_text(
-                    f"bound: {n_bound}/{n_tcr}  |  "
-                    f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  |  "
-                    f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm"
-                )
+                if per_species_bound_counts is not None:
+                    counts_str = ", ".join(
+                        f"sp{sp}:{c}" for sp, c in enumerate(per_species_bound_counts)
+                    )
+                    sep_text.set_text(
+                        f"bound: {n_bound}/{n_tcr} ({counts_str})  |  "
+                        f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  |  "
+                        f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm"
+                    )
+                else:
+                    sep_text.set_text(
+                        f"bound: {n_bound}/{n_tcr}  |  "
+                        f"TCR\u2192CD45 P10: {tcr_cd45_p10:.0f} nm  |  "
+                        f"CD45\u2192TCR P10: {cd45_tcr_p10:.0f} nm"
+                    )
             else:
                 sep_text.set_text(f"bound: 0/{n_tcr}")
 

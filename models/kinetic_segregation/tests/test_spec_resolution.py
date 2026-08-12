@@ -43,12 +43,18 @@ _SWEEP = (
     "the DOE definition only; run.py overrides with --patch_size 500 --grid_size 100 "
     "(dx = 5 nm), so the executed runs ARE resolved."
 )
+_MIXED_AFFINITY_SWEEP = (
+    "the DOE definition only (affinity_ratio/mixture_fraction, not patch_size/grid_size "
+    "-- those are fixed, not swept); run.py's FIXED_ARGS overrides with --patch_size 500 "
+    "--grid_size 64 (dx = 7.8 nm, dx/sigma_r = 3.9), so the executed runs ARE resolved."
+)
 
 KNOWN_UNRESOLVED = {
     "examples/specs/model.kinetic_segregation.fast.json": _DEMO,
     "examples/specs/model.kinetic_segregation.regular.json": _DEMO,
     "examples/specs/model.kinetic_segregation.extensive.json": _DEMO,
     "experiments/ks_behavior_sweep/spec.json": _SWEEP,
+    "experiments/ks_mixed_affinity/spec.json": _MIXED_AFFINITY_SWEEP,
 }
 
 

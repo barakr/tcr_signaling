@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 
@@ -54,7 +55,9 @@ static void print_usage(std::string_view prog) {
               << "       [--dt FLOAT] [--dt_factor FLOAT]\n"
               << "       [--params FILE] [--pmhc_mode MODE] [--pmhc_radius FLOAT]\n"
               << "       [--u_assoc FLOAT] [--sigma_bind FLOAT] [--sigma_r FLOAT]\n"
-              << "       [--patch_size FLOAT]\n";
+              << "       [--patch_size FLOAT]\n"
+              << "       [--params FILE with \"pmhc_species\": [{fraction,u_assoc,...}]]\n"
+              << "         (mixed-affinity pMHC mixture, CPU-only, JSON-only -- no CLI flag)\n";
 }
 
 /* ---------- Frame dump (raw binary I/O) ---------- */
@@ -126,7 +129,13 @@ static void load_params_file(const std::string &path,
                              int &binding_mode_arg, int &step_mode_arg,
                              double &h0_tcr_arg, double &init_height_arg,
                              double &u_assoc_arg, double &sigma_bind_arg,
-                             double &sigma_r_arg, double &patch_size_arg) {
+                             double &sigma_r_arg, double &patch_size_arg,
+                             int &n_species_arg,
+                             std::vector<double> &species_fraction,
+                             std::vector<double> &species_u_assoc,
+                             std::vector<double> &species_sigma_bind,
+                             std::vector<double> &species_h0_tcr,
+                             std::vector<double> &species_sigma_r) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << "Error: cannot read param file: " << path << "\n";
@@ -187,6 +196,48 @@ static void load_params_file(const std::string &path,
         auto mode = params["step_mode"].get<std::string>();
         step_mode_arg = (mode == "brownian") ? STEP_MODE_BROWNIAN : STEP_MODE_PAPER;
     }
+
+    /* Mixed-affinity pMHC species. Only reachable via --params (no CLI-flag
+     * precedent exists anywhere in this codebase for a list-valued flag).
+     * Each entry: {"fraction", "u_assoc", "sigma_bind"?, "h0_tcr"?, "sigma_r"?}
+     * -- the three optional fields fall back to the scalar --sigma_bind/
+     * --h0_tcr/--sigma_r (or their defaults) per species, via the same
+     * "0.0 = unset" sentinel convention used everywhere else in this file. */
+    if (params.contains("pmhc_species")) {
+        const auto &arr = params["pmhc_species"];
+        if (!arr.is_array() || arr.empty()) {
+            std::cerr << "Error: pmhc_species must be a non-empty JSON array\n";
+            std::exit(1);
+        }
+        if ((int)arr.size() > MAX_PMHC_SPECIES) {
+            std::cerr << "Error: pmhc_species has " << arr.size()
+                      << " entries, exceeds MAX_PMHC_SPECIES=" << MAX_PMHC_SPECIES << "\n";
+            std::exit(1);
+        }
+        double frac_sum = 0.0;
+        for (const auto &sp : arr) {
+            if (!sp.contains("fraction") || !sp.contains("u_assoc")) {
+                std::cerr << "Error: each pmhc_species entry needs at least "
+                             "\"fraction\" and \"u_assoc\"\n";
+                std::exit(1);
+            }
+            double frac = sp["fraction"].get<double>();
+            frac_sum += frac;
+            species_fraction.push_back(frac);
+            species_u_assoc.push_back(sp["u_assoc"].get<double>());
+            species_sigma_bind.push_back(sp.value("sigma_bind", 0.0));
+            species_h0_tcr.push_back(sp.value("h0_tcr", 0.0));
+            species_sigma_r.push_back(sp.value("sigma_r", 0.0));
+        }
+        if (frac_sum <= 0.0) {
+            std::cerr << "Error: pmhc_species fractions must sum to a positive value\n";
+            std::exit(1);
+        }
+        /* Normalize so fractions sum to exactly 1.0, tolerating small
+         * rounding in the input file. */
+        for (double &f : species_fraction) f /= frac_sum;
+        n_species_arg = (int)arr.size();
+    }
 }
 
 /* ---------- Main ---------- */
@@ -219,6 +270,9 @@ int main(int argc, const char *argv[]) {
     double sigma_bind_arg = 0.0;
     double sigma_r_arg = 0.0;
     double patch_size_arg = 0.0;
+    int n_species_arg = 0;
+    std::vector<double> species_fraction, species_u_assoc_v, species_sigma_bind_v,
+        species_h0_tcr_v, species_sigma_r_v;
     std::string params_file;
     std::string run_dir;
 
@@ -338,7 +392,9 @@ int main(int argc, const char *argv[]) {
                          binding_mode_arg, step_mode_arg,
                          h0_tcr_arg, init_height_arg,
                          u_assoc_arg, sigma_bind_arg,
-                         sigma_r_arg, patch_size_arg);
+                         sigma_r_arg, patch_size_arg,
+                         n_species_arg, species_fraction, species_u_assoc_v,
+                         species_sigma_bind_v, species_h0_tcr_v, species_sigma_r_v);
     }
 
     if (time_sec < 0 || rigidity < 0 || run_dir.empty()) {
@@ -381,7 +437,13 @@ int main(int argc, const char *argv[]) {
                            binding_mode_arg, step_mode_arg,
                            h0_tcr_arg, init_height_arg,
                            sigma_r_arg, sigma_bind_arg, patch_size_arg,
-                           pmhc_deposition_arg);
+                           pmhc_deposition_arg,
+                           n_species_arg,
+                           species_fraction.empty() ? nullptr : species_fraction.data(),
+                           species_u_assoc_v.empty() ? nullptr : species_u_assoc_v.data(),
+                           species_sigma_bind_v.empty() ? nullptr : species_sigma_bind_v.data(),
+                           species_h0_tcr_v.empty() ? nullptr : species_h0_tcr_v.data(),
+                           species_sigma_r_v.empty() ? nullptr : species_sigma_r_v.data());
     /* Say which backend actually ran, always — not only when Metal succeeds.
      * The two produce measurably different numbers (they differ in precision and
      * in RNG stream), so "which one was it" is provenance, not chatter. It also
@@ -397,6 +459,18 @@ int main(int argc, const char *argv[]) {
     if (require_gpu && !sim->use_gpu) {
         std::cerr << "error: --require-gpu was given but the GPU backend could not be "
                      "initialized; refusing to fall back to the CPU silently.\n";
+        sim_destroy(sim);
+        return 1;
+    }
+
+    /* Multi-species pMHC is CPU-only: shaders.metal's Phase-2 kernel only
+     * knows one scalar u_assoc/sigma_bind/h0_tcr per call, not a per-species
+     * array. Refuse rather than silently running wrong physics on GPU. */
+    if (n_species_arg > 1 && sim->use_gpu) {
+        std::cerr << "error: multi-species pMHC (pmhc_species, n_species="
+                  << n_species_arg << ") is not implemented on the GPU/Metal "
+                     "path yet -- only the CPU Phase-2 loop reads "
+                     "pmhc_influence_species. Pass --no-gpu.\n";
         sim_destroy(sim);
         return 1;
     }
@@ -435,6 +509,23 @@ int main(int argc, const char *argv[]) {
             {"pmhc_mode", (pmhc_mode_arg == PMHC_MODE_UNIFORM) ? "uniform" : "inner_circle"},
             {"pmhc_radius", sim->pmhc_radius}
         };
+        /* Additive sidecar field -- pmhc.bin itself stays (x,y)-only (KS
+         * rule 8). render_movie.py reads this to color pMHC/bound-TCR
+         * markers by species. */
+        if (sim->n_species > 1) {
+            json species_table = json::array();
+            for (int sp = 0; sp < sim->n_species; sp++) {
+                species_table.push_back({
+                    {"u_assoc", sim->species_u_assoc[sp]},
+                    {"sigma_bind", sim->species_sigma_bind[sp]},
+                    {"h0_tcr", sim->species_h0_tcr[sp]},
+                    {"sigma_r", sim->species_sigma_r[sp]}
+                });
+            }
+            meta["pmhc_species"] = species_table;
+            meta["pmhc_species_id"] = std::vector<int>(
+                sim->pmhc_species_id, sim->pmhc_species_id + sim->n_pmhc);
+        }
         if (std::ofstream ofs(frames_dir / "meta.json"); ofs)
             ofs << meta.dump() << "\n";
 
@@ -516,6 +607,20 @@ int main(int argc, const char *argv[]) {
     double accept_rate = (sim->total_proposals > 0)
         ? static_cast<double>(sim->accepted) / sim->total_proposals : 0.0;
 
+    /* Per-species bound fraction: the actual competitive-selectivity signal.
+     * Requires --monitor-binding (sets sim->bind_threshold) in addition to
+     * pmhc_species -- with no threshold set, sim_bound_fraction_by_species()
+     * is a no-op and this stays all-zero. */
+    std::vector<double> bound_frac_by_species;
+    std::vector<int> n_pmhc_by_species;
+    if (sim->n_species > 1) {
+        bound_frac_by_species.assign(sim->n_species, 0.0);
+        sim_bound_fraction_by_species(sim, bound_frac_by_species.data());
+        n_pmhc_by_species.assign(sim->n_species, 0);
+        for (int k = 0; k < sim->n_pmhc; k++)
+            n_pmhc_by_species[sim->pmhc_species_id[k]]++;
+    }
+
     /* Build JSON output. */
     json output = {
         {"depletion_width_nm", depletion},
@@ -569,6 +674,28 @@ int main(int argc, const char *argv[]) {
     if (!snapshots.empty()) {
         output["snapshots"] = snapshots;
         output["snapshot_interval_sec"] = snapshot_interval_sec;
+    }
+
+    /* Add mixed-affinity pMHC species results if pmhc_species was given. */
+    if (sim->n_species > 1) {
+        /* bound_fraction_by_species needs bind_threshold too (same
+         * precondition as sim_bound_fraction_by_species() itself) -- without
+         * it every entry is a no-op 0.0, which reads as "nothing bound"
+         * rather than "not measured". Gate it like binding_timeseries above. */
+        if (monitor_binding_threshold > 0.0) {
+            output["bound_fraction_by_species"] = bound_frac_by_species;
+        }
+        output["n_pmhc_by_species"] = n_pmhc_by_species;
+        json species_table = json::array();
+        for (int sp = 0; sp < sim->n_species; sp++) {
+            species_table.push_back({
+                {"u_assoc", sim->species_u_assoc[sp]},
+                {"sigma_bind", sim->species_sigma_bind[sp]},
+                {"h0_tcr", sim->species_h0_tcr[sp]},
+                {"sigma_r", sim->species_sigma_r[sp]}
+            });
+        }
+        output["inputs"]["pmhc_species"] = species_table;
     }
 
     auto json_str = output.dump(2);

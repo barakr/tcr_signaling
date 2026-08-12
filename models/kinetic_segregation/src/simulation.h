@@ -31,6 +31,10 @@
 /* pMHC influence field. */
 #define PMHC_CUTOFF_SIGMAS   3.0     /* influence cutoff at N sigma */
 
+/* Multi-species pMHC mixture. n_species<=1 keeps the legacy single-affinity
+ * scalar path (s->u_assoc/h0_tcr/sigma_bind/sigma_r) bit-for-bit unchanged. */
+#define MAX_PMHC_SPECIES     8
+
 /* Numerical constants for Box-Muller transform. */
 #define BOX_MULLER_FLOOR     1e-30f  /* floor for log(u) */
 #define TWO_PI_F             6.2831853071795864f
@@ -106,6 +110,22 @@ typedef struct {
     double pmhc_influence_sum; /* total deposited weight; mesh-independent in area mode */
     double pmhc_influence_expected; /* n_pmhc*2*pi*sigma_r^2/dx^2: the resolved target */
 
+    /* Multi-species pMHC mixture (mixed-affinity ligands). n_species<=1 means
+     * "not in use" -- every consumer must fall back to the legacy scalar
+     * u_assoc/h0_tcr/sigma_bind/sigma_r path above, unchanged. */
+    int n_species;
+    double species_u_assoc[MAX_PMHC_SPECIES];
+    double species_sigma_bind[MAX_PMHC_SPECIES];
+    double species_h0_tcr[MAX_PMHC_SPECIES];
+    double species_sigma_r[MAX_PMHC_SPECIES];
+    int *pmhc_species_id;      /* n_pmhc array: which species each pMHC belongs
+                                 * to. NULL if n_species<=1. */
+    float *pmhc_influence_species[MAX_PMHC_SPECIES]; /* per-species precomputed
+                                 * grid_size x grid_size weights [0,1], mirrors
+                                 * pmhc_influence but one field per species.
+                                 * Entries [0, n_species) are allocated when
+                                 * n_species>1, NULL otherwise. */
+
     /* Diagnostics */
     long accepted;
     long total_proposals;
@@ -138,7 +158,12 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      int binding_mode, int step_mode,
                      double h0_tcr, double init_height,
                      double sigma_r, double sigma_bind, double patch_size,
-                     int pmhc_deposition);
+                     int pmhc_deposition,
+                     int n_species, const double *species_fraction,
+                     const double *species_u_assoc,
+                     const double *species_sigma_bind,
+                     const double *species_h0_tcr,
+                     const double *species_sigma_r);
 
 /* Free simulation state. */
 void sim_destroy(SimState *s);
@@ -171,6 +196,12 @@ double sim_mean_r(const SimState *s, const double *pos, int n);
 
 /* Count bound TCRs. */
 int sim_count_bound_tcr(const SimState *s);
+
+/* Bound-fraction per pMHC species: out[i] = (TCRs bound to a species-i pMHC)
+ * / n_tcr, for i in [0, s->n_species). No-op (returns without writing) if
+ * s->n_species <= 1 or s->bind_threshold <= 0. `out` must have capacity
+ * s->n_species. */
+void sim_bound_fraction_by_species(const SimState *s, double *out);
 
 #ifdef KS_PROFILE
 /* Print phase timing breakdown to stderr. */

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "kinetic_segregation",
+    "version": "0.2.0",
+    "artifact": {
+      "type": "local",
+      "entrypoint": ["python", "-m", "projects.tcr_signaling.models.kinetic_segregation"]
+    }
+  },
+  "runner": {
+    "mode": "local_process",
+    "resources": { "cpus": 1, "mem_gb": 4, "walltime_min": 20 }
+  },
+  "io_schema": {
+    "inputs": [
+      { "name": "affinity_ratio", "type": "float", "units": "ratio", "support": [1.0, 50.0] },
+      { "name": "mixture_fraction", "type": "float", "units": "fraction", "support": [0.0, 1.0] }
+    ],
+    "outputs": [
+      { "name": "segregation_json", "type": "float", "units": "json" }
+    ]
+  },
+  "design": {
+    "strategy": "grid",
+    "grid": {
+      "affinity_ratio": [2.0, 5.0, 10.0, 20.0],
+      "mixture_fraction": [0.1, 0.3, 0.5, 0.7, 0.9]
+    }
+  },
+  "adapter": {
+    "id": "python_cli_adapter_v1",
+    "input_mapping": [],
+    "output_mapping": [
+      { "var": "segregation_json", "from": { "kind": "file", "path": "out/segregation.json" } }
+    ]
+  },
+  "reproducibility": { "seed": 42 },
+  "storage": { "root": "projects/tcr_signaling/store" }
+}

@@ -31,7 +31,9 @@ void sim_profile_report(int n_steps) {
 static void bin_molecules(const double *pos, int n_mol, int n, double dx,
                           int *count_grid);
 static void compute_pmhc_influence(SimState *s);
+static void compute_pmhc_influence_species(SimState *s);
 static double pmhc_influence_at(const SimState *s, double x, double y);
+static void pmhc_influence_at_species(const SimState *s, double x, double y, double *w_out);
 static void calibrate_dt(SimState *s, double D_mol, double D_h);
 
 /* ------------------------------------------------------------------ */
@@ -99,7 +101,11 @@ static void init_params(SimState *s, int grid_size, int n_tcr, int n_cd45,
                         double h0_tcr, double init_height,
                         double sigma_r, double sigma_bind, double patch_size,
                         int n_pmhc, int pmhc_mode, double pmhc_radius,
-                        double D_mol, double D_h) {
+                        double D_mol, double D_h,
+                        int n_species, const double *species_u_assoc,
+                        const double *species_sigma_bind,
+                        const double *species_h0_tcr,
+                        const double *species_sigma_r) {
     s->grid_size = grid_size;
     s->sigma_r = (sigma_r > 0.0) ? sigma_r : SIGMA_R_DEFAULT;
     s->sigma_bind = (sigma_bind > 0.0) ? sigma_bind : SIGMA_BIND_NM;
@@ -123,6 +129,26 @@ static void init_params(SimState *s, int grid_size, int n_tcr, int n_cd45,
     s->pmhc_mode = pmhc_mode;
     s->pmhc_radius = pmhc_radius;
     s->tcr_bound = NULL;
+
+    /* Multi-species pMHC mixture. n_species<=1 is the legacy single-affinity
+     * path: s->n_species stays 0 (its calloc'd default) and every consumer
+     * falls back to the scalar u_assoc/h0_tcr/sigma_bind/sigma_r above. */
+    if (n_species > 1) {
+        s->n_species = (n_species > MAX_PMHC_SPECIES) ? MAX_PMHC_SPECIES : n_species;
+        if (n_species > MAX_PMHC_SPECIES) {
+            fprintf(stderr, "WARNING: n_species=%d exceeds MAX_PMHC_SPECIES=%d, truncating\n",
+                    n_species, MAX_PMHC_SPECIES);
+        }
+        for (int sp = 0; sp < s->n_species; sp++) {
+            s->species_u_assoc[sp] = species_u_assoc[sp];
+            s->species_sigma_bind[sp] = (species_sigma_bind[sp] > 0.0)
+                ? species_sigma_bind[sp] : s->sigma_bind;
+            s->species_h0_tcr[sp] = (species_h0_tcr[sp] > 0.0)
+                ? species_h0_tcr[sp] : s->h0_tcr;
+            s->species_sigma_r[sp] = (species_sigma_r[sp] > 0.0)
+                ? species_sigma_r[sp] : s->sigma_r;
+        }
+    }
 
     /* Apply defaults if zero. */
     s->D_mol = (D_mol > 0.0) ? D_mol : D_MOL_DEFAULT;
@@ -189,7 +215,8 @@ static void init_dt(SimState *s, double dt_override, double dt_factor) {
 
 /* Allocate and place molecules (pMHC, TCR, CD45), precompute fields. */
 static void init_molecules(SimState *s, uint64_t seed,
-                           uint64_t pmhc_seed) {
+                           uint64_t pmhc_seed,
+                           const double *species_fraction) {
     int grid_size = s->grid_size;
 
     s->h = (float *)malloc(grid_size * grid_size * sizeof(float));
@@ -252,6 +279,27 @@ static void init_molecules(SimState *s, uint64_t seed,
          * and forced-mode gating). Gaussian mode uses pmhc_influence instead. */
         s->pmhc_count = (int *)calloc(grid_size * grid_size, sizeof(int));
         bin_molecules(s->pmhc_pos, s->n_pmhc, grid_size, s->dx, s->pmhc_count);
+
+        /* Multi-species mixture: assign each pMHC a species, weighted by
+         * species_fraction, drawn from the same pmhc_seed-derived RNG stream
+         * used for placement (keeps the whole pMHC configuration
+         * reproducible from one seed). Legacy path (n_species<=1) leaves
+         * pmhc_species_id NULL. */
+        if (s->n_species > 1) {
+            s->pmhc_species_id = (int *)malloc(s->n_pmhc * sizeof(int));
+            double cum[MAX_PMHC_SPECIES];
+            double running = 0.0;
+            for (int sp = 0; sp < s->n_species; sp++) {
+                running += species_fraction[sp];
+                cum[sp] = running;
+            }
+            for (int k = 0; k < s->n_pmhc; k++) {
+                double r = pcg64_uniform(&pmhc_rng) * running;
+                int sp = 0;
+                while (sp < s->n_species - 1 && r > cum[sp]) sp++;
+                s->pmhc_species_id[k] = sp;
+            }
+        }
     }
 
     /* TCR initialization. */
@@ -348,16 +396,23 @@ SimState *sim_create(int grid_size, int n_tcr, int n_cd45,
                      int binding_mode, int step_mode,
                      double h0_tcr, double init_height,
                      double sigma_r, double sigma_bind, double patch_size,
-                     int pmhc_deposition) {
+                     int pmhc_deposition,
+                     int n_species, const double *species_fraction,
+                     const double *species_u_assoc,
+                     const double *species_sigma_bind,
+                     const double *species_h0_tcr,
+                     const double *species_sigma_r) {
     SimState *s = (SimState *)calloc(1, sizeof(SimState));
     init_params(s, grid_size, n_tcr, n_cd45, kappa, u_assoc,
                 cd45_height, k_rep, mol_repulsion_eps, mol_repulsion_rcut,
                 binding_mode, step_mode, h0_tcr, init_height,
                 sigma_r, sigma_bind, patch_size,
-                n_pmhc, pmhc_mode, pmhc_radius, D_mol, D_h);
+                n_pmhc, pmhc_mode, pmhc_radius, D_mol, D_h,
+                n_species, species_u_assoc, species_sigma_bind,
+                species_h0_tcr, species_sigma_r);
     s->pmhc_deposition = pmhc_deposition;
     init_dt(s, dt_override, dt_factor);
-    init_molecules(s, seed, pmhc_seed);
+    init_molecules(s, seed, pmhc_seed, species_fraction);
     init_gpu(s, use_gpu, seed);
     return s;
 }
@@ -372,6 +427,9 @@ void sim_destroy(SimState *s) {
     free(s->pmhc_count);
     free(s->pmhc_influence);
     free(s->tcr_bound);
+    free(s->pmhc_species_id);
+    for (int sp = 0; sp < s->n_species; sp++)
+        free(s->pmhc_influence_species[sp]);
     if (s->tcr_cell_list) {
         cell_list_free((CellList *)s->tcr_cell_list);
         free(s->tcr_cell_list);
@@ -399,6 +457,16 @@ static float height_at_pos_f(const float *h, int n, double dx, double x, double 
 
 /* Compute TCR energy at position (x,y). */
 static double tcr_energy_at(const SimState *s, double x, double y, double h_val) {
+    if (s->n_species > 1) {
+        double w[MAX_PMHC_SPECIES];
+        pmhc_influence_at_species(s, x, y, w);
+        double e = 0.0;
+        for (int sp = 0; sp < s->n_species; sp++)
+            e += w[sp] * tcr_pmhc_potential(h_val, s->species_h0_tcr[sp],
+                                            s->species_u_assoc[sp],
+                                            s->species_sigma_bind[sp]);
+        return e;
+    }
     if (s->pmhc_influence) {
         double w = pmhc_influence_at(s, x, y);
         return w * tcr_pmhc_potential(h_val, s->h0_tcr, s->u_assoc, s->sigma_bind);
@@ -595,6 +663,10 @@ static double gauss_integral_1d(double a, double b, double mu, double sigma) {
  * pmhc_influence_at() at continuous positions.
  */
 static void compute_pmhc_influence(SimState *s) {
+    if (s->n_species > 1) {
+        compute_pmhc_influence_species(s);
+        return;
+    }
     int n = s->grid_size;
     double dx = s->dx;
     double sigma_r = s->sigma_r;
@@ -672,6 +744,93 @@ static void compute_pmhc_influence(SimState *s) {
     }
 }
 
+/* Multi-species variant of compute_pmhc_influence(): builds one influence
+ * grid per species (pmhc_influence_species[sp]), using that species' own
+ * sigma_r and only the pMHC assigned to it (s->pmhc_species_id). Leaves
+ * s->pmhc_influence NULL -- multi-species callers (tcr_energy_at,
+ * phase2_grid_cpu) read pmhc_influence_species instead. Deliberately
+ * duplicates compute_pmhc_influence()'s inner loop rather than
+ * parameterizing it, so the legacy (n_species<=1) path is untouched and
+ * stays bit-identical to tests/reference_values.json. */
+static void compute_pmhc_influence_species(SimState *s) {
+    int n = s->grid_size;
+    double dx = s->dx;
+    double patch = s->patch_size;
+    double half_patch = patch / 2.0;
+    double cell_area = dx * dx;
+
+    double wmax_total = 0.0, wsum_total = 0.0, expected_total = 0.0;
+
+    for (int sp = 0; sp < s->n_species; sp++) {
+        double sigma_r = s->species_sigma_r[sp];
+        double inv_2sigma2 = 1.0 / (2.0 * sigma_r * sigma_r);
+        double r_cut = PMHC_CUTOFF_SIGMAS * sigma_r;
+        double search = (s->pmhc_deposition == 1) ? (r_cut + dx) : r_cut;
+        double r_cut2 = search * search;
+
+        float *field = (float *)calloc(n * n, sizeof(float));
+        s->pmhc_influence_species[sp] = field;
+
+        for (int i = 0; i < n; i++) {
+            double cx = (i + 0.5) * dx;
+            for (int j = 0; j < n; j++) {
+                double cy = (j + 0.5) * dx;
+                double sum = 0.0;
+                for (int k = 0; k < s->n_pmhc; k++) {
+                    if (s->pmhc_species_id[k] != sp) continue;
+                    double ddx = cx - s->pmhc_pos[2 * k];
+                    double ddy = cy - s->pmhc_pos[2 * k + 1];
+                    if (ddx > half_patch) ddx -= patch;
+                    else if (ddx < -half_patch) ddx += patch;
+                    if (ddy > half_patch) ddy -= patch;
+                    else if (ddy < -half_patch) ddy += patch;
+                    double r2 = ddx * ddx + ddy * ddy;
+                    if (r2 < r_cut2) {
+                        if (s->pmhc_deposition == 1) {
+                            sum += gauss_integral_1d(ddx - dx / 2.0, ddx + dx / 2.0, 0.0, sigma_r)
+                                 * gauss_integral_1d(ddy - dx / 2.0, ddy + dx / 2.0, 0.0, sigma_r)
+                                 / cell_area;
+                        } else {
+                            sum += exp(-r2 * inv_2sigma2);
+                        }
+                    }
+                }
+                field[i * n + j] = (float)(sum > 1.0 ? 1.0 : sum);
+            }
+        }
+
+        int n_pmhc_sp = 0;
+        for (int k = 0; k < s->n_pmhc; k++)
+            if (s->pmhc_species_id[k] == sp) n_pmhc_sp++;
+
+        double wmax = 0.0, wsum = 0.0;
+        for (int c = 0; c < n * n; c++) {
+            double w = field[c];
+            wsum += w;
+            if (w > wmax) wmax = w;
+        }
+        double expected = (double)n_pmhc_sp * 2.0 * M_PI * sigma_r * sigma_r / (dx * dx);
+        if (expected > (double)(n * n)) expected = (double)(n * n);
+
+        if (wmax > wmax_total) wmax_total = wmax;  /* pooled max across species */
+        wsum_total += wsum;
+        expected_total += expected;
+
+        if (expected > 0.0 && wsum < 0.5 * expected) {
+            fprintf(stderr,
+                    "WARN-PMHC: species %d influence field under-resolved -- "
+                    "deposited weight %.3g vs %.3g expected (dx=%.1f nm, "
+                    "sigma_r=%.1f nm). Refine the grid or pass "
+                    "--pmhc_deposition area.\n",
+                    sp, wsum, expected, dx, sigma_r);
+        }
+    }
+
+    s->pmhc_influence_max = wmax_total;
+    s->pmhc_influence_sum = wsum_total;
+    s->pmhc_influence_expected = expected_total;
+}
+
 /* Compute exact pMHC influence at a continuous (x,y) position.
  * Used in phase1 molecular moves where TCR positions are continuous,
  * providing smooth lateral decay even when sigma_r < grid cell size. */
@@ -695,6 +854,37 @@ static double pmhc_influence_at(const SimState *s, double x, double y) {
             sum += exp(-r2 * inv2sig2);
     }
     return sum > 1.0 ? 1.0 : sum;
+}
+
+/* Multi-species variant of pmhc_influence_at(): fills w_out[sp] with the
+ * influence weight contributed by species sp's pMHC only, at continuous
+ * position (x,y). w_out must have capacity s->n_species. Used by
+ * tcr_energy_at() in the n_species>1 path (Phase 1, continuous positions). */
+static void pmhc_influence_at_species(const SimState *s, double x, double y, double *w_out) {
+    double p = s->patch_size;
+    double half = p / 2.0;
+    double inv2sig2[MAX_PMHC_SPECIES], rcut2[MAX_PMHC_SPECIES];
+    for (int sp = 0; sp < s->n_species; sp++) {
+        double sigma_r = s->species_sigma_r[sp];
+        inv2sig2[sp] = 1.0 / (2.0 * sigma_r * sigma_r);
+        double rcut = PMHC_CUTOFF_SIGMAS * sigma_r;
+        rcut2[sp] = rcut * rcut;
+        w_out[sp] = 0.0;
+    }
+    for (int k = 0; k < s->n_pmhc; k++) {
+        int sp = s->pmhc_species_id[k];
+        double ddx = x - s->pmhc_pos[2 * k];
+        double ddy = y - s->pmhc_pos[2 * k + 1];
+        if (ddx > half) ddx -= p;
+        else if (ddx < -half) ddx += p;
+        if (ddy > half) ddy -= p;
+        else if (ddy < -half) ddy += p;
+        double r2 = ddx * ddx + ddy * ddy;
+        if (r2 < rcut2[sp])
+            w_out[sp] += exp(-r2 * inv2sig2[sp]);
+    }
+    for (int sp = 0; sp < s->n_species; sp++)
+        if (w_out[sp] > 1.0) w_out[sp] = 1.0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -809,22 +999,44 @@ static void phase2_grid_cpu(SimState *s) {
             int n_tcr_cell = tcr_count[gi * n + gj];
             int n_cd45_cell = cd45_count[gi * n + gj];
 
-            float w_bind;
-            if (s->pmhc_influence) {
-                w_bind = s->pmhc_influence[gi * n + gj];
+            float tcr_e_old, tcr_e_new, old_mol_e, new_mol_e, dE_bend;
+
+            if (s->n_species > 1) {
+                tcr_e_old = 0.0f;
+                tcr_e_new = 0.0f;
+                for (int sp = 0; sp < s->n_species; sp++) {
+                    float w_sp = s->pmhc_influence_species[sp][gi * n + gj];
+                    tcr_e_old += w_sp * n_tcr_cell * ks_tcr_potential(
+                        old_h_val, (float)s->species_h0_tcr[sp],
+                        (float)s->species_u_assoc[sp], (float)s->species_sigma_bind[sp]);
+                    tcr_e_new += w_sp * n_tcr_cell * ks_tcr_potential(
+                        new_h_val, (float)s->species_h0_tcr[sp],
+                        (float)s->species_u_assoc[sp], (float)s->species_sigma_bind[sp]);
+                }
+                old_mol_e = tcr_e_old
+                                + n_cd45_cell * ks_cd45_repulsion(old_h_val, (float)s->cd45_height, (float)s->k_rep);
+                dE_bend = ks_bending_delta(s->h, n, kappa, dx,
+                                                       gi, gj, old_h_val, new_h_val);
+                new_mol_e = tcr_e_new
+                                + n_cd45_cell * ks_cd45_repulsion(new_h_val, (float)s->cd45_height, (float)s->k_rep);
             } else {
-                w_bind = ((s->pmhc_count == NULL) || (s->pmhc_count[gi * n + gj] > 0)) ? 1.0f : 0.0f;
+                float w_bind;
+                if (s->pmhc_influence) {
+                    w_bind = s->pmhc_influence[gi * n + gj];
+                } else {
+                    w_bind = ((s->pmhc_count == NULL) || (s->pmhc_count[gi * n + gj] > 0)) ? 1.0f : 0.0f;
+                }
+
+                tcr_e_old = w_bind * n_tcr_cell * ks_tcr_potential(old_h_val, (float)s->h0_tcr, (float)s->u_assoc, (float)s->sigma_bind);
+                old_mol_e = tcr_e_old
+                                + n_cd45_cell * ks_cd45_repulsion(old_h_val, (float)s->cd45_height, (float)s->k_rep);
+
+                dE_bend = ks_bending_delta(s->h, n, kappa, dx,
+                                                       gi, gj, old_h_val, new_h_val);
+                tcr_e_new = w_bind * n_tcr_cell * ks_tcr_potential(new_h_val, (float)s->h0_tcr, (float)s->u_assoc, (float)s->sigma_bind);
+                new_mol_e = tcr_e_new
+                                + n_cd45_cell * ks_cd45_repulsion(new_h_val, (float)s->cd45_height, (float)s->k_rep);
             }
-
-            float tcr_e_old = w_bind * n_tcr_cell * ks_tcr_potential(old_h_val, (float)s->h0_tcr, (float)s->u_assoc, (float)s->sigma_bind);
-            float old_mol_e = tcr_e_old
-                            + n_cd45_cell * ks_cd45_repulsion(old_h_val, (float)s->cd45_height, (float)s->k_rep);
-
-            float dE_bend = ks_bending_delta(s->h, n, kappa, dx,
-                                                   gi, gj, old_h_val, new_h_val);
-            float tcr_e_new = w_bind * n_tcr_cell * ks_tcr_potential(new_h_val, (float)s->h0_tcr, (float)s->u_assoc, (float)s->sigma_bind);
-            float new_mol_e = tcr_e_new
-                            + n_cd45_cell * ks_cd45_repulsion(new_h_val, (float)s->cd45_height, (float)s->k_rep);
 
             float dE = dE_bend + (new_mol_e - old_mol_e);
             s->total_proposals++;
@@ -1220,4 +1432,42 @@ int sim_count_bound_tcr(const SimState *s) {
         if (s->tcr_bound[i]) count++;
     }
     return count;
+}
+
+/* Per-species bound fraction: mirrors find_bound_tcrs()'s per-pMHC-index
+ * proximity loop, but tallies which species each first-matched pMHC belongs
+ * to instead of collecting a flat bound-TCR list. This is the actual
+ * competitive-selectivity readout -- does a TCR preferentially end up near
+ * the higher-affinity species. No-op (out left untouched) if species
+ * mixture, binding monitoring, or pMHC are not in use. */
+void sim_bound_fraction_by_species(const SimState *s, double *out) {
+    if (s->n_species <= 1 || s->bind_threshold <= 0.0 || !s->pmhc_pos ||
+        s->n_pmhc <= 0 || !s->pmhc_species_id)
+        return;
+    for (int sp = 0; sp < s->n_species; sp++) out[sp] = 0.0;
+    if (s->n_tcr <= 0) return;
+
+    double thr2 = s->bind_threshold * s->bind_threshold;
+    double half = s->patch_size / 2.0;
+    double ps = s->patch_size;
+    int bound_count[MAX_PMHC_SPECIES] = {0};
+
+    for (int t = 0; t < s->n_tcr; t++) {
+        double tx = s->tcr_pos[2 * t];
+        double ty = s->tcr_pos[2 * t + 1];
+        for (int p = 0; p < s->n_pmhc; p++) {
+            double dx_ = tx - s->pmhc_pos[2 * p];
+            double dy_ = ty - s->pmhc_pos[2 * p + 1];
+            if (dx_ > half) dx_ -= ps;
+            else if (dx_ < -half) dx_ += ps;
+            if (dy_ > half) dy_ -= ps;
+            else if (dy_ < -half) dy_ += ps;
+            if (dx_ * dx_ + dy_ * dy_ < thr2) {
+                bound_count[s->pmhc_species_id[p]]++;
+                break;
+            }
+        }
+    }
+    for (int sp = 0; sp < s->n_species; sp++)
+        out[sp] = (double)bound_count[sp] / (double)s->n_tcr;
 }
